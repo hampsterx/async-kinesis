@@ -154,7 +154,7 @@ class Consumer(Base):
                     continue
 
             if shard['ShardIterator'] is not None:
-                shard['fetch'] = asyncio.ensure_future(self.get_records(shard=shard), loop=self.loop)
+                shard['fetch'] = self.loop.create_task(self.get_records(shard=shard))
 
     async def get_records(self, shard):
 

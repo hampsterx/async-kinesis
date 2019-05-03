@@ -3,14 +3,30 @@
 Features:
 
 - uses queues for both producer and consumer
-  - producer flushes with put_records() after "buffer_time" reached
+  - producer flushes with put_records() if has enough to flush or after "buffer_time" reached
   - consumer iterates over msg queue independent of shard readers
 - Configurable to handle Sharding limits but will throttle/retry if required
   - ie multiple independent clients are saturating the Shards
 - Checkpointing with heartbeats
   - deadlock + reallocation of shards if checkpoint fails to heartbeat within "session_timeout"
 
-See https://aws.amazon.com/blogs/big-data/implementing-efficient-and-reliable-producers-with-the-amazon-kinesis-producer-library/
+Consumer Design:
+
+(Bears some explanation, kinda complex~)
+
+- fetch() gets called periodically (0.2 sec (ie max 5x per second as is the limit on shard get_records()))
+  - iterate over the list of shards (set on startup, does not currently detect resharding)
+    - assign shards if not in use and not at "max_shard_consumers" limit otherwise ignore/continue
+    - ignore/continue if this shard is still fetching
+    - process records if shard is done fetching
+        - put records on queue
+        - add checkpoint record to queue
+        - assign NextShardIterator
+    - create (get_records()) task again  
+
+See 
+
+https://aws.amazon.com/blogs/big-data/implementing-efficient-and-reliable-producers-with-the-amazon-kinesis-producer-library/
 
 
 ## Producer
@@ -24,7 +40,7 @@ Options:
 
 (comments in quotes are Kinesis Limits as per AWS Docs)
 
-* region_name 
+* region_name
     > AWS Region
 
 * buffer_time=0.5
@@ -39,7 +55,7 @@ Options:
 * max_queue_size=10000
    > put() method will block when queue is at max 
    
-* after_flush_fun=None,
+* after_flush_fun
    > async function to call after doing a flush (err put_records()) call
                  
 
@@ -50,6 +66,23 @@ Options:
             async for item in consumer:
                 print(item)
             # caught up.. take a breather~
+
+
+Options:
+
+(comments in quotes are Kinesis Limits as per AWS Docs)
+
+* region_name
+    > AWS Region
+
+* max_queue_size=1000
+    > the fetch() task shard 
+
+, max_shard_consumers=None,
+                 record_limit=10000, sleep_time_no_results=2,
+                 iterator_type="TRIM_HORIZON",
+                 shard_fetch_rate=5,
+                 checkpointer=None
 
 
 ## Checkpointers

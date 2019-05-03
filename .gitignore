@@ -1,0 +1,9 @@
+dist
+*.egg-info
+.idea
+*.pyc
+build
+notes.txt
+deploy.sh
+temp.py
+.env

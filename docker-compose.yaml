@@ -1,0 +1,21 @@
+version: '3.3'
+services:
+
+  kinesis:
+    image: vsouza/kinesis-local:latest
+    command: --port 4567 --shardLimit 1000
+    restart: always
+    ports:
+      - 4567:4567
+
+  pykinesis:
+     container_name: pykinesis
+     command: ['nosetests', 'tests']
+     env_file:
+      - .env
+     volumes:
+      - ./test.py:/app/test.py
+      - ./kinesis:/app/kinesis
+     build:
+       context: .
+       dockerfile: Dockerfile

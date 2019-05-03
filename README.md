@@ -1,6 +1,6 @@
 # async-kinesis
 
-Features:
+## Features
 
 - uses queues for both producer and consumer
   - producer flushes with put_records() if has enough to flush or after "buffer_time" reached
@@ -10,21 +10,31 @@ Features:
 - Checkpointing with heartbeats
   - deadlock + reallocation of shards if checkpoint fails to heartbeat within "session_timeout"
 
-Consumer Design:
+## Consumer Design
 
 (Bears some explanation, kinda complex~)
 
 - fetch() gets called periodically (0.2 sec (ie max 5x per second as is the limit on shard get_records()))
   - iterate over the list of shards (set on startup, does not currently detect resharding)
-    - assign shards if not in use and not at "max_shard_consumers" limit otherwise ignore/continue
+    - assign shard if not in use and not at "max_shard_consumers" limit otherwise ignore/continue
     - ignore/continue if this shard is still fetching
     - process records if shard is done fetching
         - put records on queue
         - add checkpoint record to queue
         - assign NextShardIterator
-    - create (get_records()) task again  
+    - create (get_records()) task again
 
-See 
+Note that get_records() is throttled via "shard_fetch_rate=5" (ie the same 0.2 sec/ 5x limit)
+
+This pattern seemed like the easiest way to maintain a pool of consumers without needing to think too hard about starting it's next job or handling new shards etc.
+
+
+## Not Implemented
+
+- resharding
+- client rebalancing (ie share the shards between consumers)
+
+See also
 
 https://aws.amazon.com/blogs/big-data/implementing-efficient-and-reliable-producers-with-the-amazon-kinesis-producer-library/
 
@@ -78,11 +88,24 @@ Options:
 * max_queue_size=1000
     > the fetch() task shard 
 
-, max_shard_consumers=None,
-                 record_limit=10000, sleep_time_no_results=2,
-                 iterator_type="TRIM_HORIZON",
-                 shard_fetch_rate=5,
-                 checkpointer=None
+* max_shard_consumers=None
+    > Max number of shards to use. None = all
+    
+* record_limit=10000
+    > Number of records to fetch with get_records()
+
+* sleep_time_no_records=2
+    > No of seconds to sleep when caught up
+    
+* iterator_type="TRIM_HORIZON"
+    > Default shard iterator type for new/unknown shards (ie start from start of stream)
+    > Alternative is "LATEST" (ie end of stream)
+
+* shard_fetch_rate=5
+    > No of fetches per second (max = 5)           
+
+* checkpointer=None
+    > Checkpointer to use
 
 
 ## Checkpointers

@@ -36,7 +36,7 @@ class Consumer(Base):
     def __init__(self, stream_name, loop=None,
                  endpoint_url=None, region_name=None,
                  max_queue_size=1000, max_shard_consumers=None,
-                 record_limit=10000, sleep_time_no_results=2,
+                 record_limit=10000, sleep_time_no_records=2,
                  iterator_type="TRIM_HORIZON",
                  shard_fetch_rate=5,
                  checkpointer=None
@@ -48,7 +48,7 @@ class Consumer(Base):
 
         self.queue = asyncio.Queue(maxsize=max_queue_size, loop=self.loop)
 
-        self.sleep_time_no_results = sleep_time_no_results
+        self.sleep_time_no_records = sleep_time_no_records
 
         self.max_shard_consumers = max_shard_consumers
 
@@ -144,8 +144,8 @@ class Consumer(Base):
                             shard['ShardIterator'] = result['NextShardIterator']
                     else:
                         log.debug(
-                            "Shard {} caught up, sleeping {}s".format(shard['ShardId'], self.sleep_time_no_results))
-                        await asyncio.sleep(self.sleep_time_no_results, loop=self.loop)
+                            "Shard {} caught up, sleeping {}s".format(shard['ShardId'], self.sleep_time_no_records))
+                        await asyncio.sleep(self.sleep_time_no_records, loop=self.loop)
 
                     shard['fetch'] = None
 

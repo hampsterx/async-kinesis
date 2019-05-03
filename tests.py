@@ -336,7 +336,7 @@ class KinesisTests(BaseKinesisTests):
                                 endpoint_url=ENDPOINT_URL,
                                 checkpointer=checkpointer,
                                 iterator_type="LATEST",
-                                sleep_time_no_results=0.5
+                                sleep_time_no_records=0.5
                                 ) as consumer:
 
                 # Manually start (so we can be sure we got some results)
@@ -376,7 +376,7 @@ class KinesisTests(BaseKinesisTests):
                                 endpoint_url=ENDPOINT_URL,
                                 checkpointer=checkpointer,
                                 iterator_type="LATEST",
-                                sleep_time_no_results=0.5
+                                sleep_time_no_records=0.5
                                 ) as consumer:
 
                 async for item in consumer:
@@ -463,7 +463,7 @@ class AWSKinesisTests(BaseKinesisTests):
         # logging.getLogger('kinesis.consumer').setLevel(logging.WARNING)
 
         async with Consumer(stream_name=self.STREAM_NAME_SINGLE_SHARD,
-                            sleep_time_no_results=0.001,
+                            sleep_time_no_records=0.001,
                             shard_fetch_rate=100,
                             ) as consumer:
             await consumer.start()

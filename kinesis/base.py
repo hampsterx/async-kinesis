@@ -12,7 +12,6 @@ log = logging.getLogger(__name__)
 
 
 class Base:
-
     def __init__(self, stream_name, loop=None, endpoint_url=None, region_name=None):
 
         self.stream_name = stream_name
@@ -26,10 +25,14 @@ class Base:
 
         self.stream_status = None
 
-
     async def __aenter__(self):
 
-        self.client = aioboto3.client('kinesis', endpoint_url=self.endpoint_url, region_name=self.region_name, loop=self.loop)
+        self.client = aioboto3.client(
+            "kinesis",
+            endpoint_url=self.endpoint_url,
+            region_name=self.region_name,
+            loop=self.loop,
+        )
 
         return self
 
@@ -40,11 +43,15 @@ class Base:
 
     async def get_stream_description(self):
         try:
-            return (await self.client.describe_stream(StreamName=self.stream_name))['StreamDescription']
+            return (await self.client.describe_stream(StreamName=self.stream_name))[
+                "StreamDescription"
+            ]
         except ClientError as err:
-            code = err.response['Error']['Code']
+            code = err.response["Error"]["Code"]
             if code == "ResourceNotFoundException":
-                raise exceptions.StreamDoesNotExist("Stream '{}' does not exist".format(self.stream_name)) from None
+                raise exceptions.StreamDoesNotExist(
+                    "Stream '{}' does not exist".format(self.stream_name)
+                ) from None
 
     async def start(self):
 
@@ -54,23 +61,26 @@ class Base:
             try:
                 while True:
                     stream_info = await self.get_stream_description()
-                    stream_status = stream_info['StreamStatus']
+                    stream_status = stream_info["StreamStatus"]
 
                     if stream_status == "ACTIVE":
                         self.stream_status = stream_status
                         break
 
-                    if stream_status in ['CREATING', 'UPDATING']:
+                    if stream_status in ["CREATING", "UPDATING"]:
                         await asyncio.sleep(0.25)
 
                     else:
                         raise exceptions.StreamStatusInvalid(
-                            "Stream '{}' is {}".format(self.stream_name, stream_status))
+                            "Stream '{}' is {}".format(self.stream_name, stream_status)
+                        )
             except CancelledError:
                 pass
 
             else:
-                self.shards = stream_info['Shards']
+                self.shards = stream_info["Shards"]
 
         if cm.expired:
-            raise exceptions.StreamStatusInvalid("Stream '{}' is still {}".format(self.stream_name, stream_status))
+            raise exceptions.StreamStatusInvalid(
+                "Stream '{}' is still {}".format(self.stream_name, stream_status)
+            )

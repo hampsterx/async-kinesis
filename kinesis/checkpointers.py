@@ -8,7 +8,6 @@ log = logging.getLogger(__name__)
 
 
 class BaseCheckPointer:
-
     def __init__(self, name, id=None, loop=None):
         self.loop = loop if loop else asyncio.get_event_loop()
         self._id = id if id else os.getpid()
@@ -34,13 +33,18 @@ class BaseCheckPointer:
         )
 
     async def deallocate(self, shard_id):
-        log.info("{} deallocated on {}@{}".format(self.get_ref(), shard_id, self._items[shard_id]))
+        log.info(
+            "{} deallocated on {}@{}".format(
+                self.get_ref(), shard_id, self._items[shard_id]
+            )
+        )
         self._items.pop(shard_id)
 
 
 class BaseHeartbeatCheckPointer(BaseCheckPointer):
-
-    def __init__(self, name, id=None, session_timeout=60, heartbeat_frequency=15, loop=None):
+    def __init__(
+        self, name, id=None, session_timeout=60, heartbeat_frequency=15, loop=None
+    ):
         super().__init__(name=name, id=id, loop=loop)
 
         self.session_timeout = session_timeout
@@ -61,13 +65,12 @@ class BaseHeartbeatCheckPointer(BaseCheckPointer):
             # todo: don't heartbeat if checkpoint already updated it recently
             for shard_id, sequence in self._items.items():
                 key = self.get_key(shard_id)
-                val = {'ref': self.get_ref(), 'ts': self.get_ts(), 'sequence': sequence}
+                val = {"ref": self.get_ref(), "ts": self.get_ts(), "sequence": sequence}
                 log.info("Heartbeating {}@{}".format(shard_id, sequence))
                 await self.client.set(key, json.dumps(val))
 
 
 class MemoryCheckPointer(BaseCheckPointer):
-
     async def allocate(self, shard_id):
         if shard_id not in self._items:
             self._items[shard_id] = None
@@ -75,23 +78,33 @@ class MemoryCheckPointer(BaseCheckPointer):
         return True, self._items[shard_id]
 
     async def checkpoint(self, shard_id, sequence):
-        log.debug("{} checkpointed on {} @ {}".format(self.get_ref(), shard_id, sequence))
+        log.debug(
+            "{} checkpointed on {} @ {}".format(self.get_ref(), shard_id, sequence)
+        )
         self._items[shard_id] = sequence
 
 
 class RedisCheckPointer(BaseHeartbeatCheckPointer):
-
-    def __init__(self, name, id=None, session_timeout=60, heartbeat_frequency=15, loop=None):
-        super().__init__(name=name, id=id, session_timeout=session_timeout, heartbeat_frequency=heartbeat_frequency, loop=loop)
+    def __init__(
+        self, name, id=None, session_timeout=60, heartbeat_frequency=15, loop=None
+    ):
+        super().__init__(
+            name=name,
+            id=id,
+            session_timeout=session_timeout,
+            heartbeat_frequency=heartbeat_frequency,
+            loop=loop,
+        )
 
         # todo StrictRedisCluster
         from aredis import StrictRedis
 
-        self.client = StrictRedis(host=os.environ.get('REDIS_HOST','127.0.0.1'), loop=self.loop)
+        self.client = StrictRedis(
+            host=os.environ.get("REDIS_HOST", "127.0.0.1"), loop=self.loop
+        )
 
     def get_key(self, shard_id):
         return "pyredis-{}-{}".format(self._name, shard_id)
-
 
     def get_ts(self):
         return round(int(datetime.now(tz=timezone.utc).timestamp()))
@@ -100,16 +113,24 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
 
         key = self.get_key(shard_id)
 
-        val = {'ref': self.get_ref(), 'ts': self.get_ts(), 'sequence': sequence}
+        val = {"ref": self.get_ref(), "ts": self.get_ts(), "sequence": sequence}
 
         previous_val = await self.client.getset(key, json.dumps(val))
         previous_val = json.loads(previous_val) if previous_val else None
 
         if not previous_val:
-            raise NotImplementedError("{} checkpointed on {} but key did not exist?".format(self.get_ref(), shard_id))
+            raise NotImplementedError(
+                "{} checkpointed on {} but key did not exist?".format(
+                    self.get_ref(), shard_id
+                )
+            )
 
-        if previous_val['ref'] != self.get_ref():
-            raise NotImplementedError("{} checkopointed on {} but ref is different".format(self.get_ref(), shard_id, val['ref']))
+        if previous_val["ref"] != self.get_ref():
+            raise NotImplementedError(
+                "{} checkopointed on {} but ref is different".format(
+                    self.get_ref(), shard_id, val["ref"]
+                )
+            )
 
         log.debug("{} checkpointed on {}@{}".format(self.get_ref(), shard_id, sequence))
         self._items[shard_id] = sequence
@@ -118,11 +139,15 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
 
         key = self.get_key(shard_id)
 
-        val = {'ref': None, 'ts': None, 'sequence': self._items[shard_id]}
+        val = {"ref": None, "ts": None, "sequence": self._items[shard_id]}
 
         await self.client.set(key, json.dumps(val))
 
-        log.info("{} deallocated on {}@{}".format(self.get_ref(), shard_id, self._items[shard_id]))
+        log.info(
+            "{} deallocated on {}@{}".format(
+                self.get_ref(), shard_id, self._items[shard_id]
+            )
+        )
 
         self._items.pop(shard_id)
 
@@ -133,21 +158,31 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
         ts = self.get_ts()
 
         # try to set lock
-        success = await self.client.set(key, json.dumps({'ref' : self.get_ref(), 'ts': ts, 'sequence': None}), nx=True)
+        success = await self.client.set(
+            key,
+            json.dumps({"ref": self.get_ref(), "ts": ts, "sequence": None}),
+            nx=True,
+        )
 
         val = await self.client.get(key)
         val = json.loads(val) if val else None
 
-        original_ts = val['ts']
+        original_ts = val["ts"]
 
         if success:
-            log.info("{} allocated {} (new checkpoint)".format(self.get_ref(), shard_id))
+            log.info(
+                "{} allocated {} (new checkpoint)".format(self.get_ref(), shard_id)
+            )
             self._items[shard_id] = None
             return True, None
 
-        if val['ts']:
+        if val["ts"]:
 
-            log.info("{} could not allocate {}, still in use by {}".format(self.get_ref(), shard_id, val['ref']))
+            log.info(
+                "{} could not allocate {}, still in use by {}".format(
+                    self.get_ref(), shard_id, val["ref"]
+                )
+            )
 
             age = ts - original_ts
 
@@ -155,22 +190,26 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
             if age < self.session_timeout:
                 return False, None
 
-            log.info("Attempting to take lock as {} is {} seconds over due..".format(val['ref'], age-self.session_timeout))
+            log.info(
+                "Attempting to take lock as {} is {} seconds over due..".format(
+                    val["ref"], age - self.session_timeout
+                )
+            )
 
-
-        val['ref'] = self.get_ref()
-        val['ts'] = ts
+        val["ref"] = self.get_ref()
+        val["ts"] = ts
 
         previous_val = await self.client.getset(key, json.dumps(val))
         previous_val = json.loads(previous_val) if previous_val else None
 
-        if previous_val['ts'] != original_ts:
-            log.info("{} beat me to the lock..".format(previous_val['ref']))
+        if previous_val["ts"] != original_ts:
+            log.info("{} beat me to the lock..".format(previous_val["ref"]))
             return False, None
 
-        log.info("{} allocating {}@{}".format(self.get_ref(), shard_id, val['sequence']))
+        log.info(
+            "{} allocating {}@{}".format(self.get_ref(), shard_id, val["sequence"])
+        )
 
-        self._items[shard_id] = val['sequence']
+        self._items[shard_id] = val["sequence"]
 
-        return True, val['sequence']
-
+        return True, val["sequence"]

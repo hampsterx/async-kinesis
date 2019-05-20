@@ -13,7 +13,6 @@ log = logging.getLogger(__name__)
 
 
 class ShardStats:
-
     def __init__(self):
         self._throttled = 0
         self._success = 0
@@ -25,26 +24,28 @@ class ShardStats:
         self._throttled += 1
 
     def to_data(self):
-        return {
-            'throttled': self._throttled,
-            'success': self._success
-        }
+        return {"throttled": self._throttled, "success": self._success}
 
 
 class Consumer(Base):
+    def __init__(
+        self,
+        stream_name,
+        loop=None,
+        endpoint_url=None,
+        region_name=None,
+        max_queue_size=1000,
+        max_shard_consumers=None,
+        record_limit=10000,
+        sleep_time_no_records=2,
+        iterator_type="TRIM_HORIZON",
+        shard_fetch_rate=5,
+        checkpointer=None,
+    ):
 
-    def __init__(self, stream_name, loop=None,
-                 endpoint_url=None, region_name=None,
-                 max_queue_size=1000, max_shard_consumers=None,
-                 record_limit=10000, sleep_time_no_records=2,
-                 iterator_type="TRIM_HORIZON",
-                 shard_fetch_rate=5,
-                 checkpointer=None
-                 ):
-
-        super(Consumer, self).__init__(stream_name, loop=loop,
-                                       endpoint_url=endpoint_url, region_name=region_name
-                                       )
+        super(Consumer, self).__init__(
+            stream_name, loop=loop, endpoint_url=endpoint_url, region_name=region_name
+        )
 
         self.queue = asyncio.Queue(maxsize=max_queue_size, loop=self.loop)
 
@@ -82,93 +83,121 @@ class Consumer(Base):
 
         # todo: check for/handle new shards
 
-        shards_in_use = len([s for s in self.shards if s.get('stats', False) is not False])
+        shards_in_use = len(
+            [s for s in self.shards if s.get("stats", False) is not False]
+        )
 
         for shard in self.shards:
 
             if not self.is_fetching:
                 break
 
-            if not shard.get('stats', False):
-                if self.max_shard_consumers and shards_in_use >= self.max_shard_consumers:
+            if not shard.get("stats", False):
+                if (
+                    self.max_shard_consumers
+                    and shards_in_use >= self.max_shard_consumers
+                ):
                     continue
 
                 if self.checkpointer is None:
-                    log.debug("Marking shard in use {}".format(shard['ShardId']))
-                    shard['ShardIterator'] = await self.get_shard_iterator(shard_id=shard['ShardId'])
+                    log.debug("Marking shard in use {}".format(shard["ShardId"]))
+                    shard["ShardIterator"] = await self.get_shard_iterator(
+                        shard_id=shard["ShardId"]
+                    )
 
                 else:
-                    success, checkpoint = await self.checkpointer.allocate(shard['ShardId'])
+                    success, checkpoint = await self.checkpointer.allocate(
+                        shard["ShardId"]
+                    )
 
                     if not success:
-                        log.debug("Shard in use. Could not assign shard {} to checkpointer[{}]".format(shard['ShardId'], self.checkpointer.get_ref()))
+                        log.debug(
+                            "Shard in use. Could not assign shard {} to checkpointer[{}]".format(
+                                shard["ShardId"], self.checkpointer.get_ref()
+                            )
+                        )
                         continue
 
-                    log.debug("Marking shard in use {} by checkpointer[{}] @ {}".format(shard['ShardId'],
-                                                                    self.checkpointer.get_ref(), checkpoint))
+                    log.debug(
+                        "Marking shard in use {} by checkpointer[{}] @ {}".format(
+                            shard["ShardId"], self.checkpointer.get_ref(), checkpoint
+                        )
+                    )
 
-                    shard['ShardIterator'] = await self.get_shard_iterator(shard_id=shard['ShardId'],
-                                                                               last_sequence_number=checkpoint)
+                    shard["ShardIterator"] = await self.get_shard_iterator(
+                        shard_id=shard["ShardId"], last_sequence_number=checkpoint
+                    )
 
-                if shard.get('ShardIterator'):
-                    shard['stats'] = ShardStats()
-                    shard['throttler'] = Throttler(rate_limit=self.shard_fetch_rate, period=1, loop=self.loop)
+                if shard.get("ShardIterator"):
+                    shard["stats"] = ShardStats()
+                    shard["throttler"] = Throttler(
+                        rate_limit=self.shard_fetch_rate, period=1, loop=self.loop
+                    )
                     shards_in_use += 1
 
-
-            if shard.get('fetch'):
-                if shard['fetch'].done():
-                    result = shard['fetch'].result()
+            if shard.get("fetch"):
+                if shard["fetch"].done():
+                    result = shard["fetch"].result()
 
                     if not result:
                         log.info("no result. throttled..")
-                        shard['fetch'] = None
+                        shard["fetch"] = None
                         continue
 
-                    records = result['Records']
+                    records = result["Records"]
 
-                    log.debug("Shard {} got {} records".format(shard['ShardId'], len(records)))
+                    log.debug(
+                        "Shard {} got {} records".format(shard["ShardId"], len(records))
+                    )
 
                     if records:
-                        for row in result['Records']:
-                            await self.queue.put(json.loads(row['Data']))
+                        for row in result["Records"]:
+                            await self.queue.put(json.loads(row["Data"]))
 
                         # Add checkpoint record
-                        last_record = result['Records'][-1]
-                        await self.queue.put({'__CHECKPOINT__': {'ShardId': shard['ShardId'],
-                                                                 'SequenceNumber': last_record['SequenceNumber']}})
+                        last_record = result["Records"][-1]
+                        await self.queue.put(
+                            {
+                                "__CHECKPOINT__": {
+                                    "ShardId": shard["ShardId"],
+                                    "SequenceNumber": last_record["SequenceNumber"],
+                                }
+                            }
+                        )
 
-                        if result['NextShardIterator'] is None:
+                        if result["NextShardIterator"] is None:
                             raise NotImplementedError("NextShardIterator is null")
                         else:
-                            shard['ShardIterator'] = result['NextShardIterator']
+                            shard["ShardIterator"] = result["NextShardIterator"]
                     else:
                         log.debug(
-                            "Shard {} caught up, sleeping {}s".format(shard['ShardId'], self.sleep_time_no_records))
+                            "Shard {} caught up, sleeping {}s".format(
+                                shard["ShardId"], self.sleep_time_no_records
+                            )
+                        )
                         await asyncio.sleep(self.sleep_time_no_records, loop=self.loop)
 
-                    shard['fetch'] = None
+                    shard["fetch"] = None
 
                 else:
                     # log.debug("shard {} fetch in progress..".format(shard['ShardId']))
                     continue
 
-            if shard['ShardIterator'] is not None:
-                shard['fetch'] = self.loop.create_task(self.get_records(shard=shard))
+            if shard["ShardIterator"] is not None:
+                shard["fetch"] = self.loop.create_task(self.get_records(shard=shard))
 
     async def get_records(self, shard):
 
         # Note: "This operation has a limit of five transactions per second per account."
 
-        async with shard['throttler']:
+        async with shard["throttler"]:
             # log.debug("get_records shard={}".format(shard['ShardId']))
 
             try:
                 result = await self.client.get_records(
-                    ShardIterator=shard['ShardIterator'],
-                    Limit=self.record_limit
+                    ShardIterator=shard["ShardIterator"], Limit=self.record_limit
                 )
-                shard['stats'].succeded()
+                shard["stats"].succeded()
                 return result
 
             except ClientConnectionError:
@@ -177,10 +206,14 @@ class Consumer(Base):
                 return None
 
             except ClientError as err:
-                code = err.response['Error']['Code']
+                code = err.response["Error"]["Code"]
                 if code == "ProvisionedThroughputExceededException":
-                    log.warning("{} hit ProvisionedThroughputExceededException".format(shard['ShardId']))
-                    shard['stats'].throttled()
+                    log.warning(
+                        "{} hit ProvisionedThroughputExceededException".format(
+                            shard["ShardId"]
+                        )
+                    )
+                    shard["stats"].throttled()
                     # todo: control the throttle ?
                     await asyncio.sleep(0.25, loop=self.loop)
                     return None
@@ -189,20 +222,26 @@ class Consumer(Base):
 
     async def get_shard_iterator(self, shard_id, last_sequence_number=None):
 
-        log.debug("getting shard iterator for {} @ {}".format(shard_id,
-                                                              last_sequence_number if last_sequence_number else self.iterator_type))
+        log.debug(
+            "getting shard iterator for {} @ {}".format(
+                shard_id,
+                last_sequence_number if last_sequence_number else self.iterator_type,
+            )
+        )
 
         params = {
-            'StreamName': self.stream_name,
-            'ShardId': shard_id,
-            'ShardIteratorType': 'AFTER_SEQUENCE_NUMBER' if last_sequence_number else self.iterator_type
+            "StreamName": self.stream_name,
+            "ShardId": shard_id,
+            "ShardIteratorType": "AFTER_SEQUENCE_NUMBER"
+            if last_sequence_number
+            else self.iterator_type,
         }
 
         if last_sequence_number:
-            params['StartingSequenceNumber'] = last_sequence_number
+            params["StartingSequenceNumber"] = last_sequence_number
 
         response = await self.client.get_shard_iterator(**params)
-        return response['ShardIterator']
+        return response["ShardIterator"]
 
     async def close(self):
         log.debug("Closing..")
@@ -225,9 +264,9 @@ class Consumer(Base):
         # Wait for shard fetches to finish
         # todo: use gather
         for shard in self.shards:
-            if shard.get('fetch'):
-                if not shard['fetch'].done():
-                    await shard['fetch']
+            if shard.get("fetch"):
+                if not shard["fetch"].done():
+                    await shard["fetch"]
 
     def __aiter__(self):
         return self
@@ -255,10 +294,12 @@ class Consumer(Base):
             try:
                 item = self.queue.get_nowait()
 
-                if item and '__CHECKPOINT__' in item:
+                if item and "__CHECKPOINT__" in item:
                     if self.checkpointer:
-                        await self.checkpointer.checkpoint(item['__CHECKPOINT__']['ShardId'],
-                                                           item['__CHECKPOINT__']['SequenceNumber'])
+                        await self.checkpointer.checkpoint(
+                            item["__CHECKPOINT__"]["ShardId"],
+                            item["__CHECKPOINT__"]["SequenceNumber"],
+                        )
                         continue
                     else:
                         continue

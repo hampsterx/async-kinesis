@@ -16,26 +16,29 @@ from . import exceptions
 log = logging.getLogger(__name__)
 
 
-
 class Producer(Base):
-
     async def _flush(self):
         while True:
             await asyncio.sleep(self.buffer_time, loop=self.loop)
             if not self.is_flushing:
                 await self.flush()
 
-    def __init__(self, stream_name, loop=None,
-                 endpoint_url=None, region_name=None,
-                 buffer_time=0.5, put_rate_limit_per_shard=1000, after_flush_fun=None,
-                 batch_size=500, max_queue_size=10000
-                 ):
+    def __init__(
+        self,
+        stream_name,
+        loop=None,
+        endpoint_url=None,
+        region_name=None,
+        buffer_time=0.5,
+        put_rate_limit_per_shard=1000,
+        after_flush_fun=None,
+        batch_size=500,
+        max_queue_size=10000,
+    ):
 
-
-        super(Producer, self).__init__(stream_name, loop=loop,
-                                       endpoint_url=endpoint_url, region_name=region_name
-                                       )
-
+        super(Producer, self).__init__(
+            stream_name, loop=loop, endpoint_url=endpoint_url, region_name=region_name
+        )
 
         self.buffer_time = buffer_time
 
@@ -54,54 +57,64 @@ class Producer(Base):
 
     async def create_stream(self, shards=1, ignore_exists=True):
 
-        log.debug("Creating (or ignoring) stream {} with {} shards".format(self.stream_name, shards))
+        log.debug(
+            "Creating (or ignoring) stream {} with {} shards".format(
+                self.stream_name, shards
+            )
+        )
 
         if shards < 1:
-           raise Exception("Min shard count is one")
+            raise Exception("Min shard count is one")
 
         try:
             await self.client.create_stream(
-                StreamName=self.stream_name,
-                ShardCount=shards
+                StreamName=self.stream_name, ShardCount=shards
             )
         except ClientError as err:
-            code = err.response['Error']['Code']
+            code = err.response["Error"]["Code"]
 
             if code == "ResourceInUseException":
                 if not ignore_exists:
-                    raise exceptions.StreamExists("Stream '{}' exists, cannot create it".format(self.stream_name)) from None
+                    raise exceptions.StreamExists(
+                        "Stream '{}' exists, cannot create it".format(self.stream_name)
+                    ) from None
             elif code == "LimitExceededException":
-                raise exceptions.StreamShardLimit("Stream '{}' exceeded shard limit".format(self.stream_name))
+                raise exceptions.StreamShardLimit(
+                    "Stream '{}' exceeded shard limit".format(self.stream_name)
+                )
             else:
                 raise
 
     def set_put_rate_throttle(self):
-        self.put_rate_throttle = Throttler(rate_limit=self.put_rate_limit_per_shard * len(self.shards), period=1, loop=self.loop)
+        self.put_rate_throttle = Throttler(
+            rate_limit=self.put_rate_limit_per_shard * len(self.shards),
+            period=1,
+            loop=self.loop,
+        )
 
     async def put(self, data):
 
-        if not self.stream_status == 'ACTIVE':
+        if not self.stream_status == "ACTIVE":
             await self.start()
             self.set_put_rate_throttle()
 
         if self.queue.qsize() >= self.batch_size:
             await self.flush()
 
-
         data_str = json.dumps(data)
-        if len(data_str) > 1024*1024:
-            raise exceptions.ExceededPutLimit("Put of {} bytes exceeded 1MB limit".format(len(data_str)))
+        if len(data_str) > 1024 * 1024:
+            raise exceptions.ExceededPutLimit(
+                "Put of {} bytes exceeded 1MB limit".format(len(data_str))
+            )
 
         # todo serializers
         await self.queue.put(data_str)
 
-        #objsize.get_deep_size
-
+        # objsize.get_deep_size
 
     async def close(self):
         self.flush_task.cancel()
         await self.client.close()
-
 
     async def flush(self):
 
@@ -135,24 +148,38 @@ class Producer(Base):
 
             try:
                 # todo: custom partition key
-                result = (await self.client.put_records(
-                    Records=[{'Data': item, 'PartitionKey': '{0}{1}'.format(time.clock(), time.time())} for item in
-                             items],
-                    StreamName=self.stream_name
-                ))
+                result = await self.client.put_records(
+                    Records=[
+                        {
+                            "Data": item,
+                            "PartitionKey": "{0}{1}".format(time.clock(), time.time()),
+                        }
+                        for item in items
+                    ],
+                    StreamName=self.stream_name,
+                )
             except ClientError as err:
-                code = err.response['Error']['Code']
+                code = err.response["Error"]["Code"]
 
                 if code == "ValidationException":
-                    if "must have length less than or equal" in err.response['Error']['Message']:
-                        log.warning("Batch size {} exceeded the limit. retrying with 10% less".format(len(items)))
+                    if (
+                        "must have length less than or equal"
+                        in err.response["Error"]["Message"]
+                    ):
+                        log.warning(
+                            "Batch size {} exceeded the limit. retrying with 10% less".format(
+                                len(items)
+                            )
+                        )
                         overflow = items
                         self.batch_size -= round(self.batch_size / 10)
                         continue
                     else:
                         raise
                 elif code == "ResourceNotFoundException":
-                    raise exceptions.StreamDoesNotExist("Stream '{}' does not exist".format(self.stream_name)) from None
+                    raise exceptions.StreamDoesNotExist(
+                        "Stream '{}' does not exist".format(self.stream_name)
+                    ) from None
                 else:
                     raise
             except ClientConnectionError:
@@ -161,16 +188,30 @@ class Producer(Base):
                 await asyncio.sleep(3, loop=self.loop)
                 continue
             else:
-                if result['FailedRecordCount']:
-                    errors = list(set([r.get('ErrorCode') for r in result['Records'] if r.get('ErrorCode')]))
+                if result["FailedRecordCount"]:
+                    errors = list(
+                        set(
+                            [
+                                r.get("ErrorCode")
+                                for r in result["Records"]
+                                if r.get("ErrorCode")
+                            ]
+                        )
+                    )
 
                     if not errors:
-                        raise exceptions.UnknownException("Failed to put records but no errorCodes return in results")
+                        raise exceptions.UnknownException(
+                            "Failed to put records but no errorCodes return in results"
+                        )
 
-                    if 'ProvisionedThroughputExceededException' in errors:
-                        log.warning("Throughput exceeding, slowing down the rate by 10%")
+                    if "ProvisionedThroughputExceededException" in errors:
+                        log.warning(
+                            "Throughput exceeding, slowing down the rate by 10%"
+                        )
                         overflow = items
-                        self.put_rate_limit_per_shard -= round(self.put_rate_limit_per_shard / 10)
+                        self.put_rate_limit_per_shard -= round(
+                            self.put_rate_limit_per_shard / 10
+                        )
                         self.set_put_rate_throttle()
                         # wait a bit
                         await asyncio.sleep(0.25, loop=self.loop)
@@ -178,7 +219,10 @@ class Producer(Base):
 
                     else:
                         raise exceptions.UnknownException(
-                            "Failed to put records but not due to throughput exceeded: {}".format(", ".join(errors)))
+                            "Failed to put records but not due to throughput exceeded: {}".format(
+                                ", ".join(errors)
+                            )
+                        )
 
                 else:
                     if self.after_flush_fun:

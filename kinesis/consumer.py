@@ -5,8 +5,9 @@ from aiohttp import ClientConnectionError
 
 from asyncio.queues import QueueEmpty
 from botocore.exceptions import ClientError
-from asyncio_throttle import Throttler
+from .utils import Throttler
 from .base import Base
+from .checkpointers import MemoryCheckPointer
 from . import exceptions
 
 log = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ class Consumer(Base):
 
         self.is_fetching = True
 
-        self.checkpointer = checkpointer
+        self.checkpointer = checkpointer if checkpointer else MemoryCheckPointer()
 
         self.iterator_type = iterator_type
 
@@ -83,19 +84,19 @@ class Consumer(Base):
 
         # todo: check for/handle new shards
 
-        shards_in_use = len(
-            [s for s in self.shards if s.get("stats", False) is not False]
-        )
+        shards_in_use = [s for s in self.shards if self.checkpointer.is_allocated(s)]
+
+        log.debug("shards in use: {}".format([s['ShardId'] for s in shards_in_use]))
 
         for shard in self.shards:
 
             if not self.is_fetching:
                 break
 
-            if not shard.get("stats", False):
+            if not self.checkpointer.is_allocated(shard):
                 if (
                     self.max_shard_consumers
-                    and shards_in_use >= self.max_shard_consumers
+                    and len(shards_in_use) >= self.max_shard_consumers
                 ):
                     continue
 
@@ -133,7 +134,7 @@ class Consumer(Base):
                     shard["throttler"] = Throttler(
                         rate_limit=self.shard_fetch_rate, period=1, loop=self.loop
                     )
-                    shards_in_use += 1
+                    shards_in_use.append(shard)
 
             if shard.get("fetch"):
                 if shard["fetch"].done():
@@ -183,7 +184,7 @@ class Consumer(Base):
                     # log.debug("shard {} fetch in progress..".format(shard['ShardId']))
                     continue
 
-            if shard["ShardIterator"] is not None:
+            if "ShardIterator" in shard and shard["ShardIterator"] is not None:
                 shard["fetch"] = self.loop.create_task(self.get_records(shard=shard))
 
     async def get_records(self, shard):

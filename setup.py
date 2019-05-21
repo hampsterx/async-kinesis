@@ -1,0 +1,36 @@
+from setuptools import setup
+
+with open("README.md") as f:
+    long_description = f.read()
+
+setup(
+    name="py-kinesis",
+    description="AsyncIO Kinesis Library",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    version="0.0.1",
+    url="https://github.com/hampsterx/async-kinesis",
+    author="hampsterx",
+    author_email="tim.vdh@gmail.com",
+    license='Apache2',
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.5",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Intended Audience :: Developers",
+        'License :: OSI Approved :: Apache Software License',
+    ],
+    packages=["kinesis"],
+    install_requires=[
+        "aioboto3>=6.2.2",
+        "async-timeout==3.0.1",
+        "asyncio-throttle==0.1.1",
+        "objsize>=0.3.2",
+    ],
+    extras_require={
+        "redis": ["aredis>=1.1.4"]
+    }
+)

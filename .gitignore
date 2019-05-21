@@ -7,3 +7,5 @@ notes.txt
 deploy.sh
 temp.py
 .env
+.mypy_cache
+.tox

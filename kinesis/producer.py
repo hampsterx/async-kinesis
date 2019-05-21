@@ -7,7 +7,7 @@ from aiohttp import ClientConnectionError
 
 from asyncio.queues import QueueEmpty
 
-from asyncio_throttle import Throttler
+from .utils import Throttler
 from botocore.exceptions import ClientError
 
 from .base import Base

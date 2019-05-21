@@ -8,7 +8,7 @@ log = logging.getLogger(__name__)
 
 
 class BaseCheckPointer:
-    def __init__(self, name, id=None, loop=None):
+    def __init__(self, name="", id=None, loop=None):
         self.loop = loop if loop else asyncio.get_event_loop()
         self._id = id if id else os.getpid()
         self._name = name
@@ -39,6 +39,9 @@ class BaseCheckPointer:
             )
         )
         self._items.pop(shard_id)
+
+    def is_allocated(self, shard):
+        return shard['ShardId'] in self._items
 
 
 class BaseHeartbeatCheckPointer(BaseCheckPointer):

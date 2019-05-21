@@ -1,5 +1,5 @@
 import asyncio
-import aioboto3
+import aiobotocore
 import logging
 from async_timeout import timeout
 from asyncio import CancelledError
@@ -27,11 +27,12 @@ class Base:
 
     async def __aenter__(self):
 
-        self.client = aioboto3.client(
-            "kinesis",
-            endpoint_url=self.endpoint_url,
-            region_name=self.region_name,
-            loop=self.loop,
+        log.info("creating client with {}".format(self.endpoint_url))
+
+        session = aiobotocore.get_session(loop=self.loop)
+
+        self.client = session.create_client(
+            "kinesis", endpoint_url=self.endpoint_url, region_name=self.region_name
         )
 
         return self
@@ -42,6 +43,7 @@ class Base:
         await self.close()
 
     async def get_stream_description(self):
+
         try:
             return (await self.client.describe_stream(StreamName=self.stream_name))[
                 "StreamDescription"

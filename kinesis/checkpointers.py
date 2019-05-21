@@ -108,7 +108,9 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
         from aredis import StrictRedis
 
         self.client = StrictRedis(
-            host=os.environ.get("REDIS_HOST", "127.0.0.1"), loop=self.loop
+            host=os.environ.get("REDIS_HOST", "localhost"),
+            port=int(os.environ.get("REDIS_PORT", "6379")),
+            loop=self.loop,
         )
 
     async def do_heartbeat(self, key, value):

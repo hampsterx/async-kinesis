@@ -1,8 +1,12 @@
 import json
 import logging
+from bases import Bases
 
 try:
     import msgpack
+
+    bases = Bases()
+
 except:
     pass
 
@@ -12,7 +16,6 @@ log = logging.getLogger(__name__)
 
 
 class Aggregator:
-
     @classmethod
     def max_bytes(self):
         return 1024 * 1024
@@ -20,16 +23,13 @@ class Aggregator:
     @classmethod
     def validate_size(cls, size):
         if size > cls.max_bytes():
-            raise ExceededPutLimit(
-                "Put of {} bytes exceeded 1MB limit".format(size)
-            )
+            raise ExceededPutLimit("Put of {} bytes exceeded 1MB limit".format(size))
 
     def has_items(self):
         return False
 
 
 class StringWithoutAggregation(Aggregator):
-
     def add_item(self, item):
         size = len(item)
         self.validate_size(size)
@@ -37,7 +37,6 @@ class StringWithoutAggregation(Aggregator):
 
 
 class JsonWithoutAggregation(Aggregator):
-
     def serialize(self, item):
         return json.dumps(item)
 
@@ -56,7 +55,6 @@ class JsonWithoutAggregation(Aggregator):
 
 
 class JsonLineAggregation(JsonWithoutAggregation):
-
     def __init__(self):
         self.buffer = []
         self.size = 0
@@ -80,27 +78,27 @@ class JsonLineAggregation(JsonWithoutAggregation):
 
         else:
             log.debug(
-                "Overflowing item to queue with {} individual records with size of {} bytes".format(len(self.buffer),
-                                                                                                    self.size))
+                "Overflowing item to queue with {} individual records with size of {} bytes".format(
+                    len(self.buffer), self.size
+                )
+            )
             yield self.output()
             self.buffer = []
             self.size = 0
 
     def get_items(self):
-        log.debug("Flushing item to queue with {} individual records with size of {} bytes".format(len(self.buffer),
-                                                                                                   self.size))
+        log.debug(
+            "Flushing item to queue with {} individual records with size of {} bytes".format(
+                len(self.buffer), self.size
+            )
+        )
         yield self.output()
         self.buffer = []
         self.size = 0
 
     def parse(self, data):
-        for row in data.split(b'\n'):
+        for row in data.split(b"\n"):
             yield self.deserialize(row)
-
-
-from bases import Bases
-
-bases = Bases()
 
 
 class MsgPackAggregation(Aggregator):
@@ -121,10 +119,12 @@ class MsgPackAggregation(Aggregator):
     def output(self):
         frame = []
         for size, data in self.buffer:
-            frame.append(bases.toBase62(size).ljust(self.HEADER_SIZE, " ").encode('utf-8'))
+            frame.append(
+                bases.toBase62(size).ljust(self.HEADER_SIZE, " ").encode("utf-8")
+            )
             frame.append(data)
 
-        return b''.join(frame)
+        return b"".join(frame)
 
     def serialize(self, item):
         result = msgpack.packb(item, use_bin_type=True)
@@ -147,16 +147,21 @@ class MsgPackAggregation(Aggregator):
         else:
 
             log.debug(
-                "Overflowing item to queue with {} individual records with size of {} bytes".format(len(self.buffer),
-                                                                                                    self.size))
+                "Overflowing item to queue with {} individual records with size of {} bytes".format(
+                    len(self.buffer), self.size
+                )
+            )
 
             yield self.output()
             self.buffer = []
             self.size = 0
 
     def get_items(self):
-        log.debug("Flushing item to queue with {} individual records with size of {} bytes".format(len(self.buffer),
-                                                                                                   self.size))
+        log.debug(
+            "Flushing item to queue with {} individual records with size of {} bytes".format(
+                len(self.buffer), self.size
+            )
+        )
         yield self.output()
         self.buffer = []
         self.size = 0
@@ -167,9 +172,9 @@ class MsgPackAggregation(Aggregator):
         length = len(data)
 
         while True:
-            header = data[i:i + self.HEADER_SIZE].decode('utf-8').strip(" ")
+            header = data[i : i + self.HEADER_SIZE].decode("utf-8").strip(" ")
             size = bases.fromBase62(header)
-            item = data[i + self.HEADER_SIZE:i + self.HEADER_SIZE + size]
+            item = data[i + self.HEADER_SIZE : i + self.HEADER_SIZE + size]
             yield self.deserialize(item)
             i += self.HEADER_SIZE + size
             if i == length:

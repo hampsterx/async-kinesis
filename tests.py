@@ -1,7 +1,4 @@
 import os
-import pprint
-import uuid
-import aioboto3
 import uuid
 import asyncio
 import logging, coloredlogs
@@ -10,7 +7,7 @@ from asynctest import TestCase, fail_on
 from unittest import skipUnless
 from kinesis import (
     Consumer, Producer, MemoryCheckPointer, RedisCheckPointer,
-    StringWithoutAggregation, JsonWithoutAggregation, JsonLineAggregation, MsgPackAggregation)
+    StringWithoutAggregation, JsonLineAggregation, MsgPackAggregation)
 from kinesis import exceptions
 
 coloredlogs.install(level="DEBUG")
@@ -23,17 +20,19 @@ load_dotenv()
 
 # https://github.com/mhart/kinesalite
 # ./node_modules/.bin/kinesalite --shardLimit 1000
-ENDPOINT_URL = "http://localhost:4567"
+# see also docker-compose.yaml
+ENDPOINT_URL = os.environ.get("ENDPOINT_URL", "http://localhost:4567")
 
-TESTING_USE_AWS_KINESIS = os.environ.get("TESTING_USE_AWS_KINESIS", 0) == "1"
+TESTING_USE_AWS_KINESIS = os.environ.get("TESTING_USE_AWS_KINESIS", "0") == "1"
+
+# Use docker-compose one
+if "REDIS_PORT" not in os.environ:
+    os.environ["REDIS_PORT"] = "16379"
 
 
 class BaseKinesisTests(TestCase):
     async def setUp(self):
         self.stream_name = "test_{}".format(str(uuid.uuid4())[0:8])
-
-        # Uses global for storing session. wipe it out otherwise will be using this loop UGH
-        aioboto3.DEFAULT_SESSION = None
 
     def random_string(self, length):
         from random import choice
@@ -181,18 +180,22 @@ class KinesisTests(BaseKinesisTests):
     """
 
     async def test_stream_does_not_exist(self):
+
+        await asyncio.sleep(2)
+
         with self.assertRaises(exceptions.StreamDoesNotExist):
             async with Producer(
                 stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
             ) as producer:
                 await producer.put("test")
 
+
     async def test_create_stream_shard_limit_exceeded(self):
         with self.assertRaises(exceptions.StreamShardLimit):
             async with Producer(
                 stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
             ) as producer:
-                await producer.create_stream(shards=1000)
+                await producer.create_stream(shards=10001)  # must match kinesalite (--shardLimit)
 
     @fail_on(unused_loop=True, active_handles=True)
     async def test_producer_put(self):

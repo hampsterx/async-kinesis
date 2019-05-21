@@ -3,19 +3,32 @@ services:
 
   kinesis:
     image: vsouza/kinesis-local:latest
-    command: --port 4567 --shardLimit 1000
+    command: --port 4567 --shardLimit 10000
     restart: always
     ports:
       - 4567:4567
+  redis:
+    image: redis:latest
+    restart: always
+    ports:
+      - 16379:6379
 
-  pykinesis:
-     container_name: pykinesis
-     command: ['nosetests', 'tests']
-     env_file:
-      - .env
+  test:
+     container_name: async-kinesis-test
+     command: ['nosetests']
      volumes:
-      - ./test.py:/app/test.py
+      - ./tests.py:/app/tests.py
       - ./kinesis:/app/kinesis
      build:
        context: .
        dockerfile: Dockerfile
+     environment:
+      - AWS_DEFAULT_REGION=ap-southeast-2
+      - ENDPOINT_URL=http://kinesis:4567
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - AWS_ACCESS_KEY_ID=
+      - AWS_SECRET_ACCESS_KEY=
+     links:
+      - kinesis:kinesis
+      - redis:redis

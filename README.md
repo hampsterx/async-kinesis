@@ -2,6 +2,9 @@
 
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/python/black) [![PyPI version](https://badge.fury.io/py/async-kinesis.svg)](https://badge.fury.io/py/async-kinesis)
 
+```
+pip install async-kinesis
+```
 
 ## Features
 
@@ -19,7 +22,14 @@
 See [docs/design](./docs/DESIGN.md) for more details.
 See [docs/yetanother](docs/YETANOTHER.md) as to why reinvent the wheel.
 
+## Environment Variables
 
+As required by boto3
+
+```
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+```
 
 ## Producer
     
@@ -32,7 +42,7 @@ Options:
 
 (comments in quotes are Kinesis Limits as per AWS Docs)
 
-| Command | Default | Description |
+| Arg | Default | Description |
 | --- | --- | --- |
 | region_name | None | AWS Region |
 | buffer_time | 0.5 | Buffer time in seconds before auto flushing records |
@@ -57,7 +67,7 @@ Options:
 (comments in quotes are Kinesis Limits as per AWS Docs)
 
 
-| Command | Default | Description |
+| Arg | Default | Description |
 | --- | --- | --- |
 | region_name | None | AWS Region |
 | max_queue_size | 1000 | the fetch() task shard will block when queue is at max |
@@ -90,7 +100,61 @@ Requires ENV:
     REDIS_HOST
 ```
 
+## Aggregators
+
+
+Aggregators enable batching up multiple records to more efficiently use the stream.
+Refer https://aws.amazon.com/blogs/big-data/implementing-efficient-and-reliable-producers-with-the-amazon-kinesis-producer-library/
+
+
+| Class | Args | Description |
+| --- | --- | --- |
+| StringWithoutAggregation | None | Single String record |
+| JsonWithoutAggregation | None | Single JSON record |
+| JsonLineAggregation | None | Multiple JSON record separated by new line
+| MsgPackAggregation | None | Multiple Msgpack record separated by 4 byte (size) header 
+
 
 ## Benchmark/Example
+
+See [examples/benchmark.py](./examples/benchmark.py) for code
+
+todo
+
+## Unit Testing
+
+Uses https://github.com/mhart/kinesalite for local testing.
+
+Run tests via docker
+
+```
+docker-compose up --abort-on-container-exit --exit-code-from test
+```
+
+For local testing use
+
+```
+docker-compose up kinesis redis
+```
+
+then within your virtualenv
+
+```
+nosetests
+
+// or run individual test
+nosetests tests.py:KinesisTests.test_create_stream_shard_limit_exceeded
+```
+
+Note there are a few test cases using the *actual* AWS Kinesis (AWSKinesisTests)
+These require setting an env in order to run
+
+Create an ".env" file with
+
+```
+TESTING_USE_AWS_KINESIS=1
+```
+
+Note you can ignore these tests if submitting PR (unlikely to be affected)
 
 

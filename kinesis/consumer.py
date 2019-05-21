@@ -42,7 +42,7 @@ class Consumer(Base):
         iterator_type="TRIM_HORIZON",
         shard_fetch_rate=1,
         checkpointer=None,
-        aggregator=None
+        aggregator=None,
     ):
 
         super(Consumer, self).__init__(

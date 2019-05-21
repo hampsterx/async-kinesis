@@ -1,8 +1,6 @@
 import asyncio
 import logging
 import time
-import json
-import objsize
 from aiohttp import ClientConnectionError
 
 from asyncio.queues import QueueEmpty
@@ -12,6 +10,7 @@ from botocore.exceptions import ClientError
 
 from .base import Base
 from . import exceptions
+from .aggregators import JsonWithoutAggregation
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +33,7 @@ class Producer(Base):
         after_flush_fun=None,
         batch_size=500,
         max_queue_size=10000,
+        aggregator=None,
     ):
 
         super(Producer, self).__init__(
@@ -41,6 +41,8 @@ class Producer(Base):
         )
 
         self.buffer_time = buffer_time
+
+        self.aggregator = aggregator if aggregator else JsonWithoutAggregation()
 
         self.queue = asyncio.Queue(maxsize=max_queue_size, loop=self.loop)
 
@@ -101,16 +103,8 @@ class Producer(Base):
         if self.queue.qsize() >= self.batch_size:
             await self.flush()
 
-        data_str = json.dumps(data)
-        if len(data_str) > 1024 * 1024:
-            raise exceptions.ExceededPutLimit(
-                "Put of {} bytes exceeded 1MB limit".format(len(data_str))
-            )
-
-        # todo serializers
-        await self.queue.put(data_str)
-
-        # objsize.get_deep_size
+        for output in self.aggregator.add_item(data):
+            await self.queue.put(output)
 
     async def close(self):
         self.flush_task.cancel()
@@ -119,6 +113,10 @@ class Producer(Base):
     async def flush(self):
 
         self.is_flushing = True
+
+        if self.aggregator.has_items():
+            for output in self.aggregator.get_items():
+                await self.queue.put(output)
 
         # Overflow in case we run into trouble with a batch
         overflow = []

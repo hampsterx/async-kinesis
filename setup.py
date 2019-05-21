@@ -28,7 +28,6 @@ setup(
         "aioboto3>=6.2.2",
         "async-timeout==3.0.1",
         "asyncio-throttle==0.1.1",
-        "objsize>=0.3.2",
     ],
     extras_require={
         "redis": ["aredis>=1.1.4"]

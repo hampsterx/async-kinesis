@@ -8,7 +8,9 @@ import logging, coloredlogs
 from dotenv import load_dotenv
 from asynctest import TestCase, fail_on
 from unittest import skipUnless
-from kinesis import Consumer, Producer, MemoryCheckPointer, RedisCheckPointer
+from kinesis import (
+    Consumer, Producer, MemoryCheckPointer, RedisCheckPointer,
+    StringWithoutAggregation, JsonWithoutAggregation, JsonLineAggregation)
 from kinesis import exceptions
 
 coloredlogs.install(level="DEBUG")
@@ -19,6 +21,8 @@ log = logging.getLogger(__name__)
 
 load_dotenv()
 
+# https://github.com/mhart/kinesalite
+# ./node_modules/.bin/kinesalite --shardLimit 1000
 ENDPOINT_URL = "http://localhost:4567"
 
 TESTING_USE_AWS_KINESIS = os.environ.get("TESTING_USE_AWS_KINESIS", 0) == "1"
@@ -209,19 +213,12 @@ class KinesisTests(BaseKinesisTests):
     async def test_producer_put_above_limit(self):
         with self.assertRaises(exceptions.ExceededPutLimit):
             async with Producer(
-                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL,
+                  aggregator=StringWithoutAggregation()
             ) as producer:
                 await producer.create_stream(shards=1)
                 # The maximum size of the data payload of a record before base64-encoding is up to 1 MiB.
-                await producer.put(self.random_string(1024 * 1024))
-
-    async def test_producer_put_with_batching(self):
-        # todo
-        pass
-
-    async def test_producer_put_above_limit_with_msgpack(self):
-        # todo
-        pass
+                await producer.put(self.random_string(1024 * 1024+1))
 
     async def test_producer_put(self):
         # Expect to complete by lowering batch size until successful
@@ -251,7 +248,7 @@ class KinesisTests(BaseKinesisTests):
         ) as producer:
             await producer.create_stream(shards=1)
 
-            await producer.put("test")
+            await producer.put({'test': 123})
 
             await producer.flush()
 
@@ -264,7 +261,39 @@ class KinesisTests(BaseKinesisTests):
                     results.append(item)
 
             # Expect to have consumed from start as default iterator_type=TRIM_HORIZON
-            self.assertEquals(["test"], results)
+            self.assertEquals([{'test': 123}], results)
+
+    async def test_producer_and_consumer_consume_with_json_line_aggregator(self):
+
+        aggregator = JsonLineAggregation()
+
+        async with Producer(
+            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL,
+                aggregator=aggregator
+        ) as producer:
+            await producer.create_stream(shards=1)
+
+            for x in range(0, 10):
+                await producer.put({'test': x})
+
+            await producer.flush()
+
+            results = []
+
+            async with Consumer(
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL,
+                aggregator=aggregator
+            ) as consumer:
+                async for item in consumer:
+                    results.append(item)
+
+            # Expect to have consumed from start as default iterator_type=TRIM_HORIZON
+
+            self.assertEqual(len(results), 10)
+
+            self.assertEquals(results[0], {'test': 0})
+            self.assertEquals(results[-1], {'test': 9})
+
 
     async def test_producer_and_consumer_consume_queue_full(self):
         async with Producer(

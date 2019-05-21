@@ -12,6 +12,8 @@
   - ie multiple independent clients are saturating the Shards
 - Checkpointing with heartbeats
   - deadlock + reallocation of shards if checkpoint fails to heartbeat within "session_timeout"
+- aggregators
+    - json line delimited
 
 ## Consumer Design
 
@@ -70,7 +72,10 @@ Options:
    
 * after_flush_fun
    > async function to call after doing a flush (err put_records()) call
-                 
+
+* aggregator=JsonWithoutAggregation()
+   > Record aggregator. Default is JSON without aggregation
+   > Note this is highly inefficient as each record can be up to 1Mib
 
 ## Consumer
 
@@ -107,8 +112,11 @@ Options:
 * shard_fetch_rate=5
     > No of fetches per second (max = 5)           
 
-* checkpointer=None
+* checkpointer=MemoryCheckPointer()
     > Checkpointer to use
+
+* aggregator=JsonWithoutAggregation()
+   > Record aggregator. Must Match aggregator used by Producer()
 
 
 ## Checkpointers

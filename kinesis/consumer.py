@@ -40,7 +40,7 @@ class Consumer(Base):
         record_limit=10000,
         sleep_time_no_records=2,
         iterator_type="TRIM_HORIZON",
-        shard_fetch_rate=5,
+        shard_fetch_rate=1,
         checkpointer=None,
         aggregator=None
     ):

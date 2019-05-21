@@ -27,21 +27,13 @@ class BaseCheckPointer:
         return self._items.get(shard_id)
 
     async def close(self):
-        log.warning("{} stopping..".format(self.get_ref()))
+        log.info("{} stopping..".format(self.get_ref()))
         await asyncio.gather(
             *[self.deallocate(shard_id) for shard_id in self._items.keys()]
         )
 
-    async def deallocate(self, shard_id):
-        log.info(
-            "{} deallocated on {}@{}".format(
-                self.get_ref(), shard_id, self._items[shard_id]
-            )
-        )
-        self._items.pop(shard_id)
-
-    def is_allocated(self, shard):
-        return shard['ShardId'] in self._items
+    def is_allocated(self, shard_id):
+        return shard_id in self._items
 
 
 class BaseHeartbeatCheckPointer(BaseCheckPointer):
@@ -70,21 +62,34 @@ class BaseHeartbeatCheckPointer(BaseCheckPointer):
                 key = self.get_key(shard_id)
                 val = {"ref": self.get_ref(), "ts": self.get_ts(), "sequence": sequence}
                 log.info("Heartbeating {}@{}".format(shard_id, sequence))
-                await self.client.set(key, json.dumps(val))
+                await self.do_heartbeat(key, val)
 
 
 class MemoryCheckPointer(BaseCheckPointer):
+    async def deallocate(self, shard_id):
+        log.info(
+            "{} deallocated on {}@{}".format(
+                self.get_ref(), shard_id, self._items[shard_id]
+            )
+        )
+        self._items[shard_id]["active"] = False
+
+    def is_allocated(self, shard_id):
+        return shard_id in self._items and self._items[shard_id]["active"]
+
     async def allocate(self, shard_id):
         if shard_id not in self._items:
-            self._items[shard_id] = None
+            self._items[shard_id] = {"sequence": None}
 
-        return True, self._items[shard_id]
+        self._items[shard_id]["active"] = True
+
+        return True, self._items[shard_id]["sequence"]
 
     async def checkpoint(self, shard_id, sequence):
         log.debug(
             "{} checkpointed on {} @ {}".format(self.get_ref(), shard_id, sequence)
         )
-        self._items[shard_id] = sequence
+        self._items[shard_id]["sequence"] = sequence
 
 
 class RedisCheckPointer(BaseHeartbeatCheckPointer):
@@ -105,6 +110,9 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
         self.client = StrictRedis(
             host=os.environ.get("REDIS_HOST", "127.0.0.1"), loop=self.loop
         )
+
+    async def do_heartbeat(self, key, value):
+        await self.client.set(key, json.dumps(value))
 
     def get_key(self, shard_id):
         return "pyredis-{}-{}".format(self._name, shard_id)
@@ -130,7 +138,7 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
 
         if previous_val["ref"] != self.get_ref():
             raise NotImplementedError(
-                "{} checkopointed on {} but ref is different".format(
+                "{} checkpointed on {} but ref is different".format(
                     self.get_ref(), shard_id, val["ref"]
                 )
             )

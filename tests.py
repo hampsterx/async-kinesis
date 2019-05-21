@@ -21,7 +21,7 @@ load_dotenv()
 
 ENDPOINT_URL = "http://localhost:4567"
 
-TESTING_USE_AWS_KINESIS = os.environ.get('TESTING_USE_AWS_KINESIS', 0) == "1"
+TESTING_USE_AWS_KINESIS = os.environ.get("TESTING_USE_AWS_KINESIS", 0) == "1"
 
 
 class BaseKinesisTests(TestCase):
@@ -324,7 +324,6 @@ class KinesisTests(BaseKinesisTests):
             self.assertGreaterEqual(len(results), 50)
             self.assertLessEqual(len(results), 70)
 
-    @skipUnless(False, "test")
     async def test_producer_and_consumer_consume_with_checkpointer_and_latest(self):
         async with Producer(
             stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
@@ -356,13 +355,13 @@ class KinesisTests(BaseKinesisTests):
             self.assertEquals(1, len(checkpoints))
 
             # none as no records yet (using LATEST)
-            self.assertIsNone(checkpoints[list(checkpoints.keys())[0]])
+            self.assertIsNone(checkpoints[list(checkpoints.keys())[0]]["sequence"])
 
             results = []
 
-            log.info("Starting consumer again..")
+            log.info("checkpointer checkpoints: {}".format(checkpoints))
 
-            checkpointer = MemoryCheckPointer(name="test")
+            log.info("Starting consumer again..")
 
             async with Consumer(
                 stream_name=self.stream_name,
@@ -372,14 +371,14 @@ class KinesisTests(BaseKinesisTests):
                 sleep_time_no_records=0.5,
             ) as consumer:
 
-                # Manually start (so we can be sure we got some results)
+                # Manually start
                 await consumer.start_consumer()
 
                 await producer.put("test.B")
 
                 await producer.flush()
 
-                log.info("waiting before consuming..")
+                log.info("waiting..")
 
                 await asyncio.sleep(1)
 
@@ -392,8 +391,10 @@ class KinesisTests(BaseKinesisTests):
 
             checkpoints = checkpointer.get_all_checkpoints()
 
+            log.info("checkpointer checkpoints: {}".format(checkpoints))
+
             # expect not None as has processed records
-            self.assertIsNotNone(checkpoints[list(checkpoints.keys())[0]])
+            self.assertIsNotNone(checkpoints[list(checkpoints.keys())[0]]["sequence"])
 
             # now add some records
             for i in range(0, 10):
@@ -416,9 +417,9 @@ class KinesisTests(BaseKinesisTests):
                 async for item in consumer:
                     results.append(item)
 
+            # Expect results as checkpointer resumed from prior sequence
             self.assertEquals(10, len(results))
 
-    @skipUnless(False, "test")
     async def test_producer_and_consumer_consume_multiple_shards_with_redis_checkpointer(
         self
     ):
@@ -437,8 +438,6 @@ class KinesisTests(BaseKinesisTests):
             checkpointer = RedisCheckPointer(
                 name="test-{}".format(str(uuid.uuid4())[0:8]), heartbeat_frequency=3
             )
-
-            # checkpointer = MemoryCheckPointer(name="test")
 
             async with Consumer(
                 stream_name=self.stream_name,
@@ -517,7 +516,9 @@ class AWSKinesisTests(BaseKinesisTests):
             )
         )
 
-    @skipUnless(TESTING_USE_AWS_KINESIS, "Requires TESTING_USE_AWS_KINESIS flag to be set")
+    @skipUnless(
+        TESTING_USE_AWS_KINESIS, "Requires TESTING_USE_AWS_KINESIS flag to be set"
+    )
     async def test_consumer_consume_fetch_limit(self):
         # logging.getLogger('kinesis.consumer').setLevel(logging.WARNING)
 

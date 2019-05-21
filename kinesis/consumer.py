@@ -84,16 +84,18 @@ class Consumer(Base):
 
         # todo: check for/handle new shards
 
-        shards_in_use = [s for s in self.shards if self.checkpointer.is_allocated(s)]
+        shards_in_use = [
+            s for s in self.shards if self.checkpointer.is_allocated(s["ShardId"])
+        ]
 
-        log.debug("shards in use: {}".format([s['ShardId'] for s in shards_in_use]))
+        log.debug("shards in use: {}".format([s["ShardId"] for s in shards_in_use]))
 
         for shard in self.shards:
 
             if not self.is_fetching:
                 break
 
-            if not self.checkpointer.is_allocated(shard):
+            if not self.checkpointer.is_allocated(shard["ShardId"]):
                 if (
                     self.max_shard_consumers
                     and len(shards_in_use) >= self.max_shard_consumers
@@ -129,12 +131,14 @@ class Consumer(Base):
                         shard_id=shard["ShardId"], last_sequence_number=checkpoint
                     )
 
-                if shard.get("ShardIterator"):
+                if "ShardIterator" in shard:
                     shard["stats"] = ShardStats()
                     shard["throttler"] = Throttler(
                         rate_limit=self.shard_fetch_rate, period=1, loop=self.loop
                     )
                     shards_in_use.append(shard)
+
+                    log.debug("Shard count now at {}".format(len(shards_in_use)))
 
             if shard.get("fetch"):
                 if shard["fetch"].done():

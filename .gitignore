@@ -9,3 +9,4 @@ temp.py
 .env
 .mypy_cache
 .tox
+release.sh

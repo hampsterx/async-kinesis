@@ -4,7 +4,7 @@ with open("README.md") as f:
     long_description = f.read()
 
 setup(
-    name="py-kinesis",
+    name="async-kinesis",
     description="AsyncIO Kinesis Library",
     long_description=long_description,
     long_description_content_type="text/markdown",

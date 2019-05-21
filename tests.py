@@ -10,7 +10,7 @@ from asynctest import TestCase, fail_on
 from unittest import skipUnless
 from kinesis import (
     Consumer, Producer, MemoryCheckPointer, RedisCheckPointer,
-    StringWithoutAggregation, JsonWithoutAggregation, JsonLineAggregation)
+    StringWithoutAggregation, JsonWithoutAggregation, JsonLineAggregation, MsgPackAggregation)
 from kinesis import exceptions
 
 coloredlogs.install(level="DEBUG")
@@ -294,6 +294,36 @@ class KinesisTests(BaseKinesisTests):
             self.assertEquals(results[0], {'test': 0})
             self.assertEquals(results[-1], {'test': 9})
 
+    async def test_producer_and_consumer_consume_with_msgpack_aggregator(self):
+
+        aggregator = MsgPackAggregation()
+
+        async with Producer(
+            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL,
+                aggregator=aggregator
+        ) as producer:
+            await producer.create_stream(shards=1)
+
+            for x in range(0, 10):
+                await producer.put({'test': x})
+
+            await producer.flush()
+
+            results = []
+
+            async with Consumer(
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL,
+                aggregator=aggregator
+            ) as consumer:
+                async for item in consumer:
+                    results.append(item)
+
+            # Expect to have consumed from start as default iterator_type=TRIM_HORIZON
+
+            self.assertEqual(len(results), 10)
+
+            self.assertEquals(results[0], {'test': 0})
+            self.assertEquals(results[-1], {'test': 9})
 
     async def test_producer_and_consumer_consume_queue_full(self):
         async with Producer(

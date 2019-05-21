@@ -15,7 +15,7 @@
 - Checkpointing with heartbeats
   - deadlock + reallocation of shards if checkpoint fails to heartbeat within "session_timeout"
 - aggregators
-    - json line delimited
+    - json line delimited, msgpack
 
 ## Consumer Design
 

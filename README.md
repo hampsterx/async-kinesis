@@ -32,7 +32,9 @@ AWS_SECRET_ACCESS_KEY
 ```
 
 ## Producer
-    
+
+    from kinesis import Producer
+
     async with Producer(stream_name="test") as producer:
         # Put item onto queue to be flushed via put_records()
         await producer.put({'my': 'data'})
@@ -55,6 +57,8 @@ Options:
 
 ## Consumer
 
+    from kinesis import Consumer
+
     async with Consumer(stream_name="test") as consumer:
         while True:
             async for item in consumer:
@@ -70,7 +74,7 @@ Options:
 | Arg | Default | Description |
 | --- | --- | --- |
 | region_name | None | AWS Region |
-| max_queue_size | 1000 | the fetch() task shard will block when queue is at max |
+| max_queue_size | 10000 | the fetch() task shard will block when queue is at max |
 | max_shard_consumers | None | Max number of shards to use. None = all |
 | record_limit | 10000 | Number of records to fetch with get_records() |
 | sleep_time_no_records | 2 | No of seconds to sleep when caught up |
@@ -117,7 +121,7 @@ Refer https://aws.amazon.com/blogs/big-data/implementing-efficient-and-reliable-
 
 ## Benchmark/Example
 
-See [examples/benchmark.py](./examples/benchmark.py) for code
+See [benchmark.py](./benchmark.py) for code
 
 todo
 

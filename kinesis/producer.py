@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+import math
 from aiohttp import ClientConnectionError
 
 from asyncio.queues import QueueEmpty
@@ -52,6 +53,7 @@ class Producer(Base):
         # or 1,000 records per second for writes
         self.put_rate_limit_per_shard = put_rate_limit_per_shard
         self.put_rate_throttle = None
+        self.put_rate_data_throttle = None
 
         self.flush_task = asyncio.Task(self._flush(), loop=self.loop)
         self.is_flushing = False
@@ -94,6 +96,17 @@ class Producer(Base):
             loop=self.loop,
         )
 
+        # measured in kb (ie 1 Mbit per second)
+        # Keep it a bit under~
+        self.put_rate_data_throttle = Throttler(
+            # todo: this is not relevant. allow None
+            rate_limit=1000,
+            # kb per second. Go below a bit to avoid hitting the threshold
+            size_limit=990,
+            period=1,
+            loop=self.loop,
+        )
+
     async def put(self, data):
 
         if not self.stream_status == "ACTIVE":
@@ -123,6 +136,17 @@ class Producer(Base):
 
         while True:
 
+            total_records = 0
+            max_size = 0
+            total_size = 0
+
+            if self.queue.qsize() > 0 or len(overflow) > 0:
+                log.info(
+                    "in flush.. queue={} overflow={}".format(
+                        self.queue.qsize(), len(overflow)
+                    )
+                )
+
             items = []
 
             num = min(self.batch_size, self.queue.qsize() + len(overflow))
@@ -131,31 +155,52 @@ class Producer(Base):
                 async with self.put_rate_throttle:
 
                     if overflow:
-                        items.append(overflow.pop())
-                        continue
+                        item = overflow.pop()
 
-                    try:
-                        items.append(self.queue.get_nowait())
-                    except QueueEmpty:
+                    else:
+                        try:
+                            item = self.queue.get_nowait()
+                        except QueueEmpty:
+                            break
+
+                    size_kb = math.ceil(item[0] / 1024)
+
+                    max_size += size_kb
+
+                    if max_size > 1024:
+                        overflow.append(item)
                         break
+
+                    total_size += size_kb
+                    total_records += item[1]
+
+                    async with self.put_rate_data_throttle(size=total_size):
+                        pass
+
+                    items.append(item)
 
             if not items:
                 break
 
-            log.debug("doing flush with {} items".format(len(items)))
+            log.debug(
+                "doing flush with {} record ({} items) @ {} kb".format(
+                    len(items), total_records, total_size
+                )
+            )
 
             try:
                 # todo: custom partition key
                 result = await self.client.put_records(
                     Records=[
                         {
-                            "Data": item,
+                            "Data": item[-1],
                             "PartitionKey": "{0}{1}".format(time.clock(), time.time()),
                         }
                         for item in items
                     ],
                     StreamName=self.stream_name,
                 )
+
             except ClientError as err:
                 code = err.response["Error"]["Code"]
 
@@ -203,6 +248,7 @@ class Producer(Base):
                         )
 
                     if "ProvisionedThroughputExceededException" in errors:
+                        # todo: make this work with small no's of items
                         log.warning(
                             "Throughput exceeding, slowing down the rate by 10%"
                         )

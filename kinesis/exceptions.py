@@ -20,3 +20,7 @@ class ExceededPutLimit(Exception):
 
 class UnknownException(Exception):
     pass
+
+
+class ValidationError(Exception):
+    pass

@@ -35,7 +35,7 @@ class Consumer(Base):
         loop=None,
         endpoint_url=None,
         region_name=None,
-        max_queue_size=1000,
+        max_queue_size=10000,
         max_shard_consumers=None,
         record_limit=10000,
         sleep_time_no_records=2,
@@ -91,7 +91,7 @@ class Consumer(Base):
             s for s in self.shards if self.checkpointer.is_allocated(s["ShardId"])
         ]
 
-        log.debug("shards in use: {}".format([s["ShardId"] for s in shards_in_use]))
+        # log.debug("shards in use: {}".format([s["ShardId"] for s in shards_in_use]))
 
         for shard in self.shards:
 
@@ -154,15 +154,30 @@ class Consumer(Base):
 
                     records = result["Records"]
 
-                    log.debug(
-                        "Shard {} got {} records".format(shard["ShardId"], len(records))
-                    )
-
                     if records:
+                        log.debug(
+                            "Shard {} got {} records".format(
+                                shard["ShardId"], len(records)
+                            )
+                        )
+
                         for row in result["Records"]:
-                            # aggregator
-                            for output in self.aggregator.parse(row["Data"]):
+                            for n, output in enumerate(
+                                self.aggregator.parse(row["Data"])
+                            ):
+                                if n % 1000 == 0:
+                                    log.debug(
+                                        "Shard {} added 1k items..".format(
+                                            shard["ShardId"]
+                                        )
+                                    )
                                 await self.queue.put(output)
+
+                        log.info(
+                            "Shard {} added {} items from {} records".format(
+                                shard["ShardId"], n, len(records)
+                            )
+                        )
 
                         # Add checkpoint record
                         last_record = result["Records"][-1]
@@ -281,7 +296,7 @@ class Consumer(Base):
     def __aiter__(self):
         return self
 
-    async def start_consumer(self):
+    async def start_consumer(self, wait_iterations=10, wait_sleep=0.25):
 
         await self.start()
 
@@ -289,9 +304,9 @@ class Consumer(Base):
         self.fetch_task = asyncio.Task(self._fetch(), loop=self.loop)
 
         # Wait a while until we have some results
-        for i in range(0, 10):
+        for i in range(0, wait_iterations):
             if self.fetch_task and self.queue.qsize() == 0:
-                await asyncio.sleep(0.25, loop=self.loop)
+                await asyncio.sleep(wait_sleep, loop=self.loop)
 
         log.debug("start_consumer completed.. queue size={}".format(self.queue.qsize()))
 
@@ -318,5 +333,5 @@ class Consumer(Base):
 
             except QueueEmpty:
                 log.debug("Queue empty..")
-                await asyncio.sleep(1, loop=self.loop)
+                await asyncio.sleep(self.sleep_time_no_records, loop=self.loop)
                 raise StopAsyncIteration

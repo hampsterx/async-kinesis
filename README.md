@@ -112,7 +112,7 @@ Refer https://aws.amazon.com/blogs/big-data/implementing-efficient-and-reliable-
 
 
 | Class | Aggregator | Serializer | Description |
-| --- | --- | --- |
+| --- | --- | --- | --- |
 | StringProcessor | SimpleAggregator | StringSerializer | Single String record |
 | JsonProcessor | SimpleAggregator | JsonSerializer | Single JSON record |
 | JsonLineProcessor | NewlineAggregator | JsonSerializer | Multiple JSON record separated by new line char

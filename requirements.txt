@@ -1,5 +1,4 @@
 aiobotocore==0.10.2
 async-timeout==3.0.1
 aredis==1.1.4
-bases.py==0.2.2
 msgpack==0.6.1

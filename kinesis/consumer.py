@@ -8,7 +8,7 @@ from botocore.exceptions import ClientError
 from .utils import Throttler
 from .base import Base
 from .checkpointers import MemoryCheckPointer
-from .aggregators import JsonWithoutAggregation
+from .processors import JsonProcessor
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class Consumer(Base):
         iterator_type="TRIM_HORIZON",
         shard_fetch_rate=1,
         checkpointer=None,
-        aggregator=None,
+        processor=None,
     ):
 
         super(Consumer, self).__init__(
@@ -61,7 +61,7 @@ class Consumer(Base):
 
         self.checkpointer = checkpointer if checkpointer else MemoryCheckPointer()
 
-        self.aggregator = aggregator if aggregator else JsonWithoutAggregation()
+        self.processor = processor if processor else JsonProcessor()
 
         self.iterator_type = iterator_type
 
@@ -163,7 +163,7 @@ class Consumer(Base):
 
                         for row in result["Records"]:
                             for n, output in enumerate(
-                                self.aggregator.parse(row["Data"])
+                                self.processor.parse(row["Data"])
                             ):
                                 if n % 1000 == 0:
                                     log.debug(

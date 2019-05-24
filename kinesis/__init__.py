@@ -1,9 +1,16 @@
 from .producer import Producer
 from .consumer import Consumer
-from .checkpointers import MemoryCheckPointer, RedisCheckPointer
-from .aggregators import (
-    StringWithoutAggregation,
-    JsonWithoutAggregation,
-    JsonLineAggregation,
-    MsgPackAggregation,
+from .processors import (
+    StringProcessor,
+    JsonProcessor,
+    JsonLineProcessor,
+    MsgpackProcessor,
 )
+from .serializers import (
+    StringSerializer,
+    JsonSerializer,
+    MsgpackSerializer,
+    UTFByteSerializer,
+)
+from .checkpointers import MemoryCheckPointer, RedisCheckPointer
+from .aggregators import SimpleAggregator, NewlineAggregator, NetstringAggregator

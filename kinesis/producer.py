@@ -11,7 +11,7 @@ from botocore.exceptions import ClientError
 
 from .base import Base
 from . import exceptions
-from .aggregators import JsonWithoutAggregation
+from .processors import JsonProcessor
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class Producer(Base):
         after_flush_fun=None,
         batch_size=500,
         max_queue_size=10000,
-        aggregator=None,
+        processor=None,
     ):
 
         super(Producer, self).__init__(
@@ -43,7 +43,7 @@ class Producer(Base):
 
         self.buffer_time = buffer_time
 
-        self.aggregator = aggregator if aggregator else JsonWithoutAggregation()
+        self.processor = processor if processor else JsonProcessor()
 
         self.queue = asyncio.Queue(maxsize=max_queue_size, loop=self.loop)
 
@@ -116,7 +116,7 @@ class Producer(Base):
         if self.queue.qsize() >= self.batch_size:
             await self.flush()
 
-        for output in self.aggregator.add_item(data):
+        for output in self.processor.add_item(data):
             await self.queue.put(output)
 
     async def close(self):
@@ -127,8 +127,8 @@ class Producer(Base):
 
         self.is_flushing = True
 
-        if self.aggregator.has_items():
-            for output in self.aggregator.get_items():
+        if self.processor.has_items():
+            for output in self.processor.get_items():
                 await self.queue.put(output)
 
         # Overflow in case we run into trouble with a batch
@@ -141,8 +141,8 @@ class Producer(Base):
             total_size = 0
 
             if self.queue.qsize() > 0 or len(overflow) > 0:
-                log.info(
-                    "in flush.. queue={} overflow={}".format(
+                log.debug(
+                    "flush queue={} overflow={}".format(
                         self.queue.qsize(), len(overflow)
                     )
                 )
@@ -210,12 +210,19 @@ class Producer(Base):
                         in err.response["Error"]["Message"]
                     ):
                         log.warning(
-                            "Batch size {} exceeded the limit. retrying with 10% less".format(
+                            "Batch size {} exceeded the limit. retrying with less".format(
                                 len(items)
                             )
                         )
                         overflow = items
+
+                        existing_batch_size = self.batch_size
                         self.batch_size -= round(self.batch_size / 10)
+
+                        # Must be small batch of big items, take at least one out..
+                        if existing_batch_size == self.batch_size:
+                            self.batch_size -= 1
+
                         continue
                     else:
                         raise
@@ -249,9 +256,7 @@ class Producer(Base):
 
                     if "ProvisionedThroughputExceededException" in errors:
                         # todo: make this work with small no's of items
-                        log.warning(
-                            "Throughput exceeding, slowing down the rate by 10%"
-                        )
+                        log.warning("Throughput exceeded, slowing down the rate by 10%")
                         overflow = items
                         self.put_rate_limit_per_shard -= round(
                             self.put_rate_limit_per_shard / 10

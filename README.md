@@ -15,7 +15,7 @@ pip install async-kinesis
   - ie multiple independent clients are saturating the Shards
 - Checkpointing with heartbeats
   - deadlock + reallocation of shards if checkpoint fails to heartbeat within "session_timeout"
-- aggregators
+- processors (aggregator + serializer)
     - json line delimited, msgpack
 
 
@@ -52,7 +52,7 @@ Options:
 | batch_size | 500 | "Each PutRecords request can support up to 500 records" |
 | max_queue_size | 10000 | put() method will block when queue is at max |
 | after_flush_fun | None | async function to call after doing a flush (err put_records()) call |
-| aggregator | JsonWithoutAggregation() | Record aggregator. Default is JSON without aggregation. Note this is highly inefficient as each record can be up to 1Mib |
+| processor | JsonProcessor() | Record aggregator/serializer. Default is JSON without aggregation. Note this is highly inefficient as each record can be up to 1Mib |
 
 
 ## Consumer
@@ -81,7 +81,7 @@ Options:
 | iterator_type | TRIM_HORIZON | Default shard iterator type for new/unknown shards (ie start from start of stream). Alternative is "LATEST" (ie end of stream) |
 | shard_fetch_rate | 1 | No of fetches per second (max = 5). 1 is recommended as allows having multiple consumers without hitting the max limit. |
 | checkpointer | MemoryCheckPointer() | Checkpointer to use |
-| aggregator | JsonWithoutAggregation() |  Record aggregator. Must Match aggregator used by Producer() |
+| processor | JsonProcessor() |  Record aggregator/serializer. Must Match processor used by Producer() |
 
 
 ## Checkpointers
@@ -104,19 +104,29 @@ Requires ENV:
     REDIS_HOST
 ```
 
-## Aggregators
+## Processors (Aggregator + Serializer)
 
 
-Aggregators enable batching up multiple records to more efficiently use the stream.
+Aggregation enable batching up multiple records to more efficiently use the stream.
 Refer https://aws.amazon.com/blogs/big-data/implementing-efficient-and-reliable-producers-with-the-amazon-kinesis-producer-library/
 
 
 | Class | Args | Description |
 | --- | --- | --- |
-| StringWithoutAggregation | None | Single String record |
-| JsonWithoutAggregation | None | Single JSON record |
-| JsonLineAggregation | None | Multiple JSON record separated by new line
-| MsgPackAggregation | None | Multiple Msgpack record separated by 4 byte (size) header 
+| StringProcessor | None | Single String record |
+| JsonProcessor | None | Single JSON record |
+| JsonLineProcessor | None | Multiple JSON record separated by new line char
+| MsgpackProcessor | None | Multiple Msgpack record framed with Netstring Protocol (https://en.wikipedia.org/wiki/Netstring)
+
+Note you can define your own processor easily as it's simply a combination of Aggregator + Serializer.
+
+```
+class MsgpackProcessor(Processor, NetstringAggregator, MsgpackSerializer):
+    pass
+```
+
+Just define a new Serializer class with serialize() and deserialize() methods.
+
 
 
 ## Benchmark/Example

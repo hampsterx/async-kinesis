@@ -28,7 +28,6 @@ setup(
         "aiobotocore>=0.10.2",
         "async-timeout==3.0.1",
         "asyncio-throttle==0.1.1",
-        "bases.py==0.2.2",
     ],
     extras_require={
         "redis": ["aredis>=1.1.4"],

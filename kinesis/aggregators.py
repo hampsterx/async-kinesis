@@ -1,18 +1,7 @@
-import json
 import logging
 import math
 from collections import namedtuple
-from bases import Bases
 from .exceptions import ValidationError
-
-try:
-    import msgpack
-
-    bases = Bases()
-
-except:
-    pass
-
 from .exceptions import ExceededPutLimit
 
 log = logging.getLogger(__name__)
@@ -20,7 +9,7 @@ log = logging.getLogger(__name__)
 OutputItem = namedtuple("OutputItem", ["size", "n", "data"])
 
 
-class Aggregator:
+class BaseAggregator:
     def __init__(self, max_size=None):
 
         if not max_size:
@@ -53,54 +42,51 @@ class Aggregator:
         if size > self.max_bytes:
             raise ExceededPutLimit("Put of {} bytes exceeded 1MB limit".format(size))
 
-    def has_items(self):
-        return False
-
-    def add_item(self, item):
-        size = len(item)
-        self.validate_size(size)
-        yield OutputItem(size=size, n=1, data=item)
-
-    def parse(self, data):
-        return data
-
-
-class StringWithoutAggregation(Aggregator):
-    pass
-
-
-class JsonWithoutAggregation(Aggregator):
-    def serialize(self, item):
-        return json.dumps(item)
-
-    def deserialize(self, data):
-        return json.loads(data)
-
-    def add_item(self, item):
-        output = self.serialize(item)
-        size = len(output)
-        self.validate_size(size)
-
-        yield OutputItem(size=size, n=1, data=output)
-
     def parse(self, data):
         yield self.deserialize(data)
 
 
-class BaseAggregation(JsonWithoutAggregation):
+class SimpleAggregator(BaseAggregator):
+    """
+    Simple Aggregator (Does NOT aggregate)
+    Sends a single record only (high inefficient)
+    """
+
     def has_items(self):
-        return self.size > 0
+        return False
 
     def add_item(self, item):
-
         output = self.serialize(item)
         size = len(output)
 
         self.validate_size(size)
 
-        if size + self.size + self.HEADER_SIZE < self.max_bytes:
+        yield OutputItem(size=size, n=1, data=output)
+
+
+class Aggregator(BaseAggregator):
+    """
+    Aggregator
+    Sends an aggregated record
+    """
+
+    def has_items(self):
+        return self.size > 0
+
+    def get_header_size(self, data):
+        raise NotImplementedError()
+
+    def add_item(self, item):
+        output = self.serialize(item)
+        size = len(output)
+
+        self.validate_size(size)
+
+        header_size = self.get_header_size(output)
+
+        if size + self.size + header_size < self.max_bytes:
             self.buffer.append((size, output))
-            self.size += size + self.HEADER_SIZE
+            self.size += size + header_size
 
         else:
             log.debug(
@@ -123,43 +109,39 @@ class BaseAggregation(JsonWithoutAggregation):
         self.size = 0
 
 
-class JsonLineAggregation(BaseAggregation):
-
-    HEADER_SIZE = 1
+class NewlineAggregator(Aggregator):
+    def get_header_size(self, output):
+        return 1
 
     def output(self):
-        return "\n".join([x[1] for x in self.buffer])
+        return "\n".join([x[1] for x in self.buffer] + [""])
 
     def parse(self, data):
         for row in data.split(b"\n"):
-            yield self.deserialize(row)
+            if row:
+                yield self.deserialize(row)
 
 
-class MsgPackAggregation(BaseAggregation):
+class NetstringAggregator(Aggregator):
     """
-    Msg Pack
-    Framing = 4 bytes (for size) + data
+    Netstring Aggregation
+    Framing = {x} bytes (ascii int for size) + 1 byte (":") + data + trailing ","
+    See: https://en.wikipedia.org/wiki/Netstring
     """
 
-    HEADER_SIZE = 4
+    def get_header_size(self, output):
+        return len(str(len(output))) + 2
 
     def output(self):
         frame = []
 
         for size, data in self.buffer:
-            frame.append(
-                bases.toBase62(size).ljust(self.HEADER_SIZE, " ").encode("utf-8")
-            )
+            frame.append(str(size).encode("ascii"))
+            frame.append(b":")
             frame.append(data)
+            frame.append(b",")
 
         return b"".join(frame)
-
-    def serialize(self, item):
-        result = msgpack.packb(item, use_bin_type=True)
-        return result
-
-    def deserialize(self, data):
-        return msgpack.unpackb(data, raw=False)
 
     def parse(self, data):
 
@@ -167,10 +149,11 @@ class MsgPackAggregation(BaseAggregation):
         length = len(data)
 
         while True:
-            header = data[i : i + self.HEADER_SIZE].decode("utf-8").strip(" ")
-            size = bases.fromBase62(header)
-            item = data[i + self.HEADER_SIZE : i + self.HEADER_SIZE + size]
+            header_offset = data[i:].index(b":")
+            size = int(data[i : i + header_offset].decode("ascii"))
+            item = data[i + header_offset + 1 : i + header_offset + 1 + size]
             yield self.deserialize(item)
-            i += self.HEADER_SIZE + size
+
+            i += header_offset + size + 2
             if i == length:
                 break

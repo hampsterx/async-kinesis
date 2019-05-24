@@ -6,14 +6,20 @@ from dotenv import load_dotenv
 from asynctest import TestCase as AsynTestCase, fail_on
 from unittest import skipUnless, TestCase
 from kinesis import Consumer, Producer, MemoryCheckPointer, RedisCheckPointer
+from kinesis.processors import (
+    StringProcessor,
+    JsonProcessor,
+    JsonLineProcessor,
+    MsgpackProcessor,
+)
 from kinesis.aggregators import (
     Aggregator,
-    StringWithoutAggregation,
-    JsonWithoutAggregation,
-    JsonLineAggregation,
-    MsgPackAggregation,
+    SimpleAggregator,
+    NewlineAggregator,
+    NetstringAggregator,
     OutputItem,
 )
+from kinesis.serializers import StringSerializer, UTFByteSerializer
 from kinesis import exceptions
 
 coloredlogs.install(level="DEBUG")
@@ -36,15 +42,17 @@ if "REDIS_PORT" not in os.environ:
     os.environ["REDIS_PORT"] = "16379"
 
 
-class BaseKinesisTests(AsynTestCase):
-    async def setUp(self):
-        self.stream_name = "test_{}".format(str(uuid.uuid4())[0:8])
-
+class BaseTests:
     def random_string(self, length):
         from random import choice
         from string import ascii_uppercase
 
         return "".join(choice(ascii_uppercase) for i in range(length))
+
+
+class BaseKinesisTests(AsynTestCase, BaseTests):
+    async def setUp(self):
+        self.stream_name = "test_{}".format(str(uuid.uuid4())[0:8])
 
     async def add_record_delayed(self, msg, producer, delay):
         log.debug("Adding record. delay={}".format(delay))
@@ -52,9 +60,9 @@ class BaseKinesisTests(AsynTestCase):
         await producer.put(msg)
 
 
-class AggregatorTests(TestCase):
+class ProcessorAndAggregatorTests(TestCase, BaseTests):
     """
-    Aggregator Tests
+    Processor and Aggregator Tests
     """
 
     def test_aggregator_min_size(self):
@@ -67,13 +75,66 @@ class AggregatorTests(TestCase):
         with self.assertRaises(exceptions.ValidationError):
             Aggregator(max_size=2000)
 
-    def test_aggregator(self):
+    def test_processor_exceed_put_limit(self):
+        processor = StringProcessor()
 
-        aggregator = Aggregator()
+        with self.assertRaises(exceptions.ExceededPutLimit):
+            list(processor.add_item(self.random_string(1024 * 1024 + 1)))
 
-        self.assertEquals(aggregator.max_bytes, 1024 * 25 * 40)
+    def test_newline_aggregator(self):
 
-        output = list(aggregator.add_item("test"))
+        # in reality does not make sense as strings can contain new lines
+        # so is not a suitable combination to use
+        class NewlineTestProcessor(NewlineAggregator, StringSerializer):
+            pass
+
+        processor = NewlineTestProcessor()
+
+        # Expect nothing as batching
+        self.assertEqual([], list(processor.add_item(123)))
+        self.assertEqual([], list(processor.add_item("test")))
+
+        self.assertTrue(processor.has_items())
+
+        output = list(processor.get_items())
+
+        self.assertEqual(len(output), 1)
+
+        self.assertEqual(output[0].size, 9)
+        self.assertEqual(output[0].n, 2)
+        self.assertEqual(output[0].data, "123\ntest\n")
+
+        self.assertListEqual(list(processor.parse(output[0].data)), ["123", "test"])
+
+    def test_netstring_aggregator(self):
+        class NetstringTestProcessor(NetstringAggregator, UTFByteSerializer):
+            pass
+
+        processor = NetstringTestProcessor()
+
+        # Expect nothing as batching
+        self.assertEqual([], list(processor.add_item(123)))
+        self.assertEqual([], list(processor.add_item("test")))
+
+        self.assertTrue(processor.has_items())
+
+        output = list(processor.get_items())
+
+        self.assertEqual(len(output), 1)
+
+        self.assertEqual(output[0].size, 13)
+        self.assertEqual(output[0].n, 2)
+        self.assertEqual(output[0].data, b"3:123,4:test,")
+
+        self.assertListEqual(list(processor.parse(output[0].data)), ["123", "test"])
+
+    def test_string_processor(self):
+
+        processor = StringProcessor()
+
+        self.assertEquals(processor.max_bytes, 1024 * 25 * 40)
+
+        output = list(processor.add_item("test"))
 
         self.assertEqual(len(output), 1)
         self.assertIsInstance(output[0], OutputItem)
@@ -82,13 +143,13 @@ class AggregatorTests(TestCase):
         self.assertEqual(output[0].n, 1)
         self.assertEqual(output[0].data, "test")
 
-        self.assertFalse(aggregator.has_items())
+        self.assertFalse(processor.has_items())
 
-    def test_json_without_aggregation_aggregator(self):
+    def test_json_processor(self):
 
-        aggregator = JsonWithoutAggregation()
+        processor = JsonProcessor()
 
-        output = list(aggregator.add_item({"test": 123}))
+        output = list(processor.add_item({"test": 123}))
 
         self.assertEqual(len(output), 1)
         self.assertIsInstance(output[0], OutputItem)
@@ -97,32 +158,39 @@ class AggregatorTests(TestCase):
         self.assertEqual(output[0].n, 1)
         self.assertEqual(output[0].data, '{"test": 123}')
 
-        self.assertFalse(aggregator.has_items())
+        self.assertFalse(processor.has_items())
 
-    def test_json_line_aggregator(self):
+        self.assertListEqual(list(processor.parse(output[0].data)), [{"test": 123}])
 
-        aggregator = JsonLineAggregation(max_size=25)
+    def test_json_line_processor(self):
+
+        processor = JsonLineProcessor(max_size=25)
 
         # Expect nothing as batching
-        self.assertEqual([], list(aggregator.add_item({"test": 123})))
-        self.assertEqual([], list(aggregator.add_item({"test": 456})))
+        self.assertEqual([], list(processor.add_item({"test": 123})))
+        self.assertEqual([], list(processor.add_item({"test": 456})))
 
-        self.assertTrue(aggregator.has_items())
+        self.assertTrue(processor.has_items())
 
-        output = list(aggregator.get_items())
+        output = list(processor.get_items())
 
         self.assertEqual(len(output), 1)
 
         self.assertEqual(output[0].size, 28)
         self.assertEqual(output[0].n, 2)
-        self.assertEqual(output[0].data, '{"test": 123}\n{"test": 456}')
+        self.assertEqual(output[0].data, '{"test": 123}\n{"test": 456}\n')
+
+        self.assertListEqual(
+            list(processor.parse(output[0].data.encode("utf-8"))),
+            [{"test": 123}, {"test": 456}],
+        )
 
         # Expect empty now
-        self.assertFalse(aggregator.has_items())
+        self.assertFalse(processor.has_items())
 
         result = []
         for x in range(1000):
-            output = list(aggregator.add_item({"test": "test with some more data"}))
+            output = list(processor.add_item({"test": "test with some more data"}))
             if output:
                 self.assertEqual(len(output), 1)
                 result.append(output[0])
@@ -134,43 +202,45 @@ class AggregatorTests(TestCase):
         self.assertEqual(result[0].n, 691)
 
         # Expect some left
-        self.assertTrue(aggregator.has_items())
+        self.assertTrue(processor.has_items())
 
-        output = list(aggregator.get_items())
+        output = list(processor.get_items())
 
         self.assertEqual(len(output), 1)
 
         self.assertEqual(output[0].size, 11397)
         self.assertEqual(output[0].n, 309)
 
-        self.assertFalse(aggregator.has_items())
+        self.assertFalse(processor.has_items())
 
-    def test_msgpack_aggregator(self):
+    def test_msgpack_processor(self):
 
-        aggregator = MsgPackAggregation(max_size=25)
+        processor = MsgpackProcessor(max_size=25)
 
         # Expect nothing as batching
-        self.assertEqual([], list(aggregator.add_item({"test": 123})))
-        self.assertEqual([], list(aggregator.add_item({"test": 456})))
+        self.assertEqual([], list(processor.add_item({"test": 123})))
+        self.assertEqual([], list(processor.add_item({"test": 456})))
 
-        self.assertTrue(aggregator.has_items())
+        self.assertTrue(processor.has_items())
 
-        output = list(aggregator.get_items())
+        output = list(processor.get_items())
 
         self.assertEqual(len(output), 1)
 
-        self.assertEqual(output[0].size, 24)
+        self.assertEqual(output[0].size, 22)
         self.assertEqual(output[0].n, 2)
-        self.assertEqual(
-            output[0].data, b"7   \x81\xa4test{9   \x81\xa4test\xcd\x01\xc8"
+        self.assertEqual(output[0].data, b"7:\x81\xa4test{,9:\x81\xa4test\xcd\x01\xc8,")
+
+        self.assertListEqual(
+            list(processor.parse(output[0].data)), [{"test": 123}, {"test": 456}]
         )
 
         # Expect empty now
-        self.assertFalse(aggregator.has_items())
+        self.assertFalse(processor.has_items())
 
         result = []
         for x in range(1000):
-            output = list(aggregator.add_item({"test": "test with some more data"}))
+            output = list(processor.add_item({"test": "test with some more data"}))
             if output:
                 self.assertEqual(len(output), 1)
                 result.append(output[0])
@@ -182,16 +252,16 @@ class AggregatorTests(TestCase):
         self.assertEqual(result[0].n, 731)
 
         # Expect some left
-        self.assertTrue(aggregator.has_items())
+        self.assertTrue(processor.has_items())
 
-        output = list(aggregator.get_items())
+        output = list(processor.get_items())
 
         self.assertEqual(len(output), 1)
 
         self.assertEqual(output[0].size, 9381)
         self.assertEqual(output[0].n, 269)
 
-        self.assertFalse(aggregator.has_items())
+        self.assertFalse(processor.has_items())
 
 
 class CheckpointTests(BaseKinesisTests):
@@ -356,25 +426,17 @@ class KinesisTests(BaseKinesisTests):
 
     async def test_producer_put_below_limit(self):
         async with Producer(
-            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+            stream_name=self.stream_name,
+            processor=StringProcessor(),
+            endpoint_url=ENDPOINT_URL,
         ) as producer:
             await producer.create_stream(shards=1)
             # The maximum size of the data payload of a record before base64-encoding is up to 1 MiB.
-            await producer.put(self.random_string(1024 * 1023))
+            # Limit is set in aggregators.BaseAggregator (few bytes short of 1MiB)
+            await producer.put(self.random_string(40 * 25 * 1024))
 
-    async def test_producer_put_above_limit(self):
-        with self.assertRaises(exceptions.ExceededPutLimit):
-            async with Producer(
-                stream_name=self.stream_name,
-                endpoint_url=ENDPOINT_URL,
-                aggregator=StringWithoutAggregation(),
-            ) as producer:
-                await producer.create_stream(shards=1)
-                # The maximum size of the data payload of a record before base64-encoding is up to 1 MiB.
-                await producer.put(self.random_string(1024 * 1024 + 1))
-
-    async def test_producer_put(self):
-        # Expect to complete by lowering batch size until successful
+    async def test_producer_put_exceed_batch_size(self):
+        # Expect to complete by lowering batch size until successful (500 is max)
         async with Producer(
             stream_name=self.stream_name, endpoint_url=ENDPOINT_URL, batch_size=600
         ) as producer:
@@ -418,12 +480,10 @@ class KinesisTests(BaseKinesisTests):
 
     async def test_producer_and_consumer_consume_with_json_line_aggregator(self):
 
-        aggregator = JsonLineAggregation()
+        processor = JsonLineProcessor()
 
         async with Producer(
-            stream_name=self.stream_name,
-            endpoint_url=ENDPOINT_URL,
-            aggregator=aggregator,
+            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL, processor=processor
         ) as producer:
             await producer.create_stream(shards=1)
 
@@ -437,7 +497,7 @@ class KinesisTests(BaseKinesisTests):
             async with Consumer(
                 stream_name=self.stream_name,
                 endpoint_url=ENDPOINT_URL,
-                aggregator=aggregator,
+                processor=processor,
             ) as consumer:
                 async for item in consumer:
                     results.append(item)
@@ -451,12 +511,10 @@ class KinesisTests(BaseKinesisTests):
 
     async def test_producer_and_consumer_consume_with_msgpack_aggregator(self):
 
-        aggregator = MsgPackAggregation()
+        processor = MsgpackProcessor()
 
         async with Producer(
-            stream_name=self.stream_name,
-            endpoint_url=ENDPOINT_URL,
-            aggregator=aggregator,
+            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL, processor=processor
         ) as producer:
             await producer.create_stream(shards=1)
 
@@ -470,7 +528,7 @@ class KinesisTests(BaseKinesisTests):
             async with Consumer(
                 stream_name=self.stream_name,
                 endpoint_url=ENDPOINT_URL,
-                aggregator=aggregator,
+                processor=processor,
             ) as consumer:
                 async for item in consumer:
                     results.append(item)

@@ -114,9 +114,9 @@ Refer https://aws.amazon.com/blogs/big-data/implementing-efficient-and-reliable-
 | Class | Aggregator | Serializer | Description |
 | --- | --- | --- | --- |
 | StringProcessor | SimpleAggregator | StringSerializer | Single String record |
-| JsonProcessor | SimpleAggregator | JsonSerializer | Single JSON record |
-| JsonLineProcessor | NewlineAggregator | JsonSerializer | Multiple JSON record separated by new line char
-| MsgpackProcessor | NetstringAggregator | MsgpackSerializer | Multiple Msgpack record framed with Netstring Protocol (https://en.wikipedia.org/wiki/Netstring)
+| JsonProcessor | SimpleAggregator | JsonSerializer | Single JSON record * |
+| JsonLineProcessor | NewlineAggregator | JsonSerializer | Multiple JSON record separated by new line char * |
+| MsgpackProcessor | NetstringAggregator | MsgpackSerializer | Multiple Msgpack record framed with Netstring Protocol (https://en.wikipedia.org/wiki/Netstring) ** |
 
 Note you can define your own processor easily as it's simply a class inheriting the Aggregator + Serializer.
 
@@ -127,6 +127,8 @@ class MsgpackProcessor(Processor, NetstringAggregator, MsgpackSerializer):
 
 Just define a new Serializer class with serialize() and deserialize() methods.
 
+* Will use `pip install ujson` if installed
+* requires `pip install msgpack` to be install 
 
 
 ## Benchmark/Example
@@ -156,7 +158,7 @@ then within your virtualenv
 ```
 nosetests
 
-// or run individual test
+# or run individual test
 nosetests tests.py:KinesisTests.test_create_stream_shard_limit_exceeded
 ```
 
@@ -169,6 +171,6 @@ Create an ".env" file with
 TESTING_USE_AWS_KINESIS=1
 ```
 
-Note you can ignore these tests if submitting PR (unlikely to be affected)
+Note you can ignore these tests if submitting PR unless core batching/processing behaviour is being changed.
 
 

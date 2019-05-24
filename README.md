@@ -114,9 +114,9 @@ Refer https://aws.amazon.com/blogs/big-data/implementing-efficient-and-reliable-
 | Class | Aggregator | Serializer | Description |
 | --- | --- | --- | --- |
 | StringProcessor | SimpleAggregator | StringSerializer | Single String record |
-| JsonProcessor | SimpleAggregator | JsonSerializer | Single JSON record * |
-| JsonLineProcessor | NewlineAggregator | JsonSerializer | Multiple JSON record separated by new line char * |
-| MsgpackProcessor | NetstringAggregator | MsgpackSerializer | Multiple Msgpack record framed with Netstring Protocol (https://en.wikipedia.org/wiki/Netstring) ** |
+| JsonProcessor | SimpleAggregator | JsonSerializer | Single JSON record |
+| JsonLineProcessor | NewlineAggregator | JsonSerializer | Multiple JSON record separated by new line char |
+| MsgpackProcessor | NetstringAggregator | MsgpackSerializer | Multiple Msgpack record framed with Netstring Protocol (https://en.wikipedia.org/wiki/Netstring) |
 
 Note you can define your own processor easily as it's simply a class inheriting the Aggregator + Serializer.
 
@@ -127,8 +127,10 @@ class MsgpackProcessor(Processor, NetstringAggregator, MsgpackSerializer):
 
 Just define a new Serializer class with serialize() and deserialize() methods.
 
-* Will use `pip install ujson` if installed
-* requires `pip install msgpack` to be install 
+Note:
+
+* Json will use `pip install ujson` if installed
+* Msgpack requires `pip install msgpack` to be install 
 
 
 ## Benchmark/Example

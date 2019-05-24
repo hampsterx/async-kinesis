@@ -794,7 +794,6 @@ class AWSKinesisTests(BaseKinesisTests):
         TESTING_USE_AWS_KINESIS, "Requires TESTING_USE_AWS_KINESIS flag to be set"
     )
     async def test_consumer_consume_fetch_limit(self):
-        # logging.getLogger('kinesis.consumer').setLevel(logging.WARNING)
 
         async with Consumer(
             stream_name=self.STREAM_NAME_SINGLE_SHARD,
@@ -813,3 +812,35 @@ class AWSKinesisTests(BaseKinesisTests):
             shard_stats = [s["stats"] for s in consumer.shards][0].to_data()
 
             self.assertTrue(shard_stats["throttled"] > 0, "Expected to be throttled")
+
+    @skipUnless(
+        TESTING_USE_AWS_KINESIS, "Requires TESTING_USE_AWS_KINESIS flag to be set"
+    )
+    async def test_producer_producer_limit(self):
+        # Expect some throughput errors
+
+        async with Producer(
+            stream_name=self.STREAM_NAME_SINGLE_SHARD,
+            processor=StringProcessor(),
+            put_bandwidth_limit_per_shard=1500,
+        ) as producer:
+
+            await producer.create_stream(shards=1)
+
+            async with Consumer(
+                stream_name=self.STREAM_NAME_SINGLE_SHARD,
+                processor=StringProcessor(),
+                iterator_type="LATEST",
+            ) as consumer:
+                await consumer.start_consumer()
+
+                for x in range(20):
+                    await producer.put(self.random_string(1024 * 250))
+
+                # todo: async timeout
+                output = []
+                while len(output) < 20:
+                    async for item in consumer:
+                        output.append(item)
+
+                self.assertTrue(producer.throughput_exceeded_count > 0)

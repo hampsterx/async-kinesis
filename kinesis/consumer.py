@@ -161,23 +161,17 @@ class Consumer(Base):
                             )
                         )
 
+                        total_items = 0
                         for row in result["Records"]:
                             for n, output in enumerate(
                                 self.processor.parse(row["Data"])
                             ):
-                                """
-                                if n % 1000 == 0:
-                                    log.debug(
-                                        "Shard {} added 1k items..".format(
-                                            shard["ShardId"]
-                                        )
-                                    )
-                                """
                                 await self.queue.put(output)
+                            total_items += n
 
                         log.debug(
                             "Shard {} added {} items from {} records".format(
-                                shard["ShardId"], n, len(records)
+                                shard["ShardId"], total_items, len(records)
                             )
                         )
 
@@ -321,7 +315,7 @@ class Consumer(Base):
             try:
                 item = self.queue.get_nowait()
 
-                if item and "__CHECKPOINT__" in item:
+                if item and b"__CHECKPOINT__" in item:
                     if self.checkpointer:
                         await self.checkpointer.checkpoint(
                             item["__CHECKPOINT__"]["ShardId"],

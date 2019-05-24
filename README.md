@@ -49,6 +49,7 @@ Options:
 | region_name | None | AWS Region |
 | buffer_time | 0.5 | Buffer time in seconds before auto flushing records |
 | put_rate_limit_per_shard | 1000 | "A single shard can ingest up to 1 MiB of data per second (including partition keys) or 1,000 records per second for writes" |
+| put_bandwidth_limit_per_shard | 1024 | Kb per sec. max is 1024 per shard (ie 1 MiB). Keep below to minimize ProvisionedThroughputExceeded" errors |
 | batch_size | 500 | "Each PutRecords request can support up to 500 records" |
 | max_queue_size | 10000 | put() method will block when queue is at max |
 | after_flush_fun | None | async function to call after doing a flush (err put_records()) call |
@@ -140,10 +141,9 @@ Note:
 
 See [benchmark.py](./benchmark.py) for code
 
-50k items of approx 1k (python) in size:
+50k items of approx 1k (python) in size, using single shard.
 
 ![Benchmark](docs/benchmark.png)
-
 
 
 ## Unit Testing

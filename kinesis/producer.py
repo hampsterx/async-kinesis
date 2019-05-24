@@ -31,6 +31,7 @@ class Producer(Base):
         region_name=None,
         buffer_time=0.5,
         put_rate_limit_per_shard=1000,
+        put_bandwidth_limit_per_shard=1024,
         after_flush_fun=None,
         batch_size=500,
         max_queue_size=10000,
@@ -53,11 +54,24 @@ class Producer(Base):
         # or 1,000 records per second for writes
         self.put_rate_limit_per_shard = put_rate_limit_per_shard
         self.put_rate_throttle = None
-        self.put_rate_data_throttle = None
+        self.put_bandwidth_limit_per_shard = put_bandwidth_limit_per_shard
+        self.put_bandwidth_throttle = None
+
+        if put_bandwidth_limit_per_shard > 1024:
+            log.warning(
+                (
+                    "Put bandwidth {}kb exceeds 1024kb. Expect throughput errors..".format(
+                        put_bandwidth_limit_per_shard
+                    )
+                )
+            )
 
         self.flush_task = asyncio.Task(self._flush(), loop=self.loop)
         self.is_flushing = False
         self.after_flush_fun = after_flush_fun
+
+        # keep track of these (used by unit test only)
+        self.throughput_exceeded_count = 0
 
     async def create_stream(self, shards=1, ignore_exists=True):
 
@@ -95,14 +109,9 @@ class Producer(Base):
             period=1,
             loop=self.loop,
         )
-
-        # measured in kb (ie 1 Mbit per second)
-        # Keep it a bit under~
-        self.put_rate_data_throttle = Throttler(
-            # todo: this is not relevant. allow None
-            rate_limit=1000,
+        self.put_bandwidth_throttle = Throttler(
             # kb per second. Go below a bit to avoid hitting the threshold
-            size_limit=990,
+            size_limit=self.put_bandwidth_limit_per_shard * len(self.shards),
             period=1,
             loop=self.loop,
         )
@@ -174,7 +183,7 @@ class Producer(Base):
                     total_size += size_kb
                     total_records += item[1]
 
-                    async with self.put_rate_data_throttle(size=total_size):
+                    async with self.put_bandwidth_throttle(size=total_size):
                         pass
 
                     items.append(item)
@@ -261,6 +270,8 @@ class Producer(Base):
                                 result["FailedRecordCount"]
                             )
                         )
+
+                        self.throughput_exceeded_count += 1
 
                         for i, record in enumerate(result["Records"]):
                             if "ErrorCode" in record:

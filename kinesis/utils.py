@@ -17,7 +17,12 @@ log = logging.getLogger(__name__)
 
 class Throttler:
     def __init__(
-        self, rate_limit, size_limit=None, period=1.0, retry_interval=0.05, loop=None
+        self,
+        rate_limit=None,
+        size_limit=None,
+        period=1.0,
+        retry_interval=0.05,
+        loop=None,
     ):
         self.rate_limit = rate_limit
         self.size_limit = size_limit
@@ -39,10 +44,11 @@ class Throttler:
 
     def is_below_rate(self):
 
-        below_rate_requests = len(self._task_logs) < self.rate_limit
+        if self.rate_limit:
+            below_rate_requests = len(self._task_logs) < self.rate_limit
 
-        if not below_rate_requests:
-            return False
+            if not below_rate_requests:
+                return False
 
         if self.size_limit is None or not self._task_logs:
             return True

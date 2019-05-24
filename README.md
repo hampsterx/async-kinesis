@@ -104,6 +104,9 @@ Requires ENV:
     REDIS_HOST
 ```
 
+Requires `pip install aredis`
+
+
 ## Processors (Aggregator + Serializer)
 
 
@@ -137,7 +140,11 @@ Note:
 
 See [benchmark.py](./benchmark.py) for code
 
-todo
+50k items of approx 1k (python) in size:
+
+![Benchmark](docs/benchmark.png)
+
+
 
 ## Unit Testing
 

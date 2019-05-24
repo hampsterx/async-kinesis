@@ -165,15 +165,17 @@ class Consumer(Base):
                             for n, output in enumerate(
                                 self.processor.parse(row["Data"])
                             ):
+                                """
                                 if n % 1000 == 0:
                                     log.debug(
                                         "Shard {} added 1k items..".format(
                                             shard["ShardId"]
                                         )
                                     )
+                                """
                                 await self.queue.put(output)
 
-                        log.info(
+                        log.debug(
                             "Shard {} added {} items from {} records".format(
                                 shard["ShardId"], n, len(records)
                             )

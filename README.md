@@ -111,14 +111,14 @@ Aggregation enable batching up multiple records to more efficiently use the stre
 Refer https://aws.amazon.com/blogs/big-data/implementing-efficient-and-reliable-producers-with-the-amazon-kinesis-producer-library/
 
 
-| Class | Args | Description |
+| Class | Aggregator | Serializer | Description |
 | --- | --- | --- |
-| StringProcessor | None | Single String record |
-| JsonProcessor | None | Single JSON record |
-| JsonLineProcessor | None | Multiple JSON record separated by new line char
-| MsgpackProcessor | None | Multiple Msgpack record framed with Netstring Protocol (https://en.wikipedia.org/wiki/Netstring)
+| StringProcessor | SimpleAggregator | StringSerializer | Single String record |
+| JsonProcessor | SimpleAggregator | JsonSerializer | Single JSON record |
+| JsonLineProcessor | NewlineAggregator | JsonSerializer | Multiple JSON record separated by new line char
+| MsgpackProcessor | NetstringAggregator | MsgpackSerializer | Multiple Msgpack record framed with Netstring Protocol (https://en.wikipedia.org/wiki/Netstring)
 
-Note you can define your own processor easily as it's simply a combination of Aggregator + Serializer.
+Note you can define your own processor easily as it's simply a class inheriting the Aggregator + Serializer.
 
 ```
 class MsgpackProcessor(Processor, NetstringAggregator, MsgpackSerializer):

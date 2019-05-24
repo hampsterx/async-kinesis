@@ -239,6 +239,7 @@ class Producer(Base):
                 continue
             else:
                 if result["FailedRecordCount"]:
+
                     errors = list(
                         set(
                             [
@@ -255,25 +256,27 @@ class Producer(Base):
                         )
 
                     if "ProvisionedThroughputExceededException" in errors:
-                        # todo: make this work with small no's of items
-                        log.warning("Throughput exceeded, slowing down the rate by 10%")
-                        overflow = items
-                        self.put_rate_limit_per_shard -= round(
-                            self.put_rate_limit_per_shard / 10
-                        )
-                        self.set_put_rate_throttle()
-                        # wait a bit
-                        await asyncio.sleep(0.25, loop=self.loop)
-                        continue
-
-                    else:
-                        raise exceptions.UnknownException(
-                            "Failed to put records but not due to throughput exceeded: {}".format(
-                                ", ".join(errors)
+                        log.warning(
+                            "Throughput exceeded ({} records failed, added back..), pausing for 0.25s..".format(
+                                result["FailedRecordCount"]
                             )
                         )
 
+                        for i, record in enumerate(result["Records"]):
+                            if "ErrorCode" in record:
+                                overflow.append(items[i])
+
+                        # log.debug("items={} overflow={}".format(len(items), len(overflow)))
+
+                        await asyncio.sleep(0.25, loop=self.loop)
+
+                    else:
+                        raise exceptions.UnknownException(
+                            "Failed to put records due to: {}".format(", ".join(errors))
+                        )
+
                 else:
+
                     if self.after_flush_fun:
                         await self.after_flush_fun(items)
 

@@ -114,7 +114,7 @@ async def test():
 
     result = []
 
-    for processor in [JsonLineProcessor(), MsgpackProcessor()]: # JsonProcessor()
+    for processor in [JsonProcessor(), JsonLineProcessor(), MsgpackProcessor()]:
 
         all_data = copy_dataset(data, multiplier)
 

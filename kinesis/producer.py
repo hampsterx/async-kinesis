@@ -198,11 +198,12 @@ class Producer(Base):
             )
 
             try:
+
                 # todo: custom partition key
                 result = await self.client.put_records(
                     Records=[
                         {
-                            "Data": item[-1],
+                            "Data": item.data,
                             "PartitionKey": "{0}{1}".format(time.clock(), time.time()),
                         }
                         for item in items
@@ -211,6 +212,7 @@ class Producer(Base):
                 )
 
             except ClientError as err:
+
                 code = err.response["Error"]["Code"]
 
                 if code == "ValidationException":
@@ -246,7 +248,10 @@ class Producer(Base):
                 overflow = items
                 await asyncio.sleep(3, loop=self.loop)
                 continue
+            except Exception:
+                raise
             else:
+
                 if result["FailedRecordCount"]:
 
                     errors = list(

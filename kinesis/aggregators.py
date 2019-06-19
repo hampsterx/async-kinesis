@@ -114,7 +114,7 @@ class NewlineAggregator(Aggregator):
         return 1
 
     def output(self):
-        return "\n".join([x[1] for x in self.buffer] + [""])
+        return b"\n".join([x[1] for x in self.buffer] + [b""])
 
     def parse(self, data):
         for row in data.split(b"\n"):

@@ -10,3 +10,4 @@ temp.py
 .mypy_cache
 .tox
 release.sh
+test_*

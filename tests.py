@@ -19,7 +19,7 @@ from kinesis.aggregators import (
     NetstringAggregator,
     OutputItem,
 )
-from kinesis.serializers import StringSerializer, UTFByteSerializer
+from kinesis.serializers import StringSerializer
 from kinesis import exceptions
 
 coloredlogs.install(level="DEBUG")
@@ -102,12 +102,12 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
 
         self.assertEqual(output[0].size, 9)
         self.assertEqual(output[0].n, 2)
-        self.assertEqual(output[0].data, "123\ntest\n")
+        self.assertEqual(output[0].data, b"123\ntest\n")
 
         self.assertListEqual(list(processor.parse(output[0].data)), ["123", "test"])
 
     def test_netstring_aggregator(self):
-        class NetstringTestProcessor(NetstringAggregator, UTFByteSerializer):
+        class NetstringTestProcessor(NetstringAggregator, StringSerializer):
             pass
 
         processor = NetstringTestProcessor()
@@ -141,7 +141,7 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
 
         self.assertEqual(output[0].size, len("test"))
         self.assertEqual(output[0].n, 1)
-        self.assertEqual(output[0].data, "test")
+        self.assertEqual(output[0].data, b"test")
 
         self.assertFalse(processor.has_items())
 
@@ -154,9 +154,9 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
         self.assertEqual(len(output), 1)
         self.assertIsInstance(output[0], OutputItem)
 
-        self.assertEqual(output[0].size, 13)
+        self.assertEqual(output[0].size, 12)
         self.assertEqual(output[0].n, 1)
-        self.assertEqual(output[0].data, '{"test": 123}')
+        self.assertEqual(output[0].data, b'{"test":123}')
 
         self.assertFalse(processor.has_items())
 
@@ -176,12 +176,12 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
 
         self.assertEqual(len(output), 1)
 
-        self.assertEqual(output[0].size, 28)
+        self.assertEqual(output[0].size, 26)
         self.assertEqual(output[0].n, 2)
-        self.assertEqual(output[0].data, '{"test": 123}\n{"test": 456}\n')
+        self.assertEqual(output[0].data, b'{"test":123}\n{"test":456}\n')
 
         self.assertListEqual(
-            list(processor.parse(output[0].data.encode("utf-8"))),
+            list(processor.parse(output[0].data)),
             [{"test": 123}, {"test": 456}],
         )
 
@@ -198,8 +198,8 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
         # Expected at least one record to be output
         self.assertEqual(len(result), 1)
 
-        self.assertEqual(result[0].size, 25567)  # expect below 25*1024=25600
-        self.assertEqual(result[0].n, 691)
+        self.assertEqual(result[0].size, 25596)  # expect below 25*1024=25600
+        self.assertEqual(result[0].n, 711)
 
         # Expect some left
         self.assertTrue(processor.has_items())
@@ -208,8 +208,8 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
 
         self.assertEqual(len(output), 1)
 
-        self.assertEqual(output[0].size, 11397)
-        self.assertEqual(output[0].n, 309)
+        self.assertEqual(output[0].size, 10369)
+        self.assertEqual(output[0].n, 289)
 
         self.assertFalse(processor.has_items())
 
@@ -793,12 +793,54 @@ class AWSKinesisTests(BaseKinesisTests):
     @skipUnless(
         TESTING_USE_AWS_KINESIS, "Requires TESTING_USE_AWS_KINESIS flag to be set"
     )
+    async def test_consumer_checkpoint(self):
+
+        checkpointer = MemoryCheckPointer(name="test")
+
+        results = []
+
+        async with Producer(
+                stream_name=self.STREAM_NAME_SINGLE_SHARD,
+                processor=StringProcessor(),
+        ) as producer:
+
+            async with Consumer(
+                    stream_name=self.STREAM_NAME_SINGLE_SHARD,
+                    checkpointer=checkpointer,
+                    processor=StringProcessor(),
+                    iterator_type="LATEST"
+            ) as consumer:
+
+                # Manually start
+                await consumer.start_consumer()
+
+                await producer.put("test")
+
+                await producer.flush()
+
+                for i in range(3):
+                    async for item in consumer:
+                        results.append(item)
+
+            checkpoints = checkpointer.get_all_checkpoints()
+
+            # Expect 1 as only 1 shard
+            self.assertEquals(1, len(checkpoints))
+
+            self.assertIsNotNone(checkpoints[list(checkpoints.keys())[0]]["sequence"])
+
+            self.assertListEqual(results, ["test"])
+
+    @skipUnless(
+        TESTING_USE_AWS_KINESIS, "Requires TESTING_USE_AWS_KINESIS flag to be set"
+    )
     async def test_consumer_consume_fetch_limit(self):
 
         async with Consumer(
             stream_name=self.STREAM_NAME_SINGLE_SHARD,
             sleep_time_no_records=0.001,
             shard_fetch_rate=100,
+            iterator_type="LATEST"
         ) as consumer:
             await consumer.start()
 
@@ -832,10 +874,15 @@ class AWSKinesisTests(BaseKinesisTests):
                 processor=StringProcessor(),
                 iterator_type="LATEST",
             ) as consumer:
+
                 await consumer.start_consumer()
+
+                # Wait a bit just to be sure iterator is gonna get late
+                await asyncio.sleep(3)
 
                 for x in range(20):
                     await producer.put(self.random_string(1024 * 250))
+
 
                 # todo: async timeout
                 output = []
@@ -843,4 +890,5 @@ class AWSKinesisTests(BaseKinesisTests):
                     async for item in consumer:
                         output.append(item)
 
+                self.assertEquals(len(output), 20)
                 self.assertTrue(producer.throughput_exceeded_count > 0)

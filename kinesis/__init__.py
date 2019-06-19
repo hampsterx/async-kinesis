@@ -10,7 +10,6 @@ from .serializers import (
     StringSerializer,
     JsonSerializer,
     MsgpackSerializer,
-    UTFByteSerializer,
 )
 from .checkpointers import MemoryCheckPointer, RedisCheckPointer
 from .aggregators import SimpleAggregator, NewlineAggregator, NetstringAggregator

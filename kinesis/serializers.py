@@ -15,18 +15,18 @@ class Serializer:
 
 class StringSerializer(Serializer):
     def serialize(self, item):
-        return str(item)
+        return str(item).encode("utf-8")
 
     def deserialize(self, data):
-        return data
+        return data.decode("utf-8")
 
 
 class JsonSerializer(Serializer):
     def serialize(self, item):
-        return json.dumps(item)
+        return json.dumps(item).encode("utf-8")
 
     def deserialize(self, data):
-        return json.loads(data)
+        return json.loads(data.decode("utf-8"))
 
 
 class MsgpackSerializer(Serializer):
@@ -36,11 +36,3 @@ class MsgpackSerializer(Serializer):
 
     def deserialize(self, data):
         return msgpack.unpackb(data, raw=False)
-
-
-class UTFByteSerializer(Serializer):
-    def serialize(self, item):
-        return str(item).encode("utf-8")
-
-    def deserialize(self, data):
-        return data.decode("utf-8")

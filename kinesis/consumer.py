@@ -1,4 +1,3 @@
-import json
 import asyncio
 import logging
 from aiohttp import ClientConnectionError
@@ -147,11 +146,6 @@ class Consumer(Base):
                 if shard["fetch"].done():
                     result = shard["fetch"].result()
 
-                    if not result:
-                        log.info("no result. throttled..")
-                        shard["fetch"] = None
-                        continue
-
                     records = result["Records"]
 
                     if records:
@@ -167,7 +161,7 @@ class Consumer(Base):
                                 self.processor.parse(row["Data"])
                             ):
                                 await self.queue.put(output)
-                            total_items += n
+                            total_items += n + 1
 
                         log.debug(
                             "Shard {} added {} items from {} records".format(
@@ -186,10 +180,8 @@ class Consumer(Base):
                             }
                         )
 
-                        if result["NextShardIterator"] is None:
-                            raise NotImplementedError("NextShardIterator is null")
-                        else:
-                            shard["ShardIterator"] = result["NextShardIterator"]
+                        shard["LastSequenceNumber"] = last_record["SequenceNumber"]
+
                     else:
                         log.debug(
                             "Shard {} caught up, sleeping {}s".format(
@@ -197,6 +189,11 @@ class Consumer(Base):
                             )
                         )
                         await asyncio.sleep(self.sleep_time_no_records, loop=self.loop)
+
+                    if not result["NextShardIterator"]:
+                        raise NotImplementedError("Shard is closed?")
+
+                    shard["ShardIterator"] = result["NextShardIterator"]
 
                     shard["fetch"] = None
 
@@ -218,13 +215,14 @@ class Consumer(Base):
                 result = await self.client.get_records(
                     ShardIterator=shard["ShardIterator"], Limit=self.record_limit
                 )
+
                 shard["stats"].succeded()
                 return result
 
-            except ClientConnectionError:
-                log.warning("Connection error. sleeping..")
+            except ClientConnectionError as e:
+                log.warning("Connection error {}. sleeping..".format(e))
                 await asyncio.sleep(3, loop=self.loop)
-                return None
+                return await self.get_records(shard=shard)
 
             except ClientError as err:
                 code = err.response["Error"]["Code"]
@@ -237,9 +235,24 @@ class Consumer(Base):
                     shard["stats"].throttled()
                     # todo: control the throttle ?
                     await asyncio.sleep(0.25, loop=self.loop)
-                    return None
+                    return await self.get_records(shard=shard)
+
+                elif code == "ExpiredIteratorException":
+                    log.warning(
+                        "{} hit ExpiredIteratorException".format(
+                            shard["ShardId"]
+                        )
+                    )
+
+                    shard["ShardIterator"] = await self.get_shard_iterator(
+                        shard_id=shard["ShardId"], last_sequence_number=shard.get('LastSequenceNumber')
+                    )
+
+                    return await self.get_records(shard=shard)
                 else:
                     raise
+            except Exception:
+                raise
 
     async def get_shard_iterator(self, shard_id, last_sequence_number=None):
 
@@ -315,7 +328,7 @@ class Consumer(Base):
             try:
                 item = self.queue.get_nowait()
 
-                if item and b"__CHECKPOINT__" in item:
+                if item and "__CHECKPOINT__" in item:
                     if self.checkpointer:
                         await self.checkpointer.checkpoint(
                             item["__CHECKPOINT__"]["ShardId"],

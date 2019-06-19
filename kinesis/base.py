@@ -4,6 +4,7 @@ import logging
 from async_timeout import timeout
 from asyncio import CancelledError
 from botocore.exceptions import ClientError
+from botocore.config import Config
 
 from . import exceptions
 
@@ -27,12 +28,13 @@ class Base:
 
     async def __aenter__(self):
 
-        log.info("creating client with {}".format(self.endpoint_url))
+        log.info("creating client with {}".format(self.endpoint_url if self.endpoint_url else "AWS default endpoint"))
 
         session = aiobotocore.get_session(loop=self.loop)
 
         self.client = session.create_client(
-            "kinesis", endpoint_url=self.endpoint_url, region_name=self.region_name
+            "kinesis", endpoint_url=self.endpoint_url, region_name=self.region_name,
+            config=Config(connect_timeout=5, read_timeout=90, retries={'max_attempts': 0})
         )
 
         return self

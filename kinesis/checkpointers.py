@@ -94,7 +94,7 @@ class MemoryCheckPointer(BaseCheckPointer):
 
 class RedisCheckPointer(BaseHeartbeatCheckPointer):
     def __init__(
-        self, name, id=None, session_timeout=60, heartbeat_frequency=15, loop=None
+        self, name, id=None, session_timeout=60, heartbeat_frequency=15, loop=None, is_cluster=False
     ):
         super().__init__(
             name=name,
@@ -104,13 +104,16 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
             loop=loop,
         )
 
-        # todo StrictRedisCluster
-        from aredis import StrictRedis
+        if is_cluster:
+            from aredis import StrictRedisCluster as Redis
+        else:
+            from aredis import StrictRedis as Redis
 
-        self.client = StrictRedis(
+        self.client = Redis(
             host=os.environ.get("REDIS_HOST", "localhost"),
             port=int(os.environ.get("REDIS_PORT", "6379")),
             loop=self.loop,
+            skip_full_coverage_check=is_cluster
         )
 
     async def do_heartbeat(self, key, value):

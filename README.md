@@ -96,7 +96,7 @@ Options:
 - redis
 
 ```
-    RedisCheckPointer(name, session_timeout=60, heartbeat_frequency=15)
+    RedisCheckPointer(name, session_timeout=60, heartbeat_frequency=15, is_cluster=False)
 ```
 
 Requires ENV:

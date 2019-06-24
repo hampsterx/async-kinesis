@@ -200,6 +200,9 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
                 )
             )
 
+            # Wait a bit before carrying on to avoid spamming ourselves
+            await asyncio.sleep(1)
+
             age = ts - original_ts
 
             # still alive?

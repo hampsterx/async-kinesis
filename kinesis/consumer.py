@@ -68,6 +68,37 @@ class Consumer(Base):
 
         self.shard_fetch_rate = shard_fetch_rate
 
+    def __aiter__(self):
+        return self
+
+    async def close(self):
+        log.debug("Closing..")
+
+        await self.flush()
+
+        if self.fetch_task:
+            self.fetch_task.cancel()
+            self.fetch_task = None
+
+        if self.checkpointer:
+            await self.checkpointer.close()
+
+        await self.client.close()
+
+    async def flush(self):
+
+        self.is_fetching = False
+
+        if not self.shards:
+            return
+
+        # Wait for shard fetches to finish
+        # todo: use gather
+        for shard in self.shards:
+            if shard.get("fetch"):
+                if not shard["fetch"].done():
+                    await shard["fetch"]
+
     async def _fetch(self):
         while self.is_fetching:
             # Ensure fetch is performed at most 5 times per second (the limit per shard)
@@ -276,34 +307,6 @@ class Consumer(Base):
 
         response = await self.client.get_shard_iterator(**params)
         return response["ShardIterator"]
-
-    async def close(self):
-        log.debug("Closing..")
-        if self.fetch_task:
-            self.fetch_task.cancel()
-            self.fetch_task = None
-
-        if self.checkpointer:
-            await self.checkpointer.close()
-
-        await self.client.close()
-
-    async def flush(self):
-
-        self.is_fetching = False
-
-        if not self.shards:
-            return
-
-        # Wait for shard fetches to finish
-        # todo: use gather
-        for shard in self.shards:
-            if shard.get("fetch"):
-                if not shard["fetch"].done():
-                    await shard["fetch"]
-
-    def __aiter__(self):
-        return self
 
     async def start_consumer(self, wait_iterations=10, wait_sleep=0.25):
 

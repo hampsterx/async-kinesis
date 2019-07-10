@@ -17,11 +17,6 @@ log = logging.getLogger(__name__)
 
 
 class Producer(Base):
-    async def _flush(self):
-        while True:
-            await asyncio.sleep(self.buffer_time, loop=self.loop)
-            if not self.is_flushing:
-                await self.flush()
 
     def __init__(
         self,
@@ -69,6 +64,9 @@ class Producer(Base):
         self.flush_task = asyncio.Task(self._flush(), loop=self.loop)
         self.is_flushing = False
         self.after_flush_fun = after_flush_fun
+
+        # Keep flush task looping while active
+        self.active = True
 
         # keep track of these (used by unit test only)
         self.throughput_exceeded_count = 0
@@ -129,10 +127,26 @@ class Producer(Base):
             await self.queue.put(output)
 
     async def close(self):
-        self.flush_task.cancel()
+        self.active = False
+        # Wait till task completes
+        await self.flush_task
+
+        # final flush (probably not required but no harm)
+        await asyncio.shield(self.flush())
+
         await self.client.close()
 
+    async def _flush(self):
+        while self.active:
+            await asyncio.sleep(self.buffer_time, loop=self.loop)
+            if not self.is_flushing:
+                await asyncio.shield(self.flush())
+
     async def flush(self):
+
+        if self.is_flushing:
+            log.debug("Flush already in progress, ignoring..")
+            return
 
         self.is_flushing = True
 

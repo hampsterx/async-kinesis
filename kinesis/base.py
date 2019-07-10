@@ -40,8 +40,6 @@ class Base:
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
-
-        await self.flush()
         await self.close()
 
     async def get_stream_description(self):

@@ -457,7 +457,7 @@ class KinesisTests(BaseKinesisTests):
             ):
                 pass
 
-    async def test_producer_and_consumer_consume(self):
+    async def test_producer_and_consumer_consume_from_start_flush(self):
         async with Producer(
             stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
@@ -477,6 +477,33 @@ class KinesisTests(BaseKinesisTests):
 
             # Expect to have consumed from start as default iterator_type=TRIM_HORIZON
             self.assertEquals([{"test": 123}], results)
+
+
+    async def test_producer_and_consumer_consume_from_start_after(self):
+
+        # Don't flush, close producer immediately to test all data is written to stream on exit.
+        async with Producer(
+            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL,
+            processor=StringProcessor(),
+        ) as producer:
+            await producer.create_stream(shards=1)
+            # Put enough data to ensure it will require more than one put
+            # ie test overflow behaviour
+            for _ in range(15):
+                await producer.put(self.random_string(100 * 1024))
+
+        results = []
+
+        async with Consumer(
+            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL,
+            processor=StringProcessor(),
+        ) as consumer:
+            async for item in consumer:
+                results.append(item)
+
+        # Expect to have consumed from start as default iterator_type=TRIM_HORIZON
+        self.assertEquals(len(results), 15)
+
 
     async def test_producer_and_consumer_consume_with_json_line_aggregator(self):
 

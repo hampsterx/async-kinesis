@@ -154,9 +154,9 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
         self.assertEqual(len(output), 1)
         self.assertIsInstance(output[0], OutputItem)
 
-        self.assertEqual(output[0].size, 12)
+        self.assertEqual(output[0].size, 13)
         self.assertEqual(output[0].n, 1)
-        self.assertEqual(output[0].data, b'{"test":123}')
+        self.assertEqual(output[0].data, b'{"test": 123}')
 
         self.assertFalse(processor.has_items())
 
@@ -176,9 +176,9 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
 
         self.assertEqual(len(output), 1)
 
-        self.assertEqual(output[0].size, 26)
+        self.assertEqual(output[0].size, 28)
         self.assertEqual(output[0].n, 2)
-        self.assertEqual(output[0].data, b'{"test":123}\n{"test":456}\n')
+        self.assertEqual(output[0].data, b'{"test": 123}\n{"test": 456}\n')
 
         self.assertListEqual(
             list(processor.parse(output[0].data)),
@@ -198,8 +198,8 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
         # Expected at least one record to be output
         self.assertEqual(len(result), 1)
 
-        self.assertEqual(result[0].size, 25596)  # expect below 25*1024=25600
-        self.assertEqual(result[0].n, 711)
+        self.assertEqual(result[0].size, 25567)  # expect below 25*1024=25600
+        self.assertEqual(result[0].n, 691)
 
         # Expect some left
         self.assertTrue(processor.has_items())
@@ -208,8 +208,8 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
 
         self.assertEqual(len(output), 1)
 
-        self.assertEqual(output[0].size, 10369)
-        self.assertEqual(output[0].n, 289)
+        self.assertEqual(output[0].size, 11397)
+        self.assertEqual(output[0].n, 309)
 
         self.assertFalse(processor.has_items())
 

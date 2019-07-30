@@ -38,12 +38,14 @@ class BaseCheckPointer:
 
 class BaseHeartbeatCheckPointer(BaseCheckPointer):
     def __init__(
-        self, name, id=None, session_timeout=60, heartbeat_frequency=15, loop=None
+        self, name, id=None, session_timeout=60, heartbeat_frequency=15, auto_checkpoint=True, loop=None
     ):
         super().__init__(name=name, id=id, loop=loop)
 
         self.session_timeout = session_timeout
         self.heartbeat_frequency = heartbeat_frequency
+        self.auto_checkpoint = auto_checkpoint
+        self._manual_checkpoints = {}
 
         self.heartbeat_task = asyncio.Task(self.heartbeat(), loop=self.loop)
 
@@ -94,13 +96,14 @@ class MemoryCheckPointer(BaseCheckPointer):
 
 class RedisCheckPointer(BaseHeartbeatCheckPointer):
     def __init__(
-        self, name, id=None, session_timeout=60, heartbeat_frequency=15, loop=None, is_cluster=False
+        self, name, id=None, session_timeout=60, heartbeat_frequency=15, loop=None, is_cluster=False, auto_checkpoint=True
     ):
         super().__init__(
             name=name,
             id=id,
             session_timeout=session_timeout,
             heartbeat_frequency=heartbeat_frequency,
+            auto_checkpoint=auto_checkpoint,
             loop=loop,
         )
 
@@ -126,6 +129,23 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
         return round(int(datetime.now(tz=timezone.utc).timestamp()))
 
     async def checkpoint(self, shard_id, sequence):
+
+        if not self.auto_checkpoint:
+            log.debug("{} updated manual checkpoint {}@{}".format(self.get_ref(), shard_id, sequence))
+            self._manual_checkpoints[shard_id] = sequence
+            return
+
+        await self._checkpoint(shard_id, sequence)
+
+    async def manual_checkpoint(self):
+        items = [(k, v) for k, v in self._manual_checkpoints.items()]
+
+        self._manual_checkpoints = {}
+
+        for shard_id, sequence in items:
+            await self._checkpoint(shard_id, sequence)
+
+    async def _checkpoint(self, shard_id, sequence):
 
         key = self.get_key(shard_id)
 

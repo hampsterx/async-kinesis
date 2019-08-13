@@ -177,6 +177,10 @@ class Consumer(Base):
                 if shard["fetch"].done():
                     result = shard["fetch"].result()
 
+                    if not result:
+                        shard["fetch"] = None
+                        continue
+
                     records = result["Records"]
 
                     if records:
@@ -243,6 +247,7 @@ class Consumer(Base):
             # log.debug("get_records shard={}".format(shard['ShardId']))
 
             try:
+
                 result = await self.client.get_records(
                     ShardIterator=shard["ShardIterator"], Limit=self.record_limit
                 )
@@ -253,7 +258,6 @@ class Consumer(Base):
             except ClientConnectionError as e:
                 log.warning("Connection error {}. sleeping..".format(e))
                 await asyncio.sleep(3, loop=self.loop)
-                return await self.get_records(shard=shard)
 
             except ClientError as err:
                 code = err.response["Error"]["Code"]
@@ -266,7 +270,6 @@ class Consumer(Base):
                     shard["stats"].throttled()
                     # todo: control the throttle ?
                     await asyncio.sleep(0.25, loop=self.loop)
-                    return await self.get_records(shard=shard)
 
                 elif code == "ExpiredIteratorException":
                     log.warning(
@@ -279,11 +282,13 @@ class Consumer(Base):
                         shard_id=shard["ShardId"], last_sequence_number=shard.get('LastSequenceNumber')
                     )
 
-                    return await self.get_records(shard=shard)
                 else:
                     raise
             except Exception:
                 raise
+
+        # Connection or other issue
+        return None
 
     async def get_shard_iterator(self, shard_id, last_sequence_number=None):
 

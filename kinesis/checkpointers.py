@@ -63,7 +63,7 @@ class BaseHeartbeatCheckPointer(BaseCheckPointer):
             for shard_id, sequence in self._items.items():
                 key = self.get_key(shard_id)
                 val = {"ref": self.get_ref(), "ts": self.get_ts(), "sequence": sequence}
-                log.info("Heartbeating {}@{}".format(shard_id, sequence))
+                log.debug("Heartbeating {}@{}".format(shard_id, sequence))
                 await self.do_heartbeat(key, val)
 
 

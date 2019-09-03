@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from aiohttp import ClientConnectionError
-
+from asyncio import TimeoutError
 from asyncio.queues import QueueEmpty
 from botocore.exceptions import ClientError
 from .utils import Throttler
@@ -258,6 +258,9 @@ class Consumer(Base):
             except ClientConnectionError as e:
                 log.warning("Connection error {}. sleeping..".format(e))
                 await asyncio.sleep(3, loop=self.loop)
+            except TimeoutError as e:
+                log.warning("Timeout {}. sleeping..".format(e))
+                await asyncio.sleep(3, loop=self.loop)
 
             except ClientError as err:
                 code = err.response["Error"]["Code"]
@@ -284,8 +287,9 @@ class Consumer(Base):
 
                 else:
                     raise
-            except Exception:
-                raise
+            except Exception as e:
+                log.warning("Unknown error {}. sleeping..".format(e))
+                await asyncio.sleep(3, loop=self.loop)
 
         # Connection or other issue
         return None

@@ -262,8 +262,8 @@ class Consumer(Base):
                 log.warning("Timeout {}. sleeping..".format(e))
                 await asyncio.sleep(3, loop=self.loop)
 
-            except ClientError as err:
-                code = err.response["Error"]["Code"]
+            except ClientError as e:
+                code = e.response["Error"]["Code"]
                 if code == "ProvisionedThroughputExceededException":
                     log.warning(
                         "{} hit ProvisionedThroughputExceededException".format(
@@ -286,7 +286,9 @@ class Consumer(Base):
                     )
 
                 else:
-                    raise
+                    log.warning("ClientError {}. sleeping..".format(code))
+                    await asyncio.sleep(3, loop=self.loop)
+
             except Exception as e:
                 log.warning("Unknown error {}. sleeping..".format(e))
                 await asyncio.sleep(3, loop=self.loop)

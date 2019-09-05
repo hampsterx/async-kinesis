@@ -8,7 +8,7 @@ setup(
     description="AsyncIO Kinesis Library",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    version="0.2.7",
+    version="0.2.8",
     url="https://github.com/hampsterx/async-kinesis",
     author="hampsterx",
     author_email="tim.vdh@gmail.com",

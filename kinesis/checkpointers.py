@@ -112,13 +112,21 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
         else:
             from aredis import StrictRedis as Redis
 
+        params = {
+            'host': os.environ.get("REDIS_HOST", "localhost"),
+            'port': int(os.environ.get("REDIS_PORT", "6379")),
+            'password': os.environ.get("REDIS_PASSWORD"),
+            'loop': self.loop,
+
+        }
+
+        if not is_cluster:
+            params['db'] = int(os.environ.get("REDIS_DB", "0")),
+        else:
+            params['skip_full_coverage_check'] = True
+
         self.client = Redis(
-            host=os.environ.get("REDIS_HOST", "localhost"),
-            port=int(os.environ.get("REDIS_PORT", "6379")),
-            password=os.environ.get("REDIS_PASSWORD"),
-            db=int(os.environ.get("REDIS_DB", "0")),
-            loop=self.loop,
-            skip_full_coverage_check=is_cluster
+            **params
         )
 
     async def do_heartbeat(self, key, value):

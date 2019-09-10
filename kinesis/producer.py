@@ -17,7 +17,6 @@ log = logging.getLogger(__name__)
 
 
 class Producer(Base):
-
     def __init__(
         self,
         stream_name,

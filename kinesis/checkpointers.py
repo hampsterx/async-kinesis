@@ -38,7 +38,13 @@ class BaseCheckPointer:
 
 class BaseHeartbeatCheckPointer(BaseCheckPointer):
     def __init__(
-        self, name, id=None, session_timeout=60, heartbeat_frequency=15, auto_checkpoint=True, loop=None
+        self,
+        name,
+        id=None,
+        session_timeout=60,
+        heartbeat_frequency=15,
+        auto_checkpoint=True,
+        loop=None,
     ):
         super().__init__(name=name, id=id, loop=loop)
 
@@ -96,7 +102,14 @@ class MemoryCheckPointer(BaseCheckPointer):
 
 class RedisCheckPointer(BaseHeartbeatCheckPointer):
     def __init__(
-        self, name, id=None, session_timeout=60, heartbeat_frequency=15, loop=None, is_cluster=False, auto_checkpoint=True
+        self,
+        name,
+        id=None,
+        session_timeout=60,
+        heartbeat_frequency=15,
+        loop=None,
+        is_cluster=False,
+        auto_checkpoint=True,
     ):
         super().__init__(
             name=name,
@@ -113,23 +126,20 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
             from aredis import StrictRedis as Redis
 
         params = {
-            'host': os.environ.get("REDIS_HOST", "localhost"),
-            'port': int(os.environ.get("REDIS_PORT", "6379")),
-            'password': os.environ.get("REDIS_PASSWORD"),
-            'loop': self.loop,
-
+            "host": os.environ.get("REDIS_HOST", "localhost"),
+            "port": int(os.environ.get("REDIS_PORT", "6379")),
+            "password": os.environ.get("REDIS_PASSWORD"),
+            "loop": self.loop,
         }
 
         if not is_cluster:
             db = int(os.environ.get("REDIS_DB", 0))
             if db > 0:
-                params['db'] = db
+                params["db"] = db
         else:
-            params['skip_full_coverage_check'] = True
+            params["skip_full_coverage_check"] = True
 
-        self.client = Redis(
-            **params
-        )
+        self.client = Redis(**params)
 
     async def do_heartbeat(self, key, value):
         await self.client.set(key, json.dumps(value))
@@ -143,7 +153,11 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
     async def checkpoint(self, shard_id, sequence):
 
         if not self.auto_checkpoint:
-            log.debug("{} updated manual checkpoint {}@{}".format(self.get_ref(), shard_id, sequence))
+            log.debug(
+                "{} updated manual checkpoint {}@{}".format(
+                    self.get_ref(), shard_id, sequence
+                )
+            )
             self._manual_checkpoints[shard_id] = sequence
             return
 

@@ -200,14 +200,25 @@ class Consumer(Base):
                             total_items += n + 1
 
                         # Get approx minutes behind..
-                        last_arrival = records[-1].get('ApproximateArrivalTimestamp')
+                        last_arrival = records[-1].get("ApproximateArrivalTimestamp")
                         if last_arrival:
-                            last_arrival = round(((datetime.now(timezone.utc) - last_arrival).total_seconds()/60))
+                            last_arrival = round(
+                                (
+                                    (
+                                        datetime.now(timezone.utc) - last_arrival
+                                    ).total_seconds()
+                                    / 60
+                                )
+                            )
 
                             log.debug(
                                 "Shard {} added {} items from {} records. Consumer is {}m behind".format(
-                                    shard["ShardId"], total_items, len(records), last_arrival),
-                                extra={'consumer_behind_m': last_arrival}
+                                    shard["ShardId"],
+                                    total_items,
+                                    len(records),
+                                    last_arrival,
+                                ),
+                                extra={"consumer_behind_m": last_arrival},
                             )
 
                         else:
@@ -290,13 +301,12 @@ class Consumer(Base):
 
                 elif code == "ExpiredIteratorException":
                     log.warning(
-                        "{} hit ExpiredIteratorException".format(
-                            shard["ShardId"]
-                        )
+                        "{} hit ExpiredIteratorException".format(shard["ShardId"])
                     )
 
                     shard["ShardIterator"] = await self.get_shard_iterator(
-                        shard_id=shard["ShardId"], last_sequence_number=shard.get('LastSequenceNumber')
+                        shard_id=shard["ShardId"],
+                        last_sequence_number=shard.get("LastSequenceNumber"),
                     )
 
                 else:

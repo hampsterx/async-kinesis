@@ -202,9 +202,6 @@ class Consumer(Base):
                         # Get approx minutes behind..
                         last_arrival = records[-1].get('ApproximateArrivalTimestamp')
                         if last_arrival:
-                            log.info(last_arrival.isoformat())
-                            log.info(datetime.now(timezone.utc).isoformat())
-
                             last_arrival = round(((datetime.now(timezone.utc) - last_arrival).total_seconds()/60))
 
                             log.debug(

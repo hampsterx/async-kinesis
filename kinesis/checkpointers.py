@@ -121,7 +121,9 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
         }
 
         if not is_cluster:
-            params['db'] = int(os.environ.get("REDIS_DB", "0")),
+            db = int(os.environ.get("REDIS_DB", 0))
+            if db > 0:
+                params['db'] = db
         else:
             params['skip_full_coverage_check'] = True
 

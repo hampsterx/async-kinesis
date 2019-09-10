@@ -32,6 +32,11 @@ class Base:
 
         session = aiobotocore.get_session(loop=self.loop)
 
+        # Note: max_attempts = 0
+        # Boto RetryHandler only handles these errors:
+        #  GENERAL_CONNECTION_ERROR => ConnectionError, ConnectionClosedError, ReadTimeoutError, EndpointConnectionError
+        # Still have to handle ClientError anyway~
+
         self.client = session.create_client(
             "kinesis", endpoint_url=self.endpoint_url, region_name=self.region_name,
             config=Config(connect_timeout=5, read_timeout=90, retries={'max_attempts': 0})

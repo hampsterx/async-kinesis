@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 from aiohttp import ClientConnectionError
 from asyncio import TimeoutError
 from asyncio.queues import QueueEmpty
@@ -198,11 +199,27 @@ class Consumer(Base):
                                 await self.queue.put(output)
                             total_items += n + 1
 
-                        log.debug(
-                            "Shard {} added {} items from {} records".format(
-                                shard["ShardId"], total_items, len(records)
+                        # Get approx minutes behind..
+                        last_arrival = records[-1].get('ApproximateArrivalTimestamp')
+                        if last_arrival:
+                            log.info(last_arrival.isoformat())
+                            log.info(datetime.now(timezone.utc).isoformat())
+
+                            last_arrival = round(((datetime.now(timezone.utc) - last_arrival).total_seconds()/60))
+
+                            log.debug(
+                                "Shard {} added {} items from {} records. Consumer is {}m behind".format(
+                                    shard["ShardId"], total_items, len(records), last_arrival),
+                                extra={'consumer_behind_m': last_arrival}
                             )
-                        )
+
+                        else:
+                            # ApproximateArrivalTimestamp not available in kinesis-lite
+                            log.debug(
+                                "Shard {} added {} items from {} records".format(
+                                    shard["ShardId"], total_items, len(records)
+                                )
+                            )
 
                         # Add checkpoint record
                         last_record = result["Records"][-1]

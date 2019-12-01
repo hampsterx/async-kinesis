@@ -8,7 +8,7 @@ setup(
     description="AsyncIO Kinesis Library",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    version="0.2.11",
+    version="0.2.12",
     url="https://github.com/hampsterx/async-kinesis",
     author="hampsterx",
     author_email="tim.vdh@gmail.com",
@@ -25,7 +25,7 @@ setup(
     ],
     packages=["kinesis"],
     install_requires=[
-        "aiobotocore>=0.10.2",
+        "aiobotocore>=0.11.0",
         "async-timeout==3.0.1",
         "asyncio-throttle==0.1.1",
     ],

@@ -217,7 +217,7 @@ class Producer(Base):
                     Records=[
                         {
                             "Data": item.data,
-                            "PartitionKey": "{0}{1}".format(time.clock(), time.time()),
+                            "PartitionKey": "{0}{1}".format(time.perf_counter(), time.time()),
                         }
                         for item in items
                     ],

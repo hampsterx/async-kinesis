@@ -8,7 +8,7 @@ setup(
     description="AsyncIO Kinesis Library",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    version="0.2.12",
+    version="0.3.0",
     url="https://github.com/hampsterx/async-kinesis",
     author="hampsterx",
     author_email="tim.vdh@gmail.com",
@@ -20,6 +20,7 @@ setup(
         "Programming Language :: Python :: 3.5",
         "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
         "Intended Audience :: Developers",
         'License :: OSI Approved :: Apache Software License',
     ],
@@ -30,7 +31,7 @@ setup(
         "asyncio-throttle==0.1.1",
     ],
     extras_require={
-        "redis": ["aredis>=1.1.4"],
+        "redis": ["aredis>=1.1.7"],
         "msgpack": ["msgpack>=0.6.1"]
     }
 )

@@ -68,7 +68,11 @@ class Base:
                     "Stream '{}' does not exist".format(self.stream_name)
                 ) from None
 
-    async def start(self):
+    async def start(self, skip_describe_stream=False):
+
+        if skip_describe_stream:
+            log.debug("Skipping Describe stream '{}'. Assuming it exists..".format(self.stream_name))
+            self.shards = []
 
         log.debug("Checking stream '{}' is active".format(self.stream_name))
 

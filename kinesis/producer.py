@@ -30,6 +30,7 @@ class Producer(Base):
         batch_size=500,
         max_queue_size=10000,
         processor=None,
+        skip_describe_stream=False
     ):
 
         super(Producer, self).__init__(
@@ -43,6 +44,9 @@ class Producer(Base):
         self.queue = asyncio.Queue(maxsize=max_queue_size, loop=self.loop)
 
         self.batch_size = batch_size
+
+        # Short Lived producer might want to skip describing stream on startup
+        self.skip_describe_stream = skip_describe_stream
 
         # A single shard can ingest up to 1 MiB of data per second (including partition keys)
         # or 1,000 records per second for writes
@@ -102,13 +106,13 @@ class Producer(Base):
 
     def set_put_rate_throttle(self):
         self.put_rate_throttle = Throttler(
-            rate_limit=self.put_rate_limit_per_shard * len(self.shards),
+            rate_limit=self.put_rate_limit_per_shard * (len(self.shards) if self.shards else 1),
             period=1,
             loop=self.loop,
         )
         self.put_bandwidth_throttle = Throttler(
             # kb per second. Go below a bit to avoid hitting the threshold
-            size_limit=self.put_bandwidth_limit_per_shard * len(self.shards),
+            size_limit=self.put_bandwidth_limit_per_shard * (len(self.shards) if self.shards else 1),
             period=1,
             loop=self.loop,
         )
@@ -116,7 +120,7 @@ class Producer(Base):
     async def put(self, data):
 
         if not self.stream_status == "ACTIVE":
-            await self.start()
+            await self.start(skip_describe_stream=self.skip_describe_stream)
             self.set_put_rate_throttle()
 
         if self.queue.qsize() >= self.batch_size:

@@ -49,11 +49,18 @@ Options:
 | region_name | None | AWS Region |
 | buffer_time | 0.5 | Buffer time in seconds before auto flushing records |
 | put_rate_limit_per_shard | 1000 | "A single shard can ingest up to 1 MiB of data per second (including partition keys) or 1,000 records per second for writes" |
-| put_bandwidth_limit_per_shard | 1024 | Kb per sec. max is 1024 per shard (ie 1 MiB). Keep below to minimize ProvisionedThroughputExceeded" errors |
+| put_bandwidth_limit_per_shard | 1024 | Kb per sec. max is 1024 per shard (ie 1 MiB). Keep below to minimize ProvisionedThroughputExceeded" errors * |
 | batch_size | 500 | "Each PutRecords request can support up to 500 records" |
 | max_queue_size | 10000 | put() method will block when queue is at max |
 | after_flush_fun | None | async function to call after doing a flush (err put_records()) call |
 | processor | JsonProcessor() | Record aggregator/serializer. Default is JSON without aggregation. Note this is highly inefficient as each record can be up to 1Mib |
+
+* Throughput exceeded. The docs (for Java/KPL see: https://docs.aws.amazon.com/streams/latest/dev/kinesis-producer-adv-retries-rate-limiting.html) state:
+
+> You can lower this limit to reduce spamming due to excessive retries. However, the best practice is for each producer is to retry for maximum throughput aggressively and to handle any resulting throttling determined as excessive by expanding the capacity of the stream and implementing an appropriate partition key strategy.
+
+Even though our default here is to limit at this threshold (1024kb) in reality the threshold seems lower (~80%).
+If you wish to avoid excessive throttling or have multiple producers on a stream you will want to set this quite a bit lower.
 
 
 ## Consumer

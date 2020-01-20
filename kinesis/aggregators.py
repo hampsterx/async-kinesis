@@ -85,23 +85,26 @@ class Aggregator(BaseAggregator):
         header_size = self.get_header_size(output)
 
         if size + self.size + header_size < self.max_bytes:
+
             self.buffer.append((size, output))
             self.size += size + header_size
 
         else:
             log.debug(
-                "Adding (full) item to queue with {} individual records with size of {} kb".format(
+                "Yielding item to queue with {} individual records with size of {} kb".format(
                     len(self.buffer), round(self.size / 1024)
                 )
             )
             yield OutputItem(size=self.size, n=len(self.buffer), data=self.output())
             self.buffer = [(size, output)]
-            self.size = 1
+            self.size = size
+
+        log.debug("Adding item to queue with size of {} kb".format(round(size/1024)))
 
     def get_items(self):
         log.debug(
-            "Adding (partial) item to queue with {} individual records with size of {} kb".format(
-                len(self.buffer), len(self.buffer), round(self.size / 1024)
+            "Yielding (final) item to queue with {} individual records with size of {} kb".format(
+                len(self.buffer), round(self.size / 1024)
             )
         )
         yield OutputItem(size=self.size, n=len(self.buffer), data=self.output())

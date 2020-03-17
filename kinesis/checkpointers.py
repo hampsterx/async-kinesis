@@ -8,8 +8,7 @@ log = logging.getLogger(__name__)
 
 
 class BaseCheckPointer:
-    def __init__(self, name="", id=None, loop=None):
-        self.loop = loop if loop else asyncio.get_event_loop()
+    def __init__(self, name="", id=None):
         self._id = id if id else os.getpid()
         self._name = name
         self._items = {}
@@ -44,16 +43,15 @@ class BaseHeartbeatCheckPointer(BaseCheckPointer):
         session_timeout=60,
         heartbeat_frequency=15,
         auto_checkpoint=True,
-        loop=None,
     ):
-        super().__init__(name=name, id=id, loop=loop)
+        super().__init__(name=name, id=id)
 
         self.session_timeout = session_timeout
         self.heartbeat_frequency = heartbeat_frequency
         self.auto_checkpoint = auto_checkpoint
         self._manual_checkpoints = {}
 
-        self.heartbeat_task = asyncio.Task(self.heartbeat(), loop=self.loop)
+        self.heartbeat_task = asyncio.Task(self.heartbeat())
 
     async def close(self):
         log.debug("Cancelling heartbeat task..")
@@ -63,7 +61,7 @@ class BaseHeartbeatCheckPointer(BaseCheckPointer):
 
     async def heartbeat(self):
         while True:
-            await asyncio.sleep(self.heartbeat_frequency, loop=self.loop)
+            await asyncio.sleep(self.heartbeat_frequency)
 
             # todo: don't heartbeat if checkpoint already updated it recently
             for shard_id, sequence in self._items.items():
@@ -107,7 +105,6 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
         id=None,
         session_timeout=60,
         heartbeat_frequency=15,
-        loop=None,
         is_cluster=False,
         auto_checkpoint=True,
     ):
@@ -117,7 +114,6 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
             session_timeout=session_timeout,
             heartbeat_frequency=heartbeat_frequency,
             auto_checkpoint=auto_checkpoint,
-            loop=loop,
         )
 
         if is_cluster:
@@ -129,7 +125,6 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
             "host": os.environ.get("REDIS_HOST", "localhost"),
             "port": int(os.environ.get("REDIS_PORT", "6379")),
             "password": os.environ.get("REDIS_PASSWORD"),
-            "loop": self.loop,
         }
 
         if not is_cluster:
@@ -189,7 +184,7 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
 
         if previous_val["ref"] != self.get_ref():
             raise NotImplementedError(
-                "{} checkpointed on {} but ref is different".format(
+                "{} checkpointed on {} but ref is different {}".format(
                     self.get_ref(), shard_id, val["ref"]
                 )
             )

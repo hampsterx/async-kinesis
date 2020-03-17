@@ -13,10 +13,9 @@ log = logging.getLogger(__name__)
 
 
 class Base:
-    def __init__(self, stream_name, loop=None, endpoint_url=None, region_name=None):
+    def __init__(self, stream_name, endpoint_url=None, region_name=None):
 
         self.stream_name = stream_name
-        self.loop = loop if loop else asyncio.get_event_loop()
 
         self.endpoint_url = endpoint_url
         self.region_name = region_name
@@ -34,7 +33,7 @@ class Base:
             )
         )
 
-        session = aiobotocore.get_session(loop=self.loop)
+        session = aiobotocore.get_session()
 
         # Note: max_attempts = 0
         # Boto RetryHandler only handles these errors:
@@ -71,12 +70,16 @@ class Base:
     async def start(self, skip_describe_stream=False):
 
         if skip_describe_stream:
-            log.debug("Skipping Describe stream '{}'. Assuming it exists..".format(self.stream_name))
+            log.debug(
+                "Skipping Describe stream '{}'. Assuming it exists..".format(
+                    self.stream_name
+                )
+            )
             self.shards = []
 
         log.debug("Checking stream '{}' is active".format(self.stream_name))
 
-        async with timeout(60, loop=self.loop) as cm:
+        async with timeout(60) as cm:
             try:
                 while True:
                     stream_info = await self.get_stream_description()

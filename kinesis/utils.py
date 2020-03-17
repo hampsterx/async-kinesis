@@ -2,7 +2,6 @@
     Source: https://github.com/hallazzang/asyncio-throttle
 
     Mods:
-        - add loop arg
         - add size_limit to support throttling by size
 """
 
@@ -17,17 +16,11 @@ log = logging.getLogger(__name__)
 
 class Throttler:
     def __init__(
-        self,
-        rate_limit=None,
-        size_limit=None,
-        period=1.0,
-        retry_interval=0.05,
-        loop=None,
+        self, rate_limit=None, size_limit=None, period=1.0, retry_interval=0.05,
     ):
         self.rate_limit = rate_limit
         self.size_limit = size_limit
         self.period = period
-        self.loop = loop
         self.retry_interval = retry_interval
 
         self._task_logs = deque()
@@ -71,10 +64,7 @@ class Throttler:
             self.flush()
             if self.is_below_rate():
                 break
-            await asyncio.sleep(
-                self.retry_interval,
-                loop=self.loop if self.loop else asyncio.get_event_loop(),
-            )
+            await asyncio.sleep(self.retry_interval,)
 
         self._task_logs.append((time.time(), self.size))
 

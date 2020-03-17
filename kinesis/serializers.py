@@ -1,7 +1,8 @@
 try:
     import ujson as json
 except ModuleNotFoundError:
-    import json
+    # https://github.com/python/mypy/issues/1153 (mypy bug with try/except conditional imports)
+    import json  # type: ignore
 
 try:
     import msgpack

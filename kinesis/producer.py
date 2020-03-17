@@ -20,7 +20,6 @@ class Producer(Base):
     def __init__(
         self,
         stream_name,
-        loop=None,
         endpoint_url=None,
         region_name=None,
         buffer_time=0.5,
@@ -30,18 +29,18 @@ class Producer(Base):
         batch_size=500,
         max_queue_size=10000,
         processor=None,
-        skip_describe_stream=False
+        skip_describe_stream=False,
     ):
 
         super(Producer, self).__init__(
-            stream_name, loop=loop, endpoint_url=endpoint_url, region_name=region_name
+            stream_name, endpoint_url=endpoint_url, region_name=region_name
         )
 
         self.buffer_time = buffer_time
 
         self.processor = processor if processor else JsonProcessor()
 
-        self.queue = asyncio.Queue(maxsize=max_queue_size, loop=self.loop)
+        self.queue = asyncio.Queue(maxsize=max_queue_size)
 
         self.batch_size = batch_size
 
@@ -64,7 +63,7 @@ class Producer(Base):
                 )
             )
 
-        self.flush_task = asyncio.Task(self._flush(), loop=self.loop)
+        self.flush_task = asyncio.Task(self._flush())
         self.is_flushing = False
         self.after_flush_fun = after_flush_fun
 
@@ -106,15 +105,15 @@ class Producer(Base):
 
     def set_put_rate_throttle(self):
         self.put_rate_throttle = Throttler(
-            rate_limit=self.put_rate_limit_per_shard * (len(self.shards) if self.shards else 1),
+            rate_limit=self.put_rate_limit_per_shard
+            * (len(self.shards) if self.shards else 1),
             period=1,
-            loop=self.loop,
         )
         self.put_bandwidth_throttle = Throttler(
             # kb per second. Go below a bit to avoid hitting the threshold
-            size_limit=self.put_bandwidth_limit_per_shard * (len(self.shards) if self.shards else 1),
+            size_limit=self.put_bandwidth_limit_per_shard
+            * (len(self.shards) if self.shards else 1),
             period=1,
-            loop=self.loop,
         )
 
     async def put(self, data):
@@ -141,7 +140,7 @@ class Producer(Base):
 
     async def _flush(self):
         while self.active:
-            await asyncio.sleep(self.buffer_time, loop=self.loop)
+            await asyncio.sleep(self.buffer_time)
             if not self.is_flushing:
                 await asyncio.shield(self.flush())
 
@@ -221,7 +220,9 @@ class Producer(Base):
                     Records=[
                         {
                             "Data": item.data,
-                            "PartitionKey": "{0}{1}".format(time.perf_counter(), time.time()),
+                            "PartitionKey": "{0}{1}".format(
+                                time.perf_counter(), time.time()
+                            ),
                         }
                         for item in items
                     ],
@@ -263,7 +264,7 @@ class Producer(Base):
             except ClientConnectionError:
                 log.warning("Connection error. sleeping..")
                 overflow = items
-                await asyncio.sleep(3, loop=self.loop)
+                await asyncio.sleep(3)
                 continue
             except Exception:
                 raise
@@ -301,7 +302,7 @@ class Producer(Base):
 
                         # log.debug("items={} overflow={}".format(len(items), len(overflow)))
 
-                        await asyncio.sleep(0.25, loop=self.loop)
+                        await asyncio.sleep(0.25)
 
                     else:
                         raise exceptions.UnknownException(

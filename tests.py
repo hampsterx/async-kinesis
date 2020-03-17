@@ -208,7 +208,7 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
 
         self.assertEqual(len(output), 1)
 
-        self.assertEqual(output[0].size, 11397)
+        self.assertEqual(output[0].size, 11432)
         self.assertEqual(output[0].n, 309)
 
         self.assertFalse(processor.has_items())
@@ -258,7 +258,7 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
 
         self.assertEqual(len(output), 1)
 
-        self.assertEqual(output[0].size, 9381)
+        self.assertEqual(output[0].size, 9411)
         self.assertEqual(output[0].n, 269)
 
         self.assertFalse(processor.has_items())

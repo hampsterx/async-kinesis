@@ -99,7 +99,7 @@ class Aggregator(BaseAggregator):
             self.buffer = [(size, output)]
             self.size = size
 
-        log.debug("Adding item to queue with size of {} kb".format(round(size/1024)))
+        log.debug("Adding item to queue with size of {} kb".format(round(size / 1024)))
 
     def get_items(self):
         log.debug(

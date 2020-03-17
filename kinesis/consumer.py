@@ -32,7 +32,6 @@ class Consumer(Base):
     def __init__(
         self,
         stream_name,
-        loop=None,
         endpoint_url=None,
         region_name=None,
         max_queue_size=10000,
@@ -46,10 +45,10 @@ class Consumer(Base):
     ):
 
         super(Consumer, self).__init__(
-            stream_name, loop=loop, endpoint_url=endpoint_url, region_name=region_name
+            stream_name, endpoint_url=endpoint_url, region_name=region_name
         )
 
-        self.queue = asyncio.Queue(maxsize=max_queue_size, loop=self.loop)
+        self.queue = asyncio.Queue(maxsize=max_queue_size)
 
         self.sleep_time_no_records = sleep_time_no_records
 
@@ -103,7 +102,7 @@ class Consumer(Base):
     async def _fetch(self):
         while self.is_fetching:
             # Ensure fetch is performed at most 5 times per second (the limit per shard)
-            await asyncio.sleep(0.2, loop=self.loop)
+            await asyncio.sleep(0.2)
             try:
                 await self.fetch()
             except asyncio.CancelledError:
@@ -168,7 +167,7 @@ class Consumer(Base):
                 if "ShardIterator" in shard:
                     shard["stats"] = ShardStats()
                     shard["throttler"] = Throttler(
-                        rate_limit=self.shard_fetch_rate, period=1, loop=self.loop
+                        rate_limit=self.shard_fetch_rate, period=1
                     )
                     shards_in_use.append(shard)
 
@@ -248,7 +247,7 @@ class Consumer(Base):
                                 shard["ShardId"], self.sleep_time_no_records
                             )
                         )
-                        await asyncio.sleep(self.sleep_time_no_records, loop=self.loop)
+                        await asyncio.sleep(self.sleep_time_no_records)
 
                     if not result["NextShardIterator"]:
                         raise NotImplementedError("Shard is closed?")
@@ -262,7 +261,7 @@ class Consumer(Base):
                     continue
 
             if "ShardIterator" in shard and shard["ShardIterator"] is not None:
-                shard["fetch"] = self.loop.create_task(self.get_records(shard=shard))
+                shard["fetch"] = asyncio.create_task(self.get_records(shard=shard))
 
     async def get_records(self, shard):
 
@@ -282,10 +281,10 @@ class Consumer(Base):
 
             except ClientConnectionError as e:
                 log.warning("Connection error {}. sleeping..".format(e))
-                await asyncio.sleep(3, loop=self.loop)
+                await asyncio.sleep(3)
             except TimeoutError as e:
                 log.warning("Timeout {}. sleeping..".format(e))
-                await asyncio.sleep(3, loop=self.loop)
+                await asyncio.sleep(3)
 
             except ClientError as e:
                 code = e.response["Error"]["Code"]
@@ -297,7 +296,7 @@ class Consumer(Base):
                     )
                     shard["stats"].throttled()
                     # todo: control the throttle ?
-                    await asyncio.sleep(0.25, loop=self.loop)
+                    await asyncio.sleep(0.25)
 
                 elif code == "ExpiredIteratorException":
                     log.warning(
@@ -311,11 +310,11 @@ class Consumer(Base):
 
                 else:
                     log.warning("ClientError {}. sleeping..".format(code))
-                    await asyncio.sleep(3, loop=self.loop)
+                    await asyncio.sleep(3)
 
             except Exception as e:
                 log.warning("Unknown error {}. sleeping..".format(e))
-                await asyncio.sleep(3, loop=self.loop)
+                await asyncio.sleep(3)
 
         # Connection or other issue
         return None
@@ -348,12 +347,12 @@ class Consumer(Base):
         await self.start()
 
         # Start task to fetch periodically
-        self.fetch_task = asyncio.Task(self._fetch(), loop=self.loop)
+        self.fetch_task = asyncio.Task(self._fetch())
 
         # Wait a while until we have some results
         for i in range(0, wait_iterations):
             if self.fetch_task and self.queue.qsize() == 0:
-                await asyncio.sleep(wait_sleep, loop=self.loop)
+                await asyncio.sleep(wait_sleep)
 
         log.debug("start_consumer completed.. queue size={}".format(self.queue.qsize()))
 
@@ -380,5 +379,5 @@ class Consumer(Base):
 
             except QueueEmpty:
                 log.debug("Queue empty..")
-                await asyncio.sleep(self.sleep_time_no_records, loop=self.loop)
+                await asyncio.sleep(self.sleep_time_no_records)
                 raise StopAsyncIteration

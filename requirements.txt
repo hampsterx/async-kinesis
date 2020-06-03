@@ -1,4 +1,4 @@
-aiobotocore>=0.12.0
+aiobotocore>=1.0.4,<1.1
 async-timeout==3.0.1
-aredis==1.1.7
+aredis==1.1.8
 msgpack==0.6.2

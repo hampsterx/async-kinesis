@@ -266,8 +266,8 @@ class Producer(Base):
                 overflow = items
                 await asyncio.sleep(3)
                 continue
-            except Exception:
-                raise
+            except Exception as e:
+                raise e
             else:
 
                 if result["FailedRecordCount"]:

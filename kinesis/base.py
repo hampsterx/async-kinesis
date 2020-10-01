@@ -69,6 +69,7 @@ class Base:
                 raise exceptions.StreamDoesNotExist(
                     "Stream '{}' does not exist".format(self.stream_name)
                 ) from None
+            raise
 
     async def start(self, skip_describe_stream=False):
 

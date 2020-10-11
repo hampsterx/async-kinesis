@@ -125,6 +125,18 @@ class NewlineAggregator(Aggregator):
                 yield self.deserialize(row)
 
 
+class ListAggregator(Aggregator):
+
+    def get_header_size(self, output):
+        return 1
+
+    def output(self):
+        return self.serialize([self.deserialize(x[1]) for x in self.buffer])
+
+    def parse(self, data):
+        yield self.deserialize(data)
+
+
 class NetstringAggregator(Aggregator):
     """
     Netstring Aggregation

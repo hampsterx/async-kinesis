@@ -1,4 +1,4 @@
-from .aggregators import NewlineAggregator, SimpleAggregator, NetstringAggregator
+from .aggregators import NewlineAggregator, SimpleAggregator, NetstringAggregator, ListAggregator
 from .serializers import StringSerializer, JsonSerializer, MsgpackSerializer
 
 
@@ -15,6 +15,10 @@ class JsonProcessor(Processor, SimpleAggregator, JsonSerializer):
 
 
 class JsonLineProcessor(Processor, NewlineAggregator, JsonSerializer):
+    pass
+
+
+class JsonListProcessor(Processor, ListAggregator, JsonSerializer):
     pass
 
 

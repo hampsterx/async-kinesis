@@ -10,12 +10,14 @@ from kinesis.processors import (
     StringProcessor,
     JsonProcessor,
     JsonLineProcessor,
+    JsonListProcessor,
     MsgpackProcessor,
 )
 from kinesis.aggregators import (
     Aggregator,
     SimpleAggregator,
     NewlineAggregator,
+    ListAggregator,
     NetstringAggregator,
     OutputItem,
 )
@@ -183,6 +185,58 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
         self.assertListEqual(
             list(processor.parse(output[0].data)),
             [{"test": 123}, {"test": 456}],
+        )
+
+        # Expect empty now
+        self.assertFalse(processor.has_items())
+
+        result = []
+        for x in range(1000):
+            output = list(processor.add_item({"test": "test with some more data"}))
+            if output:
+                self.assertEqual(len(output), 1)
+                result.append(output[0])
+
+        # Expected at least one record to be output
+        self.assertEqual(len(result), 1)
+
+        self.assertEqual(result[0].size, 25567)  # expect below 25*1024=25600
+        self.assertEqual(result[0].n, 691)
+
+        # Expect some left
+        self.assertTrue(processor.has_items())
+
+        output = list(processor.get_items())
+
+        self.assertEqual(len(output), 1)
+
+        self.assertEqual(output[0].size, 11432)
+        self.assertEqual(output[0].n, 309)
+
+        self.assertFalse(processor.has_items())
+
+    def test_json_list_processor(self):
+
+        processor = JsonListProcessor(max_size=25)
+
+        # Expect nothing as batching
+        self.assertEqual([], list(processor.add_item({"test": 123})))
+        self.assertEqual([], list(processor.add_item({"test": 456})))
+
+        self.assertTrue(processor.has_items())
+
+        output = list(processor.get_items())
+
+        self.assertEqual(len(output), 1)
+
+        self.assertEqual(output[0].size, 28)
+        self.assertEqual(output[0].n, 2)
+        self.assertEqual(output[0].data, b'[{"test": 123}, {"test": 456}]')
+
+        # Need to use next() otherwise list() creates double nested list
+        self.assertListEqual(
+            next(processor.parse(output[0].data)),
+            [{"test": 123}, {"test": 456}]
         )
 
         # Expect empty now
@@ -403,14 +457,14 @@ class KinesisTests(BaseKinesisTests):
 
         with self.assertRaises(exceptions.StreamDoesNotExist):
             async with Producer(
-                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+                    stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
             ) as producer:
                 await producer.put("test")
 
     async def test_create_stream_shard_limit_exceeded(self):
         with self.assertRaises(exceptions.StreamShardLimit):
             async with Producer(
-                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+                    stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
             ) as producer:
                 await producer.create_stream(
                     shards=10001
@@ -419,16 +473,16 @@ class KinesisTests(BaseKinesisTests):
     @fail_on(unused_loop=True, active_handles=True)
     async def test_producer_put(self):
         async with Producer(
-            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
             await producer.create_stream(shards=1)
             await producer.put("test")
 
     async def test_producer_put_below_limit(self):
         async with Producer(
-            stream_name=self.stream_name,
-            processor=StringProcessor(),
-            endpoint_url=ENDPOINT_URL,
+                stream_name=self.stream_name,
+                processor=StringProcessor(),
+                endpoint_url=ENDPOINT_URL,
         ) as producer:
             await producer.create_stream(shards=1)
             # The maximum size of the data payload of a record before base64-encoding is up to 1 MiB.
@@ -438,7 +492,7 @@ class KinesisTests(BaseKinesisTests):
     async def test_producer_put_exceed_batch_size(self):
         # Expect to complete by lowering batch size until successful (500 is max)
         async with Producer(
-            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL, batch_size=600
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL, batch_size=600
         ) as producer:
             await producer.create_stream(shards=1)
 
@@ -448,18 +502,18 @@ class KinesisTests(BaseKinesisTests):
     async def test_producer_and_consumer(self):
 
         async with Producer(
-            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
             await producer.create_stream(shards=1)
 
             async with Consumer(
-                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+                    stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
             ):
                 pass
 
     async def test_producer_and_consumer_consume_from_start_flush(self):
         async with Producer(
-            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
             await producer.create_stream(shards=1)
 
@@ -470,7 +524,7 @@ class KinesisTests(BaseKinesisTests):
             results = []
 
             async with Consumer(
-                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+                    stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
             ) as consumer:
                 async for item in consumer:
                     results.append(item)
@@ -478,13 +532,12 @@ class KinesisTests(BaseKinesisTests):
             # Expect to have consumed from start as default iterator_type=TRIM_HORIZON
             self.assertEquals([{"test": 123}], results)
 
-
     async def test_producer_and_consumer_consume_from_start_after(self):
 
         # Don't flush, close producer immediately to test all data is written to stream on exit.
         async with Producer(
-            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL,
-            processor=StringProcessor(),
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL,
+                processor=StringProcessor(),
         ) as producer:
             await producer.create_stream(shards=1)
             # Put enough data to ensure it will require more than one put
@@ -495,8 +548,8 @@ class KinesisTests(BaseKinesisTests):
         results = []
 
         async with Consumer(
-            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL,
-            processor=StringProcessor(),
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL,
+                processor=StringProcessor(),
         ) as consumer:
             async for item in consumer:
                 results.append(item)
@@ -504,13 +557,12 @@ class KinesisTests(BaseKinesisTests):
         # Expect to have consumed from start as default iterator_type=TRIM_HORIZON
         self.assertEquals(len(results), 15)
 
-
     async def test_producer_and_consumer_consume_with_json_line_aggregator(self):
 
         processor = JsonLineProcessor()
 
         async with Producer(
-            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL, processor=processor
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL, processor=processor
         ) as producer:
             await producer.create_stream(shards=1)
 
@@ -522,9 +574,9 @@ class KinesisTests(BaseKinesisTests):
             results = []
 
             async with Consumer(
-                stream_name=self.stream_name,
-                endpoint_url=ENDPOINT_URL,
-                processor=processor,
+                    stream_name=self.stream_name,
+                    endpoint_url=ENDPOINT_URL,
+                    processor=processor,
             ) as consumer:
                 async for item in consumer:
                     results.append(item)
@@ -541,7 +593,7 @@ class KinesisTests(BaseKinesisTests):
         processor = MsgpackProcessor()
 
         async with Producer(
-            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL, processor=processor
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL, processor=processor
         ) as producer:
             await producer.create_stream(shards=1)
 
@@ -553,9 +605,9 @@ class KinesisTests(BaseKinesisTests):
             results = []
 
             async with Consumer(
-                stream_name=self.stream_name,
-                endpoint_url=ENDPOINT_URL,
-                processor=processor,
+                    stream_name=self.stream_name,
+                    endpoint_url=ENDPOINT_URL,
+                    processor=processor,
             ) as consumer:
                 async for item in consumer:
                     results.append(item)
@@ -569,7 +621,7 @@ class KinesisTests(BaseKinesisTests):
 
     async def test_producer_and_consumer_consume_queue_full(self):
         async with Producer(
-            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
             await producer.create_stream(shards=1)
 
@@ -581,9 +633,9 @@ class KinesisTests(BaseKinesisTests):
             results = []
 
             async with Consumer(
-                stream_name=self.stream_name,
-                endpoint_url=ENDPOINT_URL,
-                max_queue_size=20,
+                    stream_name=self.stream_name,
+                    endpoint_url=ENDPOINT_URL,
+                    max_queue_size=20,
             ) as consumer:
 
                 async for item in consumer:
@@ -594,7 +646,7 @@ class KinesisTests(BaseKinesisTests):
 
     async def test_producer_and_consumer_consume_throttle(self):
         async with Producer(
-            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
             await producer.create_stream(shards=1)
 
@@ -606,11 +658,11 @@ class KinesisTests(BaseKinesisTests):
             results = []
 
             async with Consumer(
-                stream_name=self.stream_name,
-                endpoint_url=ENDPOINT_URL,
-                record_limit=10,
-                # 2 per second
-                shard_fetch_rate=2,
+                    stream_name=self.stream_name,
+                    endpoint_url=ENDPOINT_URL,
+                    record_limit=10,
+                    # 2 per second
+                    shard_fetch_rate=2,
             ) as consumer:
 
                 from datetime import datetime
@@ -627,7 +679,7 @@ class KinesisTests(BaseKinesisTests):
 
     async def test_producer_and_consumer_consume_with_checkpointer_and_latest(self):
         async with Producer(
-            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
             await producer.create_stream(shards=1)
 
@@ -638,10 +690,10 @@ class KinesisTests(BaseKinesisTests):
             checkpointer = MemoryCheckPointer(name="test")
 
             async with Consumer(
-                stream_name=self.stream_name,
-                endpoint_url=ENDPOINT_URL,
-                checkpointer=checkpointer,
-                iterator_type="LATEST",
+                    stream_name=self.stream_name,
+                    endpoint_url=ENDPOINT_URL,
+                    checkpointer=checkpointer,
+                    iterator_type="LATEST",
             ) as consumer:
 
                 async for item in consumer:
@@ -665,11 +717,11 @@ class KinesisTests(BaseKinesisTests):
             log.info("Starting consumer again..")
 
             async with Consumer(
-                stream_name=self.stream_name,
-                endpoint_url=ENDPOINT_URL,
-                checkpointer=checkpointer,
-                iterator_type="LATEST",
-                sleep_time_no_records=0.5,
+                    stream_name=self.stream_name,
+                    endpoint_url=ENDPOINT_URL,
+                    checkpointer=checkpointer,
+                    iterator_type="LATEST",
+                    sleep_time_no_records=0.5,
             ) as consumer:
 
                 # Manually start
@@ -708,11 +760,11 @@ class KinesisTests(BaseKinesisTests):
             results = []
 
             async with Consumer(
-                stream_name=self.stream_name,
-                endpoint_url=ENDPOINT_URL,
-                checkpointer=checkpointer,
-                iterator_type="LATEST",
-                sleep_time_no_records=0.5,
+                    stream_name=self.stream_name,
+                    endpoint_url=ENDPOINT_URL,
+                    checkpointer=checkpointer,
+                    iterator_type="LATEST",
+                    sleep_time_no_records=0.5,
             ) as consumer:
 
                 async for item in consumer:
@@ -722,10 +774,10 @@ class KinesisTests(BaseKinesisTests):
             self.assertEquals(10, len(results))
 
     async def test_producer_and_consumer_consume_multiple_shards_with_redis_checkpointer(
-        self
+            self
     ):
         async with Producer(
-            stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
             await producer.create_stream(shards=2)
 
@@ -741,10 +793,10 @@ class KinesisTests(BaseKinesisTests):
             )
 
             async with Consumer(
-                stream_name=self.stream_name,
-                endpoint_url=ENDPOINT_URL,
-                checkpointer=checkpointer,
-                record_limit=10,
+                    stream_name=self.stream_name,
+                    endpoint_url=ENDPOINT_URL,
+                    checkpointer=checkpointer,
+                    record_limit=10,
             ) as consumer:
 
                 # consumer will stop if no msgs
@@ -864,10 +916,10 @@ class AWSKinesisTests(BaseKinesisTests):
     async def test_consumer_consume_fetch_limit(self):
 
         async with Consumer(
-            stream_name=self.STREAM_NAME_SINGLE_SHARD,
-            sleep_time_no_records=0.001,
-            shard_fetch_rate=100,
-            iterator_type="LATEST"
+                stream_name=self.STREAM_NAME_SINGLE_SHARD,
+                sleep_time_no_records=0.001,
+                shard_fetch_rate=100,
+                iterator_type="LATEST"
         ) as consumer:
             await consumer.start()
 
@@ -889,17 +941,17 @@ class AWSKinesisTests(BaseKinesisTests):
         # Expect some throughput errors
 
         async with Producer(
-            stream_name=self.STREAM_NAME_SINGLE_SHARD,
-            processor=StringProcessor(),
-            put_bandwidth_limit_per_shard=1500,
+                stream_name=self.STREAM_NAME_SINGLE_SHARD,
+                processor=StringProcessor(),
+                put_bandwidth_limit_per_shard=1500,
         ) as producer:
 
             await producer.create_stream(shards=1)
 
             async with Consumer(
-                stream_name=self.STREAM_NAME_SINGLE_SHARD,
-                processor=StringProcessor(),
-                iterator_type="LATEST",
+                    stream_name=self.STREAM_NAME_SINGLE_SHARD,
+                    processor=StringProcessor(),
+                    iterator_type="LATEST",
             ) as consumer:
 
                 await consumer.start_consumer()
@@ -909,7 +961,6 @@ class AWSKinesisTests(BaseKinesisTests):
 
                 for x in range(20):
                     await producer.put(self.random_string(1024 * 250))
-
 
                 # todo: async timeout
                 output = []

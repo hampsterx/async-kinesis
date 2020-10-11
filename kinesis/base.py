@@ -1,7 +1,6 @@
 import asyncio
 import aiobotocore
 import logging
-from contextlib import AsyncExitStack
 from async_timeout import timeout
 from asyncio import CancelledError
 from botocore.exceptions import ClientError
@@ -21,7 +20,6 @@ class Base:
         self.endpoint_url = endpoint_url
         self.region_name = region_name
 
-        self.exit_stack = AsyncExitStack()
         self.client = None
         self.shards = None
 
@@ -42,20 +40,20 @@ class Base:
         #  GENERAL_CONNECTION_ERROR => ConnectionError, ConnectionClosedError, ReadTimeoutError, EndpointConnectionError
         # Still have to handle ClientError anyway~
 
-        self.client = await self.exit_stack.enter_async_context(session.create_client(
+        self.client = await session.create_client(
             "kinesis",
             endpoint_url=self.endpoint_url,
             region_name=self.region_name,
             config=Config(
                 connect_timeout=5, read_timeout=90, retries={"max_attempts": 0}
             ),
-        ))
+        ).__aenter__()
 
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
         await self.close()
-        await self.exit_stack.__aexit__(exc_type, exc, tb)
+        self.client.__aexit__(exc_type, exc, tb)
 
     async def get_stream_description(self):
 

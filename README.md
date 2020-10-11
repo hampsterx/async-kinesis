@@ -127,6 +127,7 @@ Refer https://aws.amazon.com/blogs/big-data/implementing-efficient-and-reliable-
 | StringProcessor | SimpleAggregator | StringSerializer | Single String record |
 | JsonProcessor | SimpleAggregator | JsonSerializer | Single JSON record |
 | JsonLineProcessor | NewlineAggregator | JsonSerializer | Multiple JSON record separated by new line char |
+| JsonListProcessor | ListAggregator | JsonSerializer | Multiple JSON record returned by list |
 | MsgpackProcessor | NetstringAggregator | MsgpackSerializer | Multiple Msgpack record framed with Netstring Protocol (https://en.wikipedia.org/wiki/Netstring) |
 
 Note you can define your own processor easily as it's simply a class inheriting the Aggregator + Serializer.

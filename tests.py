@@ -837,26 +837,20 @@ class AWSKinesisTests(BaseKinesisTests):
             )
         )
 
-        async def create(loop, stream_name, shards):
-            async with Producer(loop=loop, stream_name=stream_name) as producer:
+        async def create(stream_name, shards):
+            async with Producer(stream_name=stream_name) as producer:
                 await producer.create_stream(shards=shards)
                 await producer.start()
-
-        setup_loop = asyncio.new_event_loop()
 
         asyncio.gather(
             *[
                 create(
-                    loop=setup_loop, stream_name=cls.STREAM_NAME_SINGLE_SHARD, shards=1
+                    stream_name=cls.STREAM_NAME_SINGLE_SHARD, shards=1
                 ),
                 #   create(loop=setup_loop, stream_name=cls.STREAM_NAME_MULTI_SHARD, shards=3)
-            ],
-            loop=setup_loop
+            ]
         )
 
-        setup_loop.run_until_complete(asyncio.sleep(1, loop=setup_loop))
-
-        setup_loop.close()
 
     @classmethod
     def tearDownClass(cls):
@@ -917,22 +911,23 @@ class AWSKinesisTests(BaseKinesisTests):
 
         async with Consumer(
                 stream_name=self.STREAM_NAME_SINGLE_SHARD,
-                sleep_time_no_records=0.001,
-                shard_fetch_rate=100,
+                sleep_time_no_records=0.0001,
+                shard_fetch_rate=500,
                 iterator_type="LATEST"
         ) as consumer:
             await consumer.start()
 
             # GetShardIterator has a limit of five transactions per second per account per open shard
 
-            for i in range(0, 100):
+            for i in range(0, 500):
                 await consumer.fetch()
                 # sleep 50ms
                 await asyncio.sleep(0.05)
 
             shard_stats = [s["stats"] for s in consumer.shards][0].to_data()
 
-            self.assertTrue(shard_stats["throttled"] > 0, "Expected to be throttled")
+
+            self.assertTrue(shard_stats["throttled"] > 0, msg="Expected to be throttled")
 
     @skipUnless(
         TESTING_USE_AWS_KINESIS, "Requires TESTING_USE_AWS_KINESIS flag to be set"

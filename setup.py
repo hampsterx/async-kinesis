@@ -26,9 +26,9 @@ setup(
     ],
     packages=["kinesis"],
     install_requires=[
-        "aiobotocore>=1.0.4,<1.1",
-        "async-timeout==3.0.1",
-        "asyncio-throttle==0.1.1",
+        "aiobotocore>=1.0.4",
+        "async-timeout>=3.0.1",
+        "asyncio-throttle>=0.1.1",
     ],
     extras_require={
         "redis": ["aredis>=1.1.8"],

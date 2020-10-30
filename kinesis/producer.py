@@ -18,18 +18,20 @@ log = logging.getLogger(__name__)
 
 class Producer(Base):
     def __init__(
-        self,
-        stream_name,
-        endpoint_url=None,
-        region_name=None,
-        buffer_time=0.5,
-        put_rate_limit_per_shard=1000,
-        put_bandwidth_limit_per_shard=1024,
-        after_flush_fun=None,
-        batch_size=500,
-        max_queue_size=10000,
-        processor=None,
-        skip_describe_stream=False,
+            self,
+            stream_name,
+            endpoint_url=None,
+            region_name=None,
+            buffer_time=0.5,
+            put_rate_limit_per_shard=1000,
+            put_bandwidth_limit_per_shard=1024,
+            after_flush_fun=None,
+            batch_size=500,
+            max_queue_size=10000,
+            processor=None,
+            skip_describe_stream=False,
+            connection_retry_limit=None,
+            connection_exponential_backoff=None
     ):
 
         super(Producer, self).__init__(
@@ -73,6 +75,14 @@ class Producer(Base):
         # keep track of these (used by unit test only)
         self.throughput_exceeded_count = 0
 
+        # overflow buffer
+        self.overflow = []
+
+        self.connection_retry_limit = connection_retry_limit
+        self.flush_total_records = 0
+        self.flush_total_size = 0
+        self.connection_exponential_backoff = connection_exponential_backoff
+
     async def create_stream(self, shards=1, ignore_exists=True):
 
         log.debug(
@@ -106,13 +116,13 @@ class Producer(Base):
     def set_put_rate_throttle(self):
         self.put_rate_throttle = Throttler(
             rate_limit=self.put_rate_limit_per_shard
-            * (len(self.shards) if self.shards else 1),
+                       * (len(self.shards) if self.shards else 1),
             period=1,
         )
         self.put_bandwidth_throttle = Throttler(
             # kb per second. Go below a bit to avoid hitting the threshold
             size_limit=self.put_bandwidth_limit_per_shard
-            * (len(self.shards) if self.shards else 1),
+                       * (len(self.shards) if self.shards else 1),
             period=1,
         )
 
@@ -156,67 +166,123 @@ class Producer(Base):
             for output in self.processor.get_items():
                 await self.queue.put(output)
 
-        # Overflow in case we run into trouble with a batch
-        overflow = []
-
         while True:
 
-            total_records = 0
-            max_size = 0
-            total_size = 0
+            self.flush_total_records = 0
+            self.flush_total_size = 0
 
-            if self.queue.qsize() > 0 or len(overflow) > 0:
+            if self.queue.qsize() > 0 or len(self.overflow) > 0:
                 log.debug(
                     "flush queue={} overflow={}".format(
-                        self.queue.qsize(), len(overflow)
+                        self.queue.qsize(), len(self.overflow)
                     )
                 )
 
-            items = []
-
-            num = min(self.batch_size, self.queue.qsize() + len(overflow))
-
-            for _ in range(num):
-                async with self.put_rate_throttle:
-
-                    if overflow:
-                        item = overflow.pop()
-
-                    else:
-                        try:
-                            item = self.queue.get_nowait()
-                        except QueueEmpty:
-                            break
-
-                    size_kb = math.ceil(item[0] / 1024)
-
-                    max_size += size_kb
-
-                    if max_size > 1024:
-                        overflow.append(item)
-                        break
-
-                    total_size += size_kb
-                    total_records += item[1]
-
-                    async with self.put_bandwidth_throttle(size=total_size):
-                        pass
-
-                    items.append(item)
+            items = await self.get_batch()
 
             if not items:
                 break
 
-            log.debug(
-                "doing flush with {} record ({} items) @ {} kb".format(
-                    len(items), total_records, total_size
+            else:
+                result = await self._push_kinesis(items)
+                await self.process_result(result, items)
+
+        self.is_flushing = False
+
+    async def process_result(self, result, items):
+        if result["FailedRecordCount"]:
+
+            errors = list(
+                set(
+                    [
+                        r.get("ErrorCode")
+                        for r in result["Records"]
+                        if r.get("ErrorCode")
+                    ]
                 )
             )
+
+            if not errors:
+                raise exceptions.UnknownException(
+                    "Failed to put records but no errorCodes return in results"
+                )
+
+            if "ProvisionedThroughputExceededException" in errors:
+                log.warning(
+                    "Throughput exceeded ({} records failed, added back..), pausing for 0.25s..".format(
+                        result["FailedRecordCount"]
+                    )
+                )
+
+                self.throughput_exceeded_count += 1
+
+                for i, record in enumerate(result["Records"]):
+                    if "ErrorCode" in record:
+                        self.overflow.append(items[i])
+
+                # log.debug("items={} overflow={}".format(len(items), len(overflow)))
+
+                await asyncio.sleep(0.25)
+
+            else:
+                raise exceptions.UnknownException(
+                    "Failed to put records due to: {}".format(", ".join(errors))
+                )
+
+        else:
+
+            if self.after_flush_fun:
+                await self.after_flush_fun(items)
+
+    async def get_batch(self):
+        items = []
+        flush_max_size = 0
+
+        for num in range(self.queue.qsize() + len(self.overflow)):
+            async with self.put_rate_throttle:
+
+                if self.overflow:
+                    item = self.overflow.pop()
+
+                else:
+                    try:
+                        item = self.queue.get_nowait()
+                    except QueueEmpty:
+                        break
+
+                size_kb = math.ceil(item[0] / 1024)
+
+                flush_max_size += size_kb
+
+                if flush_max_size > 1024:
+                    self.overflow.append(item)
+
+                elif num <= self.batch_size:
+                    async with self.put_bandwidth_throttle(size=self.flush_total_size):
+                        items.append(item)
+                        self.flush_total_size += size_kb
+                        self.flush_total_records += item[1]
+                else:
+                    self.overflow.append(item)
+
+        return items
+
+    async def _push_kinesis(self, items):
+
+        log.debug(
+            "doing flush with {} record ({} items) @ {} kb".format(
+                len(items), self.flush_total_records, self.flush_total_size
+            )
+        )
+
+        connection_retry_limit = self.connection_retry_limit
+
+        while True:
 
             try:
 
                 # todo: custom partition key
-                result = await self.client.put_records(
+                results = await self.client.put_records(
                     Records=[
                         {
                             "Data": item.data,
@@ -229,21 +295,27 @@ class Producer(Base):
                     StreamName=self.stream_name,
                 )
 
+                log.debug(
+                    "flush complete with {} record ({} items) @ {} kb".format(
+                        len(items), self.flush_total_records, self.flush_total_size
+                    )
+                )
+                return results
+
             except ClientError as err:
 
                 code = err.response["Error"]["Code"]
 
                 if code == "ValidationException":
                     if (
-                        "must have length less than or equal"
-                        in err.response["Error"]["Message"]
+                            "must have length less than or equal"
+                            in err.response["Error"]["Message"]
                     ):
                         log.warning(
                             "Batch size {} exceeded the limit. retrying with less".format(
                                 len(items)
                             )
                         )
-                        overflow = items
 
                         existing_batch_size = self.batch_size
                         self.batch_size -= round(self.batch_size / 10)
@@ -252,66 +324,42 @@ class Producer(Base):
                         if existing_batch_size == self.batch_size:
                             self.batch_size -= 1
 
-                        continue
+                        self.overflow.extend(items)
+
+                        self.flush_total_records = 0
+                        self.flush_max_size = 0
+                        self.flush_total_size = 0
+
+                        items = await self.get_batch()
+
                     else:
-                        raise
+                        raise err
                 elif code == "ResourceNotFoundException":
                     raise exceptions.StreamDoesNotExist(
                         "Stream '{}' does not exist".format(self.stream_name)
                     ) from None
                 else:
-                    raise
+                    raise err
             except ClientConnectionError:
                 log.warning("Connection error. sleeping..")
-                overflow = items
-                await asyncio.sleep(3)
-                continue
+
+                await asyncio.sleep(self.get_connection_exponential_backoff())
+                if connection_retry_limit:
+                    if connection_retry_limit < 0:
+                        raise ClientConnectionError(
+                            f'Kinesis client has exceed {self.connection_retry_limit} attempts')
+                    else:
+                        connection_retry_limit -= connection_retry_limit
             except Exception as e:
                 raise e
+
+    def get_connection_exponential_backoff(self):
+
+        if self.connection_exponential_backoff:
+            self.connection_exponential_backoff *=2
+            if self.connection_exponential_backoff >= 60:
+                return 60
             else:
-
-                if result["FailedRecordCount"]:
-
-                    errors = list(
-                        set(
-                            [
-                                r.get("ErrorCode")
-                                for r in result["Records"]
-                                if r.get("ErrorCode")
-                            ]
-                        )
-                    )
-
-                    if not errors:
-                        raise exceptions.UnknownException(
-                            "Failed to put records but no errorCodes return in results"
-                        )
-
-                    if "ProvisionedThroughputExceededException" in errors:
-                        log.warning(
-                            "Throughput exceeded ({} records failed, added back..), pausing for 0.25s..".format(
-                                result["FailedRecordCount"]
-                            )
-                        )
-
-                        self.throughput_exceeded_count += 1
-
-                        for i, record in enumerate(result["Records"]):
-                            if "ErrorCode" in record:
-                                overflow.append(items[i])
-
-                        # log.debug("items={} overflow={}".format(len(items), len(overflow)))
-
-                        await asyncio.sleep(0.25)
-
-                    else:
-                        raise exceptions.UnknownException(
-                            "Failed to put records due to: {}".format(", ".join(errors))
-                        )
-
-                else:
-
-                    if self.after_flush_fun:
-                        await self.after_flush_fun(items)
-
-        self.is_flushing = False
+                return self.connection_exponential_backoff
+        else:
+            return 3

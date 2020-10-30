@@ -865,14 +865,13 @@ class AWSKinesisTests(BaseKinesisTests):
                 await producer.create_stream(shards=shards)
                 await producer.start()
 
-        asyncio.gather(
-            *[
+        asyncio.run(
                 create(
                     stream_name=cls.STREAM_NAME_SINGLE_SHARD, shards=1
-                ),
-                #   create(loop=setup_loop, stream_name=cls.STREAM_NAME_MULTI_SHARD, shards=3)
-            ]
+                )
         )
+        #   create(loop=setup_loop, stream_name=cls.STREAM_NAME_MULTI_SHARD, shards=3)
+
 
 
     @classmethod

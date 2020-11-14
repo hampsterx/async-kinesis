@@ -30,12 +30,14 @@ class Producer(Base):
             max_queue_size=10000,
             processor=None,
             skip_describe_stream=False,
-            connection_retry_limit=None,
-            connection_exponential_backoff=None
+            conn_error_retry_limit=None,
+            conn_error_expo_backoff=None
     ):
 
         super(Producer, self).__init__(
-            stream_name, endpoint_url=endpoint_url, region_name=region_name
+            stream_name, endpoint_url=endpoint_url, region_name=region_name,
+            conn_error_retry_limit=conn_error_retry_limit,
+            conn_error_expo_backoff=conn_error_expo_backoff
         )
 
         self.buffer_time = buffer_time
@@ -78,10 +80,8 @@ class Producer(Base):
         # overflow buffer
         self.overflow = []
 
-        self.connection_retry_limit = connection_retry_limit
         self.flush_total_records = 0
         self.flush_total_size = 0
-        self.connection_exponential_backoff = connection_exponential_backoff
 
     async def create_stream(self, shards=1, ignore_exists=True):
 
@@ -274,8 +274,8 @@ class Producer(Base):
                 len(items), self.flush_total_records, self.flush_total_size
             )
         )
-
-        connection_retry_limit = self.connection_retry_limit
+        conn_error_retry_limit = self.conn_error_retry_limit
+        conn_error_expo_backoff = self.conn_error_expo_backoff
 
         while True:
 
@@ -342,24 +342,10 @@ class Producer(Base):
                     raise err
             except ClientConnectionError:
                 log.warning("Connection error. sleeping..")
+                conn_error_expo_backoff = self.get_conn_error_expo_backoff(conn_error_expo_backoff)
+                await asyncio.sleep(conn_error_expo_backoff)
+                conn_error_retry_limit = await self.get_conn_error_retry(conn_error_retry_limit)
 
-                await asyncio.sleep(self.get_connection_exponential_backoff())
-                if connection_retry_limit:
-                    if connection_retry_limit < 0:
-                        raise ClientConnectionError(
-                            f'Kinesis client has exceed {self.connection_retry_limit} attempts')
-                    else:
-                        connection_retry_limit -= connection_retry_limit
             except Exception as e:
                 raise e
 
-    def get_connection_exponential_backoff(self):
-
-        if self.connection_exponential_backoff:
-            self.connection_exponential_backoff *=2
-            if self.connection_exponential_backoff >= 60:
-                return 60
-            else:
-                return self.connection_exponential_backoff
-        else:
-            return 3

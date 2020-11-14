@@ -5,6 +5,7 @@ from async_timeout import timeout
 from asyncio import CancelledError
 from botocore.exceptions import ClientError
 from botocore.config import Config
+from aiohttp import ClientConnectionError
 
 from . import exceptions
 
@@ -13,7 +14,8 @@ log = logging.getLogger(__name__)
 
 
 class Base:
-    def __init__(self, stream_name, endpoint_url=None, region_name=None):
+    def __init__(self, stream_name, endpoint_url=None, region_name=None,
+                 conn_error_retry_limit=None, conn_error_expo_backoff=None):
 
         self.stream_name = stream_name
 
@@ -24,6 +26,9 @@ class Base:
         self.shards = None
 
         self.stream_status = None
+
+        self.conn_error_retry_limit = conn_error_retry_limit
+        self.conn_error_expo_backoff = conn_error_expo_backoff
 
     async def __aenter__(self):
 
@@ -108,3 +113,25 @@ class Base:
             raise exceptions.StreamStatusInvalid(
                 "Stream '{}' is still {}".format(self.stream_name, stream_status)
             )
+
+    @staticmethod
+    def get_conn_error_expo_backoff(conn_error_expo_backoff=None):
+
+        if conn_error_expo_backoff:
+            conn_error_expo_backoff *=2
+            if conn_error_expo_backoff >= 60:
+                return 60
+            else:
+                return conn_error_expo_backoff
+        else:
+            return 3
+
+    async def get_conn_error_retry(self, conn_error_retry_limit=None):
+
+        if conn_error_retry_limit:
+            if conn_error_retry_limit <= 0:
+                raise ClientConnectionError(
+                    f'Kinesis client has exceeded {self.conn_error_retry_limit} attempts')
+            else:
+                conn_error_retry_limit -= conn_error_retry_limit
+                return conn_error_retry_limit

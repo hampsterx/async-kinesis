@@ -42,14 +42,18 @@ class Consumer(Base):
         shard_fetch_rate=1,
         checkpointer=None,
         processor=None,
-        conn_error_retry_limit=None,
-        conn_error_expo_backoff=None
+        retry_limit=None,
+        expo_backoff=None,
+        expo_backoff_limit=120,
+        skip_describe_stream=False,
     ):
 
         super(Consumer, self).__init__(
             stream_name, endpoint_url=endpoint_url, region_name=region_name,
-            conn_error_retry_limit=conn_error_retry_limit,
-            conn_error_expo_backoff=conn_error_expo_backoff
+            retry_limit=retry_limit,
+            expo_backoff=expo_backoff,
+            expo_backoff_limit=expo_backoff_limit,
+            skip_describe_stream=skip_describe_stream,
         )
 
         self.queue = asyncio.Queue(maxsize=max_queue_size)
@@ -76,17 +80,17 @@ class Consumer(Base):
         return self
 
     async def close(self):
-        log.debug("Closing..")
+        log.debug("Closing Connection..")
+        if not self.stream_status == "RECONNECT":
 
-        await self.flush()
+            await self.flush()
 
-        if self.fetch_task:
-            self.fetch_task.cancel()
-            self.fetch_task = None
+            if self.fetch_task:
+                self.fetch_task.cancel()
+                self.fetch_task = None
 
-        if self.checkpointer:
-            await self.checkpointer.close()
-
+            if self.checkpointer:
+                await self.checkpointer.close()
         await self.client.close()
 
     async def flush(self):
@@ -270,8 +274,6 @@ class Consumer(Base):
     async def get_records(self, shard):
 
         # Note: "This operation has a limit of five transactions per second per account."
-        conn_error_retry_limit = self.conn_error_retry_limit
-        conn_error_expo_backoff = self.conn_error_expo_backoff
 
         while True:
             async with shard["throttler"]:
@@ -287,10 +289,8 @@ class Consumer(Base):
                     return result
 
                 except ClientConnectionError as e:
-                    log.warning("Connection error {}. sleeping..".format(e))
-                    conn_error_expo_backoff = self.get_conn_error_expo_backoff(conn_error_expo_backoff)
-                    await asyncio.sleep(conn_error_expo_backoff)
-                    conn_error_retry_limit = await self.get_conn_error_retry(conn_error_retry_limit)
+                    self.stream_status = "RECONNECT"
+                    await self.get_conn()
                 except TimeoutError as e:
                     log.warning("Timeout {}. sleeping..".format(e))
                     await asyncio.sleep(3)
@@ -353,7 +353,7 @@ class Consumer(Base):
 
     async def start_consumer(self, wait_iterations=10, wait_sleep=0.25):
 
-        await self.start()
+        await self.get_conn()
 
         # Start task to fetch periodically
         self.fetch_task = asyncio.Task(self._fetch())

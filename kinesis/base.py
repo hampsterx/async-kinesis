@@ -5,7 +5,7 @@ from async_timeout import timeout
 from asyncio import CancelledError
 from botocore.exceptions import ClientError
 from botocore.config import Config
-from aiohttp import ClientConnectionError
+import time
 
 from . import exceptions
 
@@ -15,7 +15,8 @@ log = logging.getLogger(__name__)
 
 class Base:
     def __init__(self, stream_name, endpoint_url=None, region_name=None,
-                 conn_error_retry_limit=None, conn_error_expo_backoff=None):
+                 retry_limit=None, expo_backoff=None, expo_backoff_limit=None,
+                 skip_describe_stream=False):
 
         self.stream_name = stream_name
 
@@ -27,8 +28,16 @@ class Base:
 
         self.stream_status = None
 
-        self.conn_error_retry_limit = conn_error_retry_limit
-        self.conn_error_expo_backoff = conn_error_expo_backoff
+        self.retry_limit = retry_limit
+        self.expo_backoff = expo_backoff
+        self.expo_backoff_limit = expo_backoff_limit
+        self.stream_status = "INITIALIZE"
+        # Short Lived producer might want to skip describing stream on startup
+        self.skip_describe_stream = skip_describe_stream
+        self.conn_lock = asyncio.Semaphore(1)
+        self.reconnect_timeout = time.monotonic()
+
+
 
     async def __aenter__(self):
 
@@ -38,6 +47,17 @@ class Base:
             )
         )
 
+        await self.get_client()
+
+
+
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.close()
+        await self.client.__aexit__(exc_type, exc, tb)
+
+    async def get_client(self):
         session = aiobotocore.session.AioSession()
 
         # Note: max_attempts = 0
@@ -54,12 +74,6 @@ class Base:
             ),
         ).__aenter__()
 
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        await self.close()
-        await self.client.__aexit__(exc_type, exc, tb)
-
     async def get_stream_description(self):
 
         try:
@@ -74,9 +88,9 @@ class Base:
                 ) from None
             raise
 
-    async def start(self, skip_describe_stream=False):
+    async def start(self):
 
-        if skip_describe_stream:
+        if self.skip_describe_stream:
             log.debug(
                 "Skipping Describe stream '{}'. Assuming it exists..".format(
                     self.stream_name
@@ -114,24 +128,41 @@ class Base:
                 "Stream '{}' is still {}".format(self.stream_name, stream_status)
             )
 
-    @staticmethod
-    def get_conn_error_expo_backoff(conn_error_expo_backoff=None):
 
-        if conn_error_expo_backoff:
-            conn_error_expo_backoff *=2
-            if conn_error_expo_backoff >= 60:
-                return 60
-            else:
-                return conn_error_expo_backoff
+    async def close(self):
+        raise NotImplementedError
+
+    async def get_conn(self):
+
+        backoff_delay = 5
+        if self.stream_status == "INITIALIZE":
+            await self.start()
+            log.warning(f"Connection Successfully Initialized")
+        if self.stream_status == "ACTIVE" and time.monotonic() - self.reconnect_timeout > 120:
+            self.stream_status = "RECONNECT"
+            conn_attempts = 1
+            await self.close()
+            while True:
+                self.reconnect_timeout = time.monotonic()
+                try:
+                    log.warning(
+                        f"Connection error. Sleeping for {backoff_delay} seconds. Reconnection Attempt {conn_attempts}")
+                    await asyncio.sleep(backoff_delay)
+                    await self.get_client()
+                    await self.start()
+                    self.active = True
+                    log.warning(f"Connection Reestablished After {conn_attempts} and Sleeping for {backoff_delay}")
+                    break
+                except Exception:
+                    conn_attempts += conn_attempts
+                    if isinstance(self.retry_limit, int):
+                        if conn_attempts >= (self.retry_limit + 1):
+                            raise ConnectionError(
+                                f'Kinesis client has exceeded {self.retry_limit} connection attempts')
+                    if self.expo_backoff:
+                        backoff_delay = (conn_attempts ** 2) * self.expo_backoff
+                        if backoff_delay >= self.expo_backoff_limit:
+                            backoff_delay = self.expo_backoff_limit
+                    await self.close()
         else:
-            return 3
-
-    async def get_conn_error_retry(self, conn_error_retry_limit=None):
-
-        if conn_error_retry_limit:
-            if conn_error_retry_limit <= 0:
-                raise ClientConnectionError(
-                    f'Kinesis client has exceeded {self.conn_error_retry_limit} attempts')
-            else:
-                conn_error_retry_limit -= conn_error_retry_limit
-                return conn_error_retry_limit
+            await asyncio.sleep(backoff_delay)

@@ -30,14 +30,17 @@ class Producer(Base):
             max_queue_size=10000,
             processor=None,
             skip_describe_stream=False,
-            conn_error_retry_limit=None,
-            conn_error_expo_backoff=None
+            retry_limit=None,
+            expo_backoff=None,
+            expo_backoff_limit=120
     ):
 
         super(Producer, self).__init__(
             stream_name, endpoint_url=endpoint_url, region_name=region_name,
-            conn_error_retry_limit=conn_error_retry_limit,
-            conn_error_expo_backoff=conn_error_expo_backoff
+            retry_limit=retry_limit,
+            expo_backoff=expo_backoff,
+            expo_backoff_limit=expo_backoff_limit,
+            skip_describe_stream=skip_describe_stream,
         )
 
         self.buffer_time = buffer_time
@@ -48,8 +51,7 @@ class Producer(Base):
 
         self.batch_size = batch_size
 
-        # Short Lived producer might want to skip describing stream on startup
-        self.skip_describe_stream = skip_describe_stream
+
 
         # A single shard can ingest up to 1 MiB of data per second (including partition keys)
         # or 1,000 records per second for writes
@@ -129,7 +131,7 @@ class Producer(Base):
     async def put(self, data):
 
         if not self.stream_status == "ACTIVE":
-            await self.start(skip_describe_stream=self.skip_describe_stream)
+            await self.get_conn()
             self.set_put_rate_throttle()
 
         if self.queue.qsize() >= self.batch_size:
@@ -139,12 +141,14 @@ class Producer(Base):
             await self.queue.put(output)
 
     async def close(self):
+        log.debug("Closing Connection..")
         self.active = False
-        # Wait till task completes
-        await self.flush_task
+        if not self.stream_status == "RECONNECT":
+            # Wait till task completes
+            await self.flush_task
 
-        # final flush (probably not required but no harm)
-        await asyncio.shield(self.flush())
+            # final flush (probably not required but no harm)
+            await self.flush()
 
         await self.client.close()
 
@@ -152,7 +156,7 @@ class Producer(Base):
         while self.active:
             await asyncio.sleep(self.buffer_time)
             if not self.is_flushing:
-                await asyncio.shield(self.flush())
+                await self.flush()
 
     async def flush(self):
 
@@ -274,8 +278,6 @@ class Producer(Base):
                 len(items), self.flush_total_records, self.flush_total_size
             )
         )
-        conn_error_retry_limit = self.conn_error_retry_limit
-        conn_error_expo_backoff = self.conn_error_expo_backoff
 
         while True:
 
@@ -341,10 +343,8 @@ class Producer(Base):
                 else:
                     raise err
             except ClientConnectionError:
-                log.warning("Connection error. sleeping..")
-                conn_error_expo_backoff = self.get_conn_error_expo_backoff(conn_error_expo_backoff)
-                await asyncio.sleep(conn_error_expo_backoff)
-                conn_error_retry_limit = await self.get_conn_error_retry(conn_error_retry_limit)
+                await self.get_conn()
+
 
             except Exception as e:
                 raise e

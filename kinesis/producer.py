@@ -68,13 +68,12 @@ class Producer(Base):
                     )
                 )
             )
+        self.set_put_rate_throttle()
 
-        self.flush_task = asyncio.Task(self._flush())
+        self.flush_task = asyncio.create_task(self._flush(), name='Flush Task')
         self.is_flushing = False
         self.after_flush_fun = after_flush_fun
 
-        # Keep flush task looping while active
-        self.active = True
 
         # keep track of these (used by unit test only)
         self.throughput_exceeded_count = 0
@@ -132,7 +131,6 @@ class Producer(Base):
 
         if not self.stream_status == "ACTIVE":
             await self.get_conn()
-            self.set_put_rate_throttle()
 
         if self.queue.qsize() >= self.batch_size:
             await self.flush()
@@ -142,7 +140,6 @@ class Producer(Base):
 
     async def close(self):
         log.debug("Closing Connection..")
-        self.active = False
         if not self.stream_status == "RECONNECT":
             # Wait till task completes
             await self.flush_task
@@ -153,10 +150,11 @@ class Producer(Base):
         await self.client.close()
 
     async def _flush(self):
-        while self.active:
+        while True:
+            if self.stream_status == "ACTIVE":
+                if not self.is_flushing:
+                    await self.flush()
             await asyncio.sleep(self.buffer_time)
-            if not self.is_flushing:
-                await self.flush()
 
     async def flush(self):
 

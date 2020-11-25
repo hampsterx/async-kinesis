@@ -289,7 +289,6 @@ class Consumer(Base):
                     return result
 
                 except ClientConnectionError as e:
-                    self.stream_status = "RECONNECT"
                     await self.get_conn()
                 except TimeoutError as e:
                     log.warning("Timeout {}. sleeping..".format(e))
@@ -316,6 +315,10 @@ class Consumer(Base):
                             shard_id=shard["ShardId"],
                             last_sequence_number=shard.get("LastSequenceNumber"),
                         )
+
+                    elif code == "InternalFailure":
+                        log.warning('Received InternalFailure from Kinesis, rebuilding connection.. ')
+                        await self.get_conn()
 
                     else:
                         log.warning("ClientError {}. sleeping..".format(code))

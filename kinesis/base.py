@@ -153,7 +153,7 @@ class Base:
                 self.reconnect_timeout = time.monotonic()
                 try:
                     log.warning(
-                        f"Connection error. Sleeping for {backoff_delay} seconds. Reconnection Attempt {conn_attempts}")
+                        f"Connection Error. Rebuilding connection. Sleeping for {backoff_delay} seconds. Reconnection Attempt: {conn_attempts}")
                     await asyncio.sleep(backoff_delay)
                     await self.start()
                     log.warning(f"Connection Reestablished After {conn_attempts} and Sleeping for {backoff_delay}")
@@ -163,19 +163,12 @@ class Base:
                     if isinstance(self.retry_limit, int):
                         if conn_attempts >= (self.retry_limit + 1):
                             await self.close()
-                            # Store Exception from Flush Task so it can be raised in Main Task, Otherwise it will fail sliently.
-                            self.exception = e
-                            self.exception_msg = f'Kinesis client has exceeded {self.retry_limit} connection attempts'
-                            self.stream_status = "EXCEPTION"
-                            raise e
+                            raise ConnectionError(f'Kinesis client has exceeded {self.retry_limit} connection attempts')
                     if self.expo_backoff:
                         backoff_delay = (conn_attempts ** 2) * self.expo_backoff
                         if backoff_delay >= self.expo_backoff_limit:
                             backoff_delay = self.expo_backoff_limit
                     await self.close()
-        elif self.stream_status == "EXCEPTION":
-            log.critical(self.exception_msg)
-            raise self.exception
 
         else:
             await asyncio.sleep(backoff_delay)

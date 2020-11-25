@@ -129,10 +129,15 @@ class Producer(Base):
 
     async def put(self, data):
 
+        # Raise exception from Flush Task to main task otherwise raise exception inside
+        # Flush Task will fail silently
+        if self.flush_task.done():
+            raise self.flush_task.exception()
+
         if not self.stream_status == "ACTIVE":
             await self.get_conn()
 
-        if self.queue.qsize() >= self.batch_size:
+        elif self.queue.qsize() >= self.batch_size:
             await self.flush()
 
         for output in self.processor.add_item(data):
@@ -141,9 +146,8 @@ class Producer(Base):
     async def close(self):
         log.debug("Closing Connection..")
         if not self.stream_status == "RECONNECT":
-            # Wait till task completes
-            await self.flush_task
-
+            # Cancel Flush Task
+            self.flush_task.cancel()
             # final flush (probably not required but no harm)
             await self.flush()
 
@@ -226,6 +230,14 @@ class Producer(Base):
 
                 await asyncio.sleep(0.25)
 
+            elif "InternalFailure" in errors:
+                log.warning('Received InternalFailure from Kinesis')
+                await self.get_conn()
+
+                for i, record in enumerate(result["Records"]):
+                    if "ErrorCode" in record:
+                        self.overflow.append(items[i])
+
             else:
                 raise exceptions.UnknownException(
                     "Failed to put records due to: {}".format(", ".join(errors))
@@ -271,7 +283,7 @@ class Producer(Base):
 
     async def _push_kinesis(self, items):
 
-        log.debug(
+        log.info(
             "doing flush with {} record ({} items) @ {} kb".format(
                 len(items), self.flush_total_records, self.flush_total_size
             )
@@ -295,7 +307,7 @@ class Producer(Base):
                     StreamName=self.stream_name,
                 )
 
-                log.debug(
+                log.info(
                     "flush complete with {} record ({} items) @ {} kb".format(
                         len(items), self.flush_total_records, self.flush_total_size
                     )
@@ -340,10 +352,12 @@ class Producer(Base):
                     ) from None
                 else:
                     raise err
-            except ClientConnectionError:
+            except ClientConnectionError as err:
                 await self.get_conn()
 
 
             except Exception as e:
-                raise e
+                log.exception(e)
+                log.critical('Unknown Exception Caught')
+                await self.get_conn()
 

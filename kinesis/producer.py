@@ -345,7 +345,10 @@ class Producer(Base):
                         items = await self.get_batch()
 
                     else:
-                        raise err
+                        log.warning(f'Unfound error code {err.response["Error"]["Code"]}')
+                        log.exception(err)
+                        await self.get_conn()
+                        #raise err
                 elif code == "ResourceNotFoundException":
                     raise exceptions.StreamDoesNotExist(
                         "Stream '{}' does not exist".format(self.stream_name)

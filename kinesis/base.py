@@ -34,7 +34,7 @@ class Base:
         self.stream_status = "INITIALIZE"
         # Short Lived producer might want to skip describing stream on startup
         self.skip_describe_stream = skip_describe_stream
-        self.conn_lock = asyncio.Semaphore(1)
+        self.conn_lock = asyncio.Lock()
         self.reconnect_timeout = time.monotonic()
         self.exception = None
         self.exception_msg = None
@@ -136,39 +136,47 @@ class Base:
     async def close(self):
         raise NotImplementedError
 
+
     async def get_conn(self):
 
-        backoff_delay = 5
-        if self.stream_status == "INITIALIZE":
-            await self.start()
-            log.warning(f"Connection Successfully Initialized")
-        elif self.stream_status == "ACTIVE" and (time.monotonic() - self.reconnect_timeout) > 120:
-            # reconnect_timeout is a Lock so a new connection is not created immediately
-            # after a successfully reconnection has been made since self.start() set self.stream_status == "ACTIVE"
-            # immediately after a successful reconnect.
-            self.stream_status = "RECONNECT"
-            conn_attempts = 1
-            await self.close()
-            while True:
-                self.reconnect_timeout = time.monotonic()
+        async with self.conn_lock:
+            if self.stream_status == "INITIALIZE":
                 try:
-                    log.warning(
-                        f"Connection Error. Rebuilding connection. Sleeping for {backoff_delay} seconds. Reconnection Attempt: {conn_attempts}")
-                    await asyncio.sleep(backoff_delay)
                     await self.start()
-                    log.warning(f"Connection Reestablished After {conn_attempts} and Sleeping for {backoff_delay}")
-                    break
-                except Exception as e:
-                    conn_attempts += conn_attempts
-                    if isinstance(self.retry_limit, int):
-                        if conn_attempts >= (self.retry_limit + 1):
-                            await self.close()
-                            raise ConnectionError(f'Kinesis client has exceeded {self.retry_limit} connection attempts')
-                    if self.expo_backoff:
-                        backoff_delay = (conn_attempts ** 2) * self.expo_backoff
-                        if backoff_delay >= self.expo_backoff_limit:
-                            backoff_delay = self.expo_backoff_limit
-                    await self.close()
+                    log.warning(f"Connection Successfully Initialized")
+                except Exception:
+                    log.warning(f"Connection Failed to Initialize")
+                    await self._get_reconn_helper()
+            elif self.stream_status == "ACTIVE" and (time.monotonic() - self.reconnect_timeout) > 120:
+                # reconnect_timeout is a Lock so a new connection is not created immediately
+                # after a successfully reconnection has been made since self.start() sets self.stream_status = "ACTIVE"
+                # immediately after a successful reconnect.
+                await self._get_reconn_helper()
 
-        else:
-            await asyncio.sleep(backoff_delay)
+
+    async def _get_reconn_helper(self):
+
+        self.stream_status = "RECONNECT"
+        backoff_delay = 5
+        conn_attempts = 1
+        await self.close()
+        while True:
+            self.reconnect_timeout = time.monotonic()
+            try:
+                log.warning(
+                    f"Connection Error. Rebuilding connection. Sleeping for {backoff_delay} seconds. Reconnection Attempt: {conn_attempts}")
+                await asyncio.sleep(backoff_delay)
+                await self.start()
+                log.warning(f"Connection Reestablished After {conn_attempts} and Sleeping for {backoff_delay}")
+                break
+            except Exception as e:
+                conn_attempts += 1
+                if isinstance(self.retry_limit, int):
+                    if conn_attempts >= (self.retry_limit + 1):
+                        await self.close()
+                        raise ConnectionError(f'Kinesis client has exceeded {self.retry_limit} connection attempts')
+                if self.expo_backoff:
+                    backoff_delay = (conn_attempts ** 2) * self.expo_backoff
+                    if backoff_delay >= self.expo_backoff_limit:
+                        backoff_delay = self.expo_backoff_limit
+                await self.close()

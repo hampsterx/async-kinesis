@@ -345,7 +345,7 @@ class Producer(Base):
                         items = await self.get_batch()
 
                     else:
-                        log.warning(f'Unfound error code {err.response["Error"]["Code"]}')
+                        log.warning(f'Unknown ValidationException error code {err.response["Error"]["Code"]}')
                         log.exception(err)
                         await self.get_conn()
                         #raise err
@@ -354,7 +354,10 @@ class Producer(Base):
                         "Stream '{}' does not exist".format(self.stream_name)
                     ) from None
                 else:
-                    raise err
+                    log.warning(f'Unknown Client error code {err.response["Error"]["Code"]}')
+                    log.exception(err)
+                    await self.get_conn()
+                    # raise err
             except ClientConnectionError as err:
                 await self.get_conn()
 

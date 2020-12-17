@@ -170,6 +170,7 @@ class Base:
                 log.warning(f"Connection Reestablished After {conn_attempts} and Sleeping for {backoff_delay}")
                 break
             except Exception as e:
+                log.warning(e)
                 conn_attempts += 1
                 if isinstance(self.retry_limit, int):
                     if conn_attempts >= (self.retry_limit + 1):

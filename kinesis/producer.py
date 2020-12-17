@@ -283,7 +283,7 @@ class Producer(Base):
 
     async def _push_kinesis(self, items):
 
-        log.info(
+        log.debug(
             "doing flush with {} record ({} items) @ {} kb".format(
                 len(items), self.flush_total_records, self.flush_total_size
             )

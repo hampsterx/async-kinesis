@@ -55,6 +55,10 @@ class BaseTests:
 class BaseKinesisTests(AsynTestCase, BaseTests):
     async def setUp(self):
         self.stream_name = "test_{}".format(str(uuid.uuid4())[0:8])
+        producer = Producer(stream_name=self.stream_name, endpoint_url=ENDPOINT_URL)
+        await producer.get_client()
+        await producer.create_stream(shards=1)
+        await producer.__aexit__(None, None, None)
 
     async def add_record_delayed(self, msg, producer, delay):
         log.debug("Adding record. delay={}".format(delay))
@@ -484,21 +488,12 @@ class KinesisTests(BaseKinesisTests):
             ) as producer:
                 await producer.put("test")
 
-    async def test_create_stream_shard_limit_exceeded(self):
-        with self.assertRaises(exceptions.StreamShardLimit):
-            async with Producer(
-                    stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
-            ) as producer:
-                await producer.create_stream(
-                    shards=10001
-                )  # must match kinesalite (--shardLimit)
 
     @fail_on(unused_loop=True, active_handles=True)
     async def test_producer_put(self):
         async with Producer(
                 stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
-            await producer.create_stream(shards=1)
             await producer.put("test")
 
     async def test_producer_put_below_limit(self):
@@ -507,7 +502,6 @@ class KinesisTests(BaseKinesisTests):
                 processor=StringProcessor(),
                 endpoint_url=ENDPOINT_URL,
         ) as producer:
-            await producer.create_stream(shards=1)
             # The maximum size of the data payload of a record before base64-encoding is up to 1 MiB.
             # Limit is set in aggregators.BaseAggregator (few bytes short of 1MiB)
             await producer.put(self.random_string(40 * 25 * 1024))
@@ -517,7 +511,6 @@ class KinesisTests(BaseKinesisTests):
         async with Producer(
                 stream_name=self.stream_name, endpoint_url=ENDPOINT_URL, batch_size=600
         ) as producer:
-            await producer.create_stream(shards=1)
 
             for x in range(1000):
                 await producer.put("test")
@@ -527,7 +520,7 @@ class KinesisTests(BaseKinesisTests):
         async with Producer(
                 stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
-            await producer.create_stream(shards=1)
+            pass
 
             async with Consumer(
                     stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
@@ -538,7 +531,6 @@ class KinesisTests(BaseKinesisTests):
         async with Producer(
                 stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
-            await producer.create_stream(shards=1)
 
             await producer.put({"test": 123})
 
@@ -562,7 +554,6 @@ class KinesisTests(BaseKinesisTests):
                 stream_name=self.stream_name, endpoint_url=ENDPOINT_URL,
                 processor=StringProcessor(),
         ) as producer:
-            await producer.create_stream(shards=1)
             # Put enough data to ensure it will require more than one put
             # ie test overflow behaviour
             for _ in range(15):
@@ -587,7 +578,6 @@ class KinesisTests(BaseKinesisTests):
         async with Producer(
                 stream_name=self.stream_name, endpoint_url=ENDPOINT_URL, processor=processor
         ) as producer:
-            await producer.create_stream(shards=1)
 
             for x in range(0, 10):
                 await producer.put({"test": x})
@@ -618,7 +608,6 @@ class KinesisTests(BaseKinesisTests):
         async with Producer(
                 stream_name=self.stream_name, endpoint_url=ENDPOINT_URL, processor=processor
         ) as producer:
-            await producer.create_stream(shards=1)
 
             for x in range(0, 10):
                 await producer.put({"test": x})
@@ -646,7 +635,6 @@ class KinesisTests(BaseKinesisTests):
         async with Producer(
                 stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
-            await producer.create_stream(shards=1)
 
             for i in range(0, 100):
                 await producer.put("test")
@@ -671,7 +659,6 @@ class KinesisTests(BaseKinesisTests):
         async with Producer(
                 stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
-            await producer.create_stream(shards=1)
 
             for i in range(0, 100):
                 await producer.put("test")
@@ -704,7 +691,6 @@ class KinesisTests(BaseKinesisTests):
         async with Producer(
                 stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
-            await producer.create_stream(shards=1)
 
             await producer.put("test.A")
 
@@ -802,6 +788,7 @@ class KinesisTests(BaseKinesisTests):
         async with Producer(
                 stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
         ) as producer:
+
             await producer.create_stream(shards=2)
 
             for i in range(0, 100):
@@ -961,8 +948,6 @@ class AWSKinesisTests(BaseKinesisTests):
                 processor=StringProcessor(),
                 put_bandwidth_limit_per_shard=1500,
         ) as producer:
-
-            await producer.create_stream(shards=1)
 
             async with Consumer(
                     stream_name=self.STREAM_NAME_SINGLE_SHARD,

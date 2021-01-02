@@ -275,9 +275,8 @@ class Consumer(Base):
 
         # Note: "This operation has a limit of five transactions per second per account."
 
-        while True:
-            async with shard["throttler"]:
-                # log.debug("get_records shard={}".format(shard['ShardId']))
+        async with shard["throttler"]:
+            # log.debug("get_records shard={}".format(shard['ShardId']))
 
                 try:
 
@@ -328,8 +327,8 @@ class Consumer(Base):
                     log.warning("Unknown error {}. sleeping..".format(e))
                     await asyncio.sleep(3)
 
-            # Connection or other issue
-            return None
+                # Connection or other issue
+                return None
 
     async def get_shard_iterator(self, shard_id, last_sequence_number=None):
 
@@ -356,10 +355,9 @@ class Consumer(Base):
 
     async def start_consumer(self, wait_iterations=10, wait_sleep=0.25):
 
-        await self.get_conn()
-
         # Start task to fetch periodically
-        self.fetch_task = asyncio.Task(self._fetch())
+
+        self.fetch_task = asyncio.create_task(self._fetch(), name='Fetch Task')
 
         # Wait a while until we have some results
         for i in range(0, wait_iterations):
@@ -371,7 +369,15 @@ class Consumer(Base):
     async def __anext__(self):
 
         if not self.shards:
+            await self.get_conn()
+
+        if not self.fetch_task:
             await self.start_consumer()
+
+        # Raise exception from Fetch Task to main task otherwise raise exception inside
+        # Fetch Task will fail silently
+        if self.fetch_task.done():
+            raise self.fetch_task.exception()
 
         while True:
             try:

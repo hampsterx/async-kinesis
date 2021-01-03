@@ -74,7 +74,7 @@ class Producer(Base):
             )
         self.set_put_rate_throttle()
 
-        self.flush_task = asyncio.create_task(self._flush(), name='Flush Task')
+        self.flush_task = asyncio.create_task(self._flush())
         self.is_flushing = False
         self.after_flush_fun = after_flush_fun
 
@@ -109,7 +109,7 @@ class Producer(Base):
         if self.flush_task.done():
             raise self.flush_task.exception()
 
-        if not self.stream_status == "ACTIVE":
+        if not self.stream_status == self.ACTIVE:
             await self.get_conn()
 
         elif self.queue.qsize() >= self.batch_size:
@@ -120,7 +120,7 @@ class Producer(Base):
 
     async def close(self):
         log.debug("Closing Connection..")
-        if not self.stream_status == "RECONNECT":
+        if not self.stream_status == self.RECONNECT:
             # Cancel Flush Task
             self.flush_task.cancel()
             # final flush (probably not required but no harm)
@@ -130,7 +130,7 @@ class Producer(Base):
 
     async def _flush(self):
         while True:
-            if self.stream_status == "ACTIVE":
+            if self.stream_status == self.ACTIVE:
                 if not self.is_flushing:
                     await self.flush()
             await asyncio.sleep(self.buffer_time)

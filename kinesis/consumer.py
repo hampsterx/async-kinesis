@@ -85,7 +85,7 @@ class Consumer(Base):
 
     async def close(self):
         log.debug("Closing Connection..")
-        if not self.stream_status == "RECONNECT":
+        if not self.stream_status == self.RECONNECT:
 
             await self.flush()
 
@@ -361,7 +361,7 @@ class Consumer(Base):
 
         # Start task to fetch periodically
 
-        self.fetch_task = asyncio.create_task(self._fetch(), name='Fetch Task')
+        self.fetch_task = asyncio.create_task(self._fetch())
 
         # Wait a while until we have some results
         for i in range(0, wait_iterations):

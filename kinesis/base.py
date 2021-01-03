@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 
 class Base:
     def __init__(self, stream_name, endpoint_url=None, region_name=None,
-                 retry_limit=None, expo_backoff=None, expo_backoff_limit=None,
+                 retry_limit=None, expo_backoff=None, expo_backoff_limit=120,
                  skip_describe_stream=False, create_stream=False, create_stream_shards=1):
 
         self.stream_name = stream_name
@@ -31,13 +31,20 @@ class Base:
         self.retry_limit = retry_limit
         self.expo_backoff = expo_backoff
         self.expo_backoff_limit = expo_backoff_limit
-        self.stream_status = "INITIALIZE"
+
+        # connection states of kinesis client
+        self.RECONNECT = "RECONNECT"
+        self.ACTIVE = "ACTIVE"
+        self.INITIALIZE = "INITIALIZE"
+
+        self.stream_status = self.INITIALIZE
         # Short Lived producer might want to skip describing stream on startup
         self.skip_describe_stream = skip_describe_stream
-        self.conn_lock = asyncio.Lock()
-        self.reconnect_timeout = time.monotonic()
+        self._conn_lock = asyncio.Lock()
+        self._reconnect_timeout = time.monotonic()
         self.create_stream = create_stream
         self.create_stream_shards = create_stream_shards
+
 
 
     async def __aenter__(self):
@@ -111,7 +118,7 @@ class Base:
                     stream_info = await self.get_stream_description()
                     stream_status = stream_info["StreamStatus"]
 
-                    if stream_status == "ACTIVE":
+                    if stream_status == self.ACTIVE:
                         self.stream_status = stream_status
                         break
 
@@ -140,30 +147,32 @@ class Base:
 
     async def get_conn(self):
 
-        async with self.conn_lock:
-            if self.stream_status == "INITIALIZE":
+        async with self._conn_lock:
+            if self.stream_status == self.INITIALIZE:
                 try:
                     await self.start()
                     log.warning(f"Connection Successfully Initialized")
                 except Exception:
                     log.warning(f"Connection Failed to Initialize")
                     await self._get_reconn_helper()
-            elif self.stream_status == "ACTIVE" and (time.monotonic() - self.reconnect_timeout) > 120:
+            elif self.stream_status == self.ACTIVE and (time.monotonic() - self._reconnect_timeout) > 120:
                 # reconnect_timeout is a Lock so a new connection is not created immediately
                 # after a successfully reconnection has been made since self.start() sets self.stream_status = "ACTIVE"
                 # immediately after a successful reconnect.
+                # Based on testing a hardcode 120 seconds backoff is best since, there could be a lot of pending
+                # coroutines reattempting the connection when the client connection it's already healthy.
                 await self._get_reconn_helper()
 
 
     async def _get_reconn_helper(self):
         # Logic used to reconnect to connect to kinesis if there is a error
 
-        self.stream_status = "RECONNECT"
+        self.stream_status = self.RECONNECT
         backoff_delay = 5
         conn_attempts = 1
         await self.close()
         while True:
-            self.reconnect_timeout = time.monotonic()
+            self._reconnect_timeout = time.monotonic()
             try:
                 log.warning(
                     f"Connection Error. Rebuilding connection. Sleeping for {backoff_delay} seconds. Reconnection Attempt: {conn_attempts}")

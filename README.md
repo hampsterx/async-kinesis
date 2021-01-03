@@ -54,6 +54,11 @@ Options:
 | max_queue_size | 10000 | put() method will block when queue is at max |
 | after_flush_fun | None | async function to call after doing a flush (err put_records()) call |
 | processor | JsonProcessor() | Record aggregator/serializer. Default is JSON without aggregation. Note this is highly inefficient as each record can be up to 1Mib |
+| retry_limit | None | How many connection attempts should be made before raising a exception |
+| expo_backoff | None | Exponential Backoff when connection attempt fails |
+| expo_backoff_limit | 120 | Max amount of seconds Exponential Backoff can grow |
+| create_stream | False | Creates a Kinesis Stream based on the `stream_name` keyword argument. Note if stream already existing it will ignore |
+| create_stream_shards | 1 | Sets the amount of shard you want for your new stream. Note if stream already existing it will ignore  |
 
 * Throughput exceeded. The docs (for Java/KPL see: https://docs.aws.amazon.com/streams/latest/dev/kinesis-producer-adv-retries-rate-limiting.html) state:
 
@@ -90,6 +95,11 @@ Options:
 | shard_fetch_rate | 1 | No of fetches per second (max = 5). 1 is recommended as allows having multiple consumers without hitting the max limit. |
 | checkpointer | MemoryCheckPointer() | Checkpointer to use |
 | processor | JsonProcessor() |  Record aggregator/serializer. Must Match processor used by Producer() |
+| retry_limit | None | How many connection attempts should be made before raising a exception |
+| expo_backoff | None | Exponential Backoff when connection attempt fails |
+| expo_backoff_limit | 120 | Max amount of seconds Exponential Backoff can grow |
+| create_stream | False | Creates a Kinesis Stream based on the `stream_name` keyword argument. Note if stream already existing it will ignore |
+| create_stream_shards | 1 | Sets the amount of shard you want for your new stream. Note if stream already existing it will ignore  |
 
 
 ## Checkpointers

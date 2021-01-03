@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 class Base:
     def __init__(self, stream_name, endpoint_url=None, region_name=None,
                  retry_limit=None, expo_backoff=None, expo_backoff_limit=None,
-                 skip_describe_stream=False):
+                 skip_describe_stream=False, create_stream=False, create_stream_shards=1):
 
         self.stream_name = stream_name
 
@@ -36,9 +36,8 @@ class Base:
         self.skip_describe_stream = skip_describe_stream
         self.conn_lock = asyncio.Lock()
         self.reconnect_timeout = time.monotonic()
-        self.exception = None
-        self.exception_msg = None
-
+        self.create_stream = create_stream
+        self.create_stream_shards = create_stream_shards
 
 
     async def __aenter__(self):
@@ -50,8 +49,6 @@ class Base:
         )
 
         await self.get_conn()
-
-
 
         return self
 
@@ -93,6 +90,10 @@ class Base:
     async def start(self):
 
         await self.get_client()
+
+        if self.create_stream:
+            await self._create_stream()
+            self.create_stream = False
 
         if self.skip_describe_stream:
             log.debug(
@@ -155,6 +156,7 @@ class Base:
 
 
     async def _get_reconn_helper(self):
+        # Logic used to reconnect to connect to kinesis if there is a error
 
         self.stream_status = "RECONNECT"
         backoff_delay = 5
@@ -170,6 +172,8 @@ class Base:
                 log.warning(f"Connection Reestablished After {conn_attempts} and Sleeping for {backoff_delay}")
                 break
             except Exception as e:
+                if isinstance(e, exceptions.StreamDoesNotExist):
+                    raise e
                 log.warning(e)
                 conn_attempts += 1
                 if isinstance(self.retry_limit, int):
@@ -181,3 +185,33 @@ class Base:
                     if backoff_delay >= self.expo_backoff_limit:
                         backoff_delay = self.expo_backoff_limit
                 await self.close()
+
+    async def _create_stream(self, ignore_exists=True):
+
+        log.debug(
+            "Creating (or ignoring) stream {} with {} shards".format(
+                self.stream_name, self.create_stream_shards
+            )
+        )
+
+        if self.create_stream_shards < 1:
+            raise Exception("Min shard count is one")
+
+        try:
+            await self.client.create_stream(
+                StreamName=self.stream_name, ShardCount=self.create_stream_shards
+            )
+        except ClientError as err:
+            code = err.response["Error"]["Code"]
+
+            if code == "ResourceInUseException":
+                if not ignore_exists:
+                    raise exceptions.StreamExists(
+                        "Stream '{}' exists, cannot create it".format(self.stream_name)
+                    ) from None
+            elif code == "LimitExceededException":
+                raise exceptions.StreamShardLimit(
+                    "Stream '{}' exceeded shard limit".format(self.stream_name)
+                )
+            else:
+                raise

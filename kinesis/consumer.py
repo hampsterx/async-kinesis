@@ -46,6 +46,8 @@ class Consumer(Base):
         expo_backoff=None,
         expo_backoff_limit=120,
         skip_describe_stream=False,
+        create_stream=False,
+        create_stream_shards=1
     ):
 
         super(Consumer, self).__init__(
@@ -54,6 +56,8 @@ class Consumer(Base):
             expo_backoff=expo_backoff,
             expo_backoff_limit=expo_backoff_limit,
             skip_describe_stream=skip_describe_stream,
+            create_stream=create_stream,
+            create_stream_shards=create_stream_shards
         )
 
         self.queue = asyncio.Queue(maxsize=max_queue_size)

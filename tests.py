@@ -55,9 +55,8 @@ class BaseTests:
 class BaseKinesisTests(AsynTestCase, BaseTests):
     async def setUp(self):
         self.stream_name = "test_{}".format(str(uuid.uuid4())[0:8])
-        producer = Producer(stream_name=self.stream_name, endpoint_url=ENDPOINT_URL)
-        await producer.get_client()
-        await producer.create_stream(shards=1)
+        producer = await Producer(stream_name=self.stream_name, endpoint_url=ENDPOINT_URL,
+                                  create_stream=self.stream_name, create_stream_shards=1).__aenter__()
         await producer.__aexit__(None, None, None)
 
     async def add_record_delayed(self, msg, producer, delay):
@@ -484,7 +483,7 @@ class KinesisTests(BaseKinesisTests):
 
         with self.assertRaises(exceptions.StreamDoesNotExist):
             async with Producer(
-                    stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+                    stream_name='test_stream_does_not_exist', endpoint_url=ENDPOINT_URL
             ) as producer:
                 await producer.put("test")
 
@@ -785,11 +784,11 @@ class KinesisTests(BaseKinesisTests):
     async def test_producer_and_consumer_consume_multiple_shards_with_redis_checkpointer(
             self
     ):
+        stream_name = "test_{}".format(str(uuid.uuid4())[0:8])
         async with Producer(
-                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL
+                stream_name=stream_name, endpoint_url=ENDPOINT_URL,
+                create_stream=stream_name, create_stream_shards=2
         ) as producer:
-
-            await producer.create_stream(shards=2)
 
             for i in range(0, 100):
                 await producer.put("test.{}".format(i))
@@ -803,7 +802,7 @@ class KinesisTests(BaseKinesisTests):
             )
 
             async with Consumer(
-                    stream_name=self.stream_name,
+                    stream_name=stream_name,
                     endpoint_url=ENDPOINT_URL,
                     checkpointer=checkpointer,
                     record_limit=10,

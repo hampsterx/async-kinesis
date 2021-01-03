@@ -32,7 +32,9 @@ class Producer(Base):
             skip_describe_stream=False,
             retry_limit=None,
             expo_backoff=None,
-            expo_backoff_limit=120
+            expo_backoff_limit=120,
+            create_stream=False,
+            create_stream_shards=1
     ):
 
         super(Producer, self).__init__(
@@ -41,6 +43,8 @@ class Producer(Base):
             expo_backoff=expo_backoff,
             expo_backoff_limit=expo_backoff_limit,
             skip_describe_stream=skip_describe_stream,
+            create_stream=create_stream,
+            create_stream_shards=create_stream_shards
         )
 
         self.buffer_time = buffer_time
@@ -84,35 +88,6 @@ class Producer(Base):
         self.flush_total_records = 0
         self.flush_total_size = 0
 
-    async def create_stream(self, shards=1, ignore_exists=True):
-
-        log.debug(
-            "Creating (or ignoring) stream {} with {} shards".format(
-                self.stream_name, shards
-            )
-        )
-
-        if shards < 1:
-            raise Exception("Min shard count is one")
-
-        try:
-            await self.client.create_stream(
-                StreamName=self.stream_name, ShardCount=shards
-            )
-        except ClientError as err:
-            code = err.response["Error"]["Code"]
-
-            if code == "ResourceInUseException":
-                if not ignore_exists:
-                    raise exceptions.StreamExists(
-                        "Stream '{}' exists, cannot create it".format(self.stream_name)
-                    ) from None
-            elif code == "LimitExceededException":
-                raise exceptions.StreamShardLimit(
-                    "Stream '{}' exceeded shard limit".format(self.stream_name)
-                )
-            else:
-                raise
 
     def set_put_rate_throttle(self):
         self.put_rate_throttle = Throttler(

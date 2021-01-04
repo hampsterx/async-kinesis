@@ -42,10 +42,22 @@ class Consumer(Base):
         shard_fetch_rate=1,
         checkpointer=None,
         processor=None,
+        retry_limit=None,
+        expo_backoff=None,
+        expo_backoff_limit=120,
+        skip_describe_stream=False,
+        create_stream=False,
+        create_stream_shards=1
     ):
 
         super(Consumer, self).__init__(
-            stream_name, endpoint_url=endpoint_url, region_name=region_name
+            stream_name, endpoint_url=endpoint_url, region_name=region_name,
+            retry_limit=retry_limit,
+            expo_backoff=expo_backoff,
+            expo_backoff_limit=expo_backoff_limit,
+            skip_describe_stream=skip_describe_stream,
+            create_stream=create_stream,
+            create_stream_shards=create_stream_shards
         )
 
         self.queue = asyncio.Queue(maxsize=max_queue_size)
@@ -72,17 +84,17 @@ class Consumer(Base):
         return self
 
     async def close(self):
-        log.debug("Closing..")
+        log.debug("Closing Connection..")
+        if not self.stream_status == self.RECONNECT:
 
-        await self.flush()
+            await self.flush()
 
-        if self.fetch_task:
-            self.fetch_task.cancel()
-            self.fetch_task = None
+            if self.fetch_task:
+                self.fetch_task.cancel()
+                self.fetch_task = None
 
-        if self.checkpointer:
-            await self.checkpointer.close()
-
+            if self.checkpointer:
+                await self.checkpointer.close()
         await self.client.close()
 
     async def flush(self):
@@ -270,54 +282,57 @@ class Consumer(Base):
         async with shard["throttler"]:
             # log.debug("get_records shard={}".format(shard['ShardId']))
 
-            try:
+                try:
 
-                result = await self.client.get_records(
-                    ShardIterator=shard["ShardIterator"], Limit=self.record_limit
-                )
-
-                shard["stats"].succeded()
-                return result
-
-            except ClientConnectionError as e:
-                log.warning("Connection error {}. sleeping..".format(e))
-                await asyncio.sleep(3)
-            except TimeoutError as e:
-                log.warning("Timeout {}. sleeping..".format(e))
-                await asyncio.sleep(3)
-
-            except ClientError as e:
-                code = e.response["Error"]["Code"]
-                if code == "ProvisionedThroughputExceededException":
-                    log.warning(
-                        "{} hit ProvisionedThroughputExceededException".format(
-                            shard["ShardId"]
-                        )
-                    )
-                    shard["stats"].throttled()
-                    # todo: control the throttle ?
-                    await asyncio.sleep(0.25)
-
-                elif code == "ExpiredIteratorException":
-                    log.warning(
-                        "{} hit ExpiredIteratorException".format(shard["ShardId"])
+                    result = await self.client.get_records(
+                        ShardIterator=shard["ShardIterator"], Limit=self.record_limit
                     )
 
-                    shard["ShardIterator"] = await self.get_shard_iterator(
-                        shard_id=shard["ShardId"],
-                        last_sequence_number=shard.get("LastSequenceNumber"),
-                    )
+                    shard["stats"].succeded()
+                    return result
 
-                else:
-                    log.warning("ClientError {}. sleeping..".format(code))
+                except ClientConnectionError as e:
+                    await self.get_conn()
+                except TimeoutError as e:
+                    log.warning("Timeout {}. sleeping..".format(e))
                     await asyncio.sleep(3)
 
-            except Exception as e:
-                log.warning("Unknown error {}. sleeping..".format(e))
-                await asyncio.sleep(3)
+                except ClientError as e:
+                    code = e.response["Error"]["Code"]
+                    if code == "ProvisionedThroughputExceededException":
+                        log.warning(
+                            "{} hit ProvisionedThroughputExceededException".format(
+                                shard["ShardId"]
+                            )
+                        )
+                        shard["stats"].throttled()
+                        # todo: control the throttle ?
+                        await asyncio.sleep(0.25)
 
-        # Connection or other issue
-        return None
+                    elif code == "ExpiredIteratorException":
+                        log.warning(
+                            "{} hit ExpiredIteratorException".format(shard["ShardId"])
+                        )
+
+                        shard["ShardIterator"] = await self.get_shard_iterator(
+                            shard_id=shard["ShardId"],
+                            last_sequence_number=shard.get("LastSequenceNumber"),
+                        )
+
+                    elif code == "InternalFailure":
+                        log.warning('Received InternalFailure from Kinesis, rebuilding connection.. ')
+                        await self.get_conn()
+
+                    else:
+                        log.warning("ClientError {}. sleeping..".format(code))
+                        await asyncio.sleep(3)
+
+                except Exception as e:
+                    log.warning("Unknown error {}. sleeping..".format(e))
+                    await asyncio.sleep(3)
+
+                # Connection or other issue
+                return None
 
     async def get_shard_iterator(self, shard_id, last_sequence_number=None):
 
@@ -344,10 +359,9 @@ class Consumer(Base):
 
     async def start_consumer(self, wait_iterations=10, wait_sleep=0.25):
 
-        await self.start()
-
         # Start task to fetch periodically
-        self.fetch_task = asyncio.Task(self._fetch())
+
+        self.fetch_task = asyncio.create_task(self._fetch())
 
         # Wait a while until we have some results
         for i in range(0, wait_iterations):
@@ -359,7 +373,15 @@ class Consumer(Base):
     async def __anext__(self):
 
         if not self.shards:
+            await self.get_conn()
+
+        if not self.fetch_task:
             await self.start_consumer()
+
+        # Raise exception from Fetch Task to main task otherwise raise exception inside
+        # Fetch Task will fail silently
+        if self.fetch_task.done():
+            raise self.fetch_task.exception()
 
         while True:
             try:

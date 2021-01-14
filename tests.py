@@ -15,6 +15,7 @@ from kinesis.processors import (
 )
 from kinesis.aggregators import (
     Aggregator,
+    KPLAggregator,
     SimpleAggregator,
     NewlineAggregator,
     ListAggregator,
@@ -153,6 +154,26 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
         self.assertEqual(output[0].size, 13)
         self.assertEqual(output[0].n, 2)
         self.assertEqual(output[0].data, b"3:123,4:test,")
+
+        self.assertListEqual(list(processor.parse(output[0].data)), ["123", "test"])
+
+    def test_kpl_aggregator(self):
+        class KPLTestProcessor(KPLAggregator, StringSerializer):
+            pass
+
+        processor = KPLTestProcessor()
+
+        # Expect nothing as batching
+        self.assertEqual([], list(processor.add_item(123)))
+        self.assertEqual([], list(processor.add_item("test")))
+
+        self.assertTrue(processor.has_items())
+
+        output = list(processor.get_items())
+
+        self.assertEqual(len(output), 1)
+
+        self.assertEqual(output[0].n, 2)
 
         self.assertListEqual(list(processor.parse(output[0].data)), ["123", "test"])
 

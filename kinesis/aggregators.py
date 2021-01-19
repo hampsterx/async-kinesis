@@ -4,6 +4,13 @@ from collections import namedtuple
 from .exceptions import ValidationError
 from .exceptions import ExceededPutLimit
 
+try:
+    import aws_kinesis_agg
+    import aws_kinesis_agg.aggregator
+    import aws_kinesis_agg.kpl_pb2
+except ModuleNotFoundError:
+    pass
+
 log = logging.getLogger(__name__)
 
 OutputItem = namedtuple("OutputItem", ["size", "n", "data"])
@@ -172,3 +179,44 @@ class NetstringAggregator(Aggregator):
             i += header_offset + size + 2
             if i == length:
                 break
+
+
+class KPLAggregator(Aggregator):
+    """
+    KPL Aggregated Record Aggregation
+    See: https://github.com/awslabs/kinesis-aggregation/tree/master/python
+    """
+
+    def __init__(self, max_size=None):
+        if max_size is not None:
+            # Ideally, aws_kinesis_agg will make this configurable. See https://github.com/awslabs/kinesis-aggregation/pull/129
+            raise ValidationError("KPL Aggregation does not support max_size.")
+        self.agg = aws_kinesis_agg.aggregator.RecordAggregator()
+
+    def has_items(self):
+        return self.agg.get_num_user_records() > 0
+
+    def add_item(self, item):
+        output = self.serialize(item)
+        record = self.agg.add_user_record('a', output)
+        self.size = self.agg.get_num_user_records()
+        if record:
+            size = record.get_size_bytes()
+            n = record.get_num_user_records()
+            partition_key, explicit_hash_key, data = record.get_contents()
+            yield OutputItem(size=size, n=n, data=data)
+
+    def get_items(self):
+        record = self.agg.clear_and_get()
+        if record:
+            size = record.get_size_bytes()
+            n = record.get_num_user_records()
+            partition_key, explicit_hash_key, data = record.get_contents()
+            yield OutputItem(size=size, n=n, data=data)
+
+    def parse(self, data):
+        message_data = data[len(aws_kinesis_agg.MAGIC):-aws_kinesis_agg.DIGEST_SIZE]
+        ar = aws_kinesis_agg.kpl_pb2.AggregatedRecord()
+        ar.ParseFromString(message_data)
+        for record in ar.records:
+            yield self.deserialize(record.data)

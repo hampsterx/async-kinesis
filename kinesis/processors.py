@@ -1,4 +1,4 @@
-from .aggregators import NewlineAggregator, SimpleAggregator, NetstringAggregator, ListAggregator
+from .aggregators import NewlineAggregator, SimpleAggregator, NetstringAggregator, ListAggregator, KPLAggregator
 from .serializers import StringSerializer, JsonSerializer, MsgpackSerializer
 
 
@@ -23,4 +23,12 @@ class JsonListProcessor(Processor, ListAggregator, JsonSerializer):
 
 
 class MsgpackProcessor(Processor, NetstringAggregator, MsgpackSerializer):
+    pass
+
+
+class KPLJsonProcessor(Processor, KPLAggregator, JsonSerializer):
+    pass
+
+
+class KPLStringProcessor(Processor, KPLAggregator, StringSerializer):
     pass

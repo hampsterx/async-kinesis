@@ -177,6 +177,11 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
 
         self.assertListEqual(list(processor.parse(output[0].data)), ["123", "test"])
 
+    def test_kpl_aggregator_max_size(self):
+
+        with self.assertRaises(exceptions.ValidationError):
+            KPLAggregator(max_size=2000)
+
     def test_string_processor(self):
 
         processor = StringProcessor()

@@ -154,8 +154,8 @@ Just define a new Serializer class with serialize() and deserialize() methods.
 Note:
 
 * Json will use `pip install ujson` if installed
-* Msgpack requires `pip install msgpack` to be install 
-
+* Msgpack requires `pip install msgpack` to be installed
+* KPL requires `pip install aws-kinesis-agg` to be installed
 
 ## Benchmark/Example
 

@@ -11,7 +11,7 @@ from kinesis.processors import (
     JsonProcessor,
     JsonLineProcessor,
     JsonListProcessor,
-    MsgpackProcessor,
+    MsgpackProcessor, Processor,
 )
 from kinesis.aggregators import (
     Aggregator,
@@ -22,7 +22,7 @@ from kinesis.aggregators import (
     NetstringAggregator,
     OutputItem,
 )
-from kinesis.serializers import StringSerializer, JsonSerializer
+from kinesis.serializers import StringSerializer, JsonSerializer, Serializer
 from kinesis import exceptions
 
 coloredlogs.install(level="DEBUG")
@@ -400,7 +400,8 @@ class CheckpointTests(BaseKinesisTests):
         checkpointer = MemoryCheckPointer(name="test")
 
         consumer_a = Consumer(
-            stream_name=None, checkpointer=checkpointer, max_shard_consumers=1
+            stream_name=None, checkpointer=checkpointer, max_shard_consumers=1,
+            endpoint_url=ENDPOINT_URL
         )
 
         self.patch_consumer_fetch(consumer_a)
@@ -417,7 +418,8 @@ class CheckpointTests(BaseKinesisTests):
         # second consumer (note: max_shard_consumers needs to be 2 as uses checkpointer to get allocated shards)
 
         consumer_b = Consumer(
-            stream_name=None, checkpointer=checkpointer, max_shard_consumers=2
+            stream_name=None, checkpointer=checkpointer, max_shard_consumers=2,
+            endpoint_url=ENDPOINT_URL
         )
 
         self.patch_consumer_fetch(consumer_b)
@@ -500,7 +502,7 @@ class CheckpointTests(BaseKinesisTests):
 
 class KinesisTests(BaseKinesisTests):
     """
-    Kinesa Lite Tests
+    Kinesalite Tests
     """
 
     async def test_stream_does_not_exist(self):
@@ -655,6 +657,54 @@ class KinesisTests(BaseKinesisTests):
 
             self.assertEquals(results[0], {"test": 0})
             self.assertEquals(results[-1], {"test": 9})
+
+    async def test_producer_and_consumer_consume_with_bytes(self):
+
+        class ByteSerializer(Serializer):
+            def serialize(self, msg):
+                result = str.encode(msg)
+                return result
+
+            def deserialize(self, data):
+                return data
+
+        class ByteProcessor(Processor, NetstringAggregator, ByteSerializer):
+            pass
+
+        processor = ByteProcessor()
+
+        async with Producer(
+                stream_name=self.stream_name, endpoint_url=ENDPOINT_URL, processor=processor
+        ) as producer:
+
+            for x in range(0, 2):
+                await producer.put(f"{x}")
+
+            await producer.flush()
+
+            results = []
+
+            checkpointer = MemoryCheckPointer(name="test")
+
+            async with Consumer(
+                    stream_name=self.stream_name,
+                    endpoint_url=ENDPOINT_URL,
+                    processor=processor,
+                    checkpointer=checkpointer
+            ) as consumer:
+                async for item in consumer:
+                    results.append(item)
+                    await checkpointer.checkpoint(shard_id=consumer.shards[0]['ShardId'], sequence="seq")
+
+                async for item in consumer:
+                    results.append(item)
+
+            self.assertEquals(len(results), 2)
+
+            await checkpointer.close()
+
+            self.assertEquals(len(checkpointer.get_all_checkpoints()), 1)
+
 
     async def test_producer_and_consumer_consume_queue_full(self):
         async with Producer(

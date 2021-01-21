@@ -13,9 +13,18 @@ log = logging.getLogger(__name__)
 
 
 class Base:
-    def __init__(self, stream_name, endpoint_url=None, region_name=None,
-                 retry_limit=None, expo_backoff=None, expo_backoff_limit=120,
-                 skip_describe_stream=False, create_stream=False, create_stream_shards=1):
+    def __init__(
+        self,
+        stream_name,
+        endpoint_url=None,
+        region_name=None,
+        retry_limit=None,
+        expo_backoff=None,
+        expo_backoff_limit=120,
+        skip_describe_stream=False,
+        create_stream=False,
+        create_stream_shards=1,
+    ):
 
         self.stream_name = stream_name
 
@@ -43,8 +52,6 @@ class Base:
         self._reconnect_timeout = time.monotonic()
         self.create_stream = create_stream
         self.create_stream_shards = create_stream_shards
-
-
 
     async def __aenter__(self):
 
@@ -145,16 +152,16 @@ class Base:
                 "Stream '{}' is still {}".format(self.stream_name, stream_status)
             )
 
-
     async def close(self):
         raise NotImplementedError
-
 
     async def get_conn(self):
 
         async with self._conn_lock:
 
-            log.debug(f"Get Connection (stream name: {self.stream_name}), stream status: {self.stream_status})")
+            log.debug(
+                f"Get Connection (stream name: {self.stream_name}), stream status: {self.stream_status})"
+            )
 
             if self.stream_status == self.INITIALIZE:
                 try:
@@ -167,14 +174,16 @@ class Base:
                 except Exception as e:
                     log.warning(f"Connection Failed to Initialize : {e.__class__} {e}")
                     await self._get_reconn_helper()
-            elif self.stream_status == self.ACTIVE and (time.monotonic() - self._reconnect_timeout) > 120:
+            elif (
+                self.stream_status == self.ACTIVE
+                and (time.monotonic() - self._reconnect_timeout) > 120
+            ):
                 # reconnect_timeout is a Lock so a new connection is not created immediately
                 # after a successfully reconnection has been made since self.start() sets self.stream_status = "ACTIVE"
                 # immediately after a successful reconnect.
                 # Based on testing a hardcode 120 seconds backoff is best since, there could be a lot of pending
                 # coroutines reattempting the connection when the client connection it's already healthy.
                 await self._get_reconn_helper()
-
 
     async def _get_reconn_helper(self):
         # Logic used to reconnect to connect to kinesis if there is a error
@@ -187,10 +196,13 @@ class Base:
             self._reconnect_timeout = time.monotonic()
             try:
                 log.warning(
-                    f"Connection Error. Rebuilding connection. Sleeping for {backoff_delay} seconds. Reconnection Attempt: {conn_attempts}")
+                    f"Connection Error. Rebuilding connection. Sleeping for {backoff_delay} seconds. Reconnection Attempt: {conn_attempts}"
+                )
                 await asyncio.sleep(backoff_delay)
                 await self.start()
-                log.warning(f"Connection Reestablished After {conn_attempts} and Sleeping for {backoff_delay}")
+                log.warning(
+                    f"Connection Reestablished After {conn_attempts} and Sleeping for {backoff_delay}"
+                )
                 break
             except Exception as e:
                 if isinstance(e, exceptions.StreamDoesNotExist):
@@ -200,7 +212,9 @@ class Base:
                 if isinstance(self.retry_limit, int):
                     if conn_attempts >= (self.retry_limit + 1):
                         await self.close()
-                        raise ConnectionError(f'Kinesis client has exceeded {self.retry_limit} connection attempts')
+                        raise ConnectionError(
+                            f"Kinesis client has exceeded {self.retry_limit} connection attempts"
+                        )
                 if self.expo_backoff:
                     backoff_delay = (conn_attempts ** 2) * self.expo_backoff
                     if backoff_delay >= self.expo_backoff_limit:

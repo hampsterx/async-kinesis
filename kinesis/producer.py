@@ -18,33 +18,35 @@ log = logging.getLogger(__name__)
 
 class Producer(Base):
     def __init__(
-            self,
-            stream_name,
-            endpoint_url=None,
-            region_name=None,
-            buffer_time=0.5,
-            put_rate_limit_per_shard=1000,
-            put_bandwidth_limit_per_shard=1024,
-            after_flush_fun=None,
-            batch_size=500,
-            max_queue_size=10000,
-            processor=None,
-            skip_describe_stream=False,
-            retry_limit=None,
-            expo_backoff=None,
-            expo_backoff_limit=120,
-            create_stream=False,
-            create_stream_shards=1
+        self,
+        stream_name,
+        endpoint_url=None,
+        region_name=None,
+        buffer_time=0.5,
+        put_rate_limit_per_shard=1000,
+        put_bandwidth_limit_per_shard=1024,
+        after_flush_fun=None,
+        batch_size=500,
+        max_queue_size=10000,
+        processor=None,
+        skip_describe_stream=False,
+        retry_limit=None,
+        expo_backoff=None,
+        expo_backoff_limit=120,
+        create_stream=False,
+        create_stream_shards=1,
     ):
 
         super(Producer, self).__init__(
-            stream_name, endpoint_url=endpoint_url, region_name=region_name,
+            stream_name,
+            endpoint_url=endpoint_url,
+            region_name=region_name,
             retry_limit=retry_limit,
             expo_backoff=expo_backoff,
             expo_backoff_limit=expo_backoff_limit,
             skip_describe_stream=skip_describe_stream,
             create_stream=create_stream,
-            create_stream_shards=create_stream_shards
+            create_stream_shards=create_stream_shards,
         )
 
         self.buffer_time = buffer_time
@@ -76,7 +78,6 @@ class Producer(Base):
         self.is_flushing = False
         self.after_flush_fun = after_flush_fun
 
-
         # keep track of these (used by unit test only)
         self.throughput_exceeded_count = 0
 
@@ -86,17 +87,16 @@ class Producer(Base):
         self.flush_total_records = 0
         self.flush_total_size = 0
 
-
     def set_put_rate_throttle(self):
         self.put_rate_throttle = Throttler(
             rate_limit=self.put_rate_limit_per_shard
-                       * (len(self.shards) if self.shards else 1),
+            * (len(self.shards) if self.shards else 1),
             period=1,
         )
         self.put_bandwidth_throttle = Throttler(
             # kb per second. Go below a bit to avoid hitting the threshold
             size_limit=self.put_bandwidth_limit_per_shard
-                       * (len(self.shards) if self.shards else 1),
+            * (len(self.shards) if self.shards else 1),
             period=1,
         )
 
@@ -204,7 +204,7 @@ class Producer(Base):
                 await asyncio.sleep(0.25)
 
             elif "InternalFailure" in errors:
-                log.warning('Received InternalFailure from Kinesis')
+                log.warning("Received InternalFailure from Kinesis")
                 await self.get_conn()
 
                 for i, record in enumerate(result["Records"]):
@@ -293,8 +293,8 @@ class Producer(Base):
 
                 if code == "ValidationException":
                     if (
-                            "must have length less than or equal"
-                            in err.response["Error"]["Message"]
+                        "must have length less than or equal"
+                        in err.response["Error"]["Message"]
                     ):
                         log.warning(
                             "Batch size {} exceeded the limit. retrying with less".format(
@@ -318,25 +318,27 @@ class Producer(Base):
                         items = await self.get_batch()
 
                     else:
-                        log.warning(f'Unknown ValidationException error code {err.response["Error"]["Code"]}')
+                        log.warning(
+                            f'Unknown ValidationException error code {err.response["Error"]["Code"]}'
+                        )
                         log.exception(err)
                         await self.get_conn()
-                        #raise err
+                        # raise err
                 elif code == "ResourceNotFoundException":
                     raise exceptions.StreamDoesNotExist(
                         "Stream '{}' does not exist".format(self.stream_name)
                     ) from None
                 else:
-                    log.warning(f'Unknown Client error code {err.response["Error"]["Code"]}')
+                    log.warning(
+                        f'Unknown Client error code {err.response["Error"]["Code"]}'
+                    )
                     log.exception(err)
                     await self.get_conn()
                     # raise err
             except ClientConnectionError as err:
                 await self.get_conn()
 
-
             except Exception as e:
                 log.exception(e)
-                log.critical('Unknown Exception Caught')
+                log.critical("Unknown Exception Caught")
                 await self.get_conn()
-

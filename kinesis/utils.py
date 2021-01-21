@@ -16,7 +16,11 @@ log = logging.getLogger(__name__)
 
 class Throttler:
     def __init__(
-        self, rate_limit=None, size_limit=None, period=1.0, retry_interval=0.05,
+        self,
+        rate_limit=None,
+        size_limit=None,
+        period=1.0,
+        retry_interval=0.05,
     ):
         self.rate_limit = rate_limit
         self.size_limit = size_limit
@@ -64,7 +68,9 @@ class Throttler:
             self.flush()
             if self.is_below_rate():
                 break
-            await asyncio.sleep(self.retry_interval,)
+            await asyncio.sleep(
+                self.retry_interval,
+            )
 
         self._task_logs.append((time.time(), self.size))
 

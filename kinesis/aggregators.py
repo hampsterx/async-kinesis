@@ -133,7 +133,6 @@ class NewlineAggregator(Aggregator):
 
 
 class ListAggregator(Aggregator):
-
     def get_header_size(self, output):
         return 1
 
@@ -198,7 +197,7 @@ class KPLAggregator(Aggregator):
 
     def add_item(self, item):
         output = self.serialize(item)
-        record = self.agg.add_user_record('a', output)
+        record = self.agg.add_user_record("a", output)
         self.size = self.agg.get_num_user_records()
         if record:
             size = record.get_size_bytes()
@@ -215,7 +214,7 @@ class KPLAggregator(Aggregator):
             yield OutputItem(size=size, n=n, data=data)
 
     def parse(self, data):
-        message_data = data[len(aws_kinesis_agg.MAGIC):-aws_kinesis_agg.DIGEST_SIZE]
+        message_data = data[len(aws_kinesis_agg.MAGIC) : -aws_kinesis_agg.DIGEST_SIZE]
         ar = aws_kinesis_agg.kpl_pb2.AggregatedRecord()
         ar.ParseFromString(message_data)
         for record in ar.records:

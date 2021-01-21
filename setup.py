@@ -12,7 +12,7 @@ setup(
     url="https://github.com/hampsterx/async-kinesis",
     author="hampsterx",
     author_email="tim.vdh@gmail.com",
-    license='Apache2',
+    license="Apache2",
     classifiers=[
         "Development Status :: 4 - Beta",
         "Programming Language :: Python",
@@ -22,7 +22,7 @@ setup(
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
         "Intended Audience :: Developers",
-        'License :: OSI Approved :: Apache Software License',
+        "License :: OSI Approved :: Apache Software License",
     ],
     packages=["kinesis"],
     install_requires=[
@@ -33,6 +33,6 @@ setup(
     extras_require={
         "kpl": ["aws-kinesis-agg"],
         "redis": ["aredis>=1.1.8"],
-        "msgpack": ["msgpack>=0.6.1"]
-    }
+        "msgpack": ["msgpack>=0.6.1"],
+    },
 )

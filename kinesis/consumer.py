@@ -47,17 +47,19 @@ class Consumer(Base):
         expo_backoff_limit=120,
         skip_describe_stream=False,
         create_stream=False,
-        create_stream_shards=1
+        create_stream_shards=1,
     ):
 
         super(Consumer, self).__init__(
-            stream_name, endpoint_url=endpoint_url, region_name=region_name,
+            stream_name,
+            endpoint_url=endpoint_url,
+            region_name=region_name,
             retry_limit=retry_limit,
             expo_backoff=expo_backoff,
             expo_backoff_limit=expo_backoff_limit,
             skip_describe_stream=skip_describe_stream,
             create_stream=create_stream,
-            create_stream_shards=create_stream_shards
+            create_stream_shards=create_stream_shards,
         )
 
         self.queue = asyncio.Queue(maxsize=max_queue_size)
@@ -282,57 +284,59 @@ class Consumer(Base):
         async with shard["throttler"]:
             # log.debug("get_records shard={}".format(shard['ShardId']))
 
-                try:
+            try:
 
-                    result = await self.client.get_records(
-                        ShardIterator=shard["ShardIterator"], Limit=self.record_limit
+                result = await self.client.get_records(
+                    ShardIterator=shard["ShardIterator"], Limit=self.record_limit
+                )
+
+                shard["stats"].succeded()
+                return result
+
+            except ClientConnectionError as e:
+                await self.get_conn()
+            except TimeoutError as e:
+                log.warning("Timeout {}. sleeping..".format(e))
+                await asyncio.sleep(3)
+
+            except ClientError as e:
+                code = e.response["Error"]["Code"]
+                if code == "ProvisionedThroughputExceededException":
+                    log.warning(
+                        "{} hit ProvisionedThroughputExceededException".format(
+                            shard["ShardId"]
+                        )
+                    )
+                    shard["stats"].throttled()
+                    # todo: control the throttle ?
+                    await asyncio.sleep(0.25)
+
+                elif code == "ExpiredIteratorException":
+                    log.warning(
+                        "{} hit ExpiredIteratorException".format(shard["ShardId"])
                     )
 
-                    shard["stats"].succeded()
-                    return result
+                    shard["ShardIterator"] = await self.get_shard_iterator(
+                        shard_id=shard["ShardId"],
+                        last_sequence_number=shard.get("LastSequenceNumber"),
+                    )
 
-                except ClientConnectionError as e:
+                elif code == "InternalFailure":
+                    log.warning(
+                        "Received InternalFailure from Kinesis, rebuilding connection.. "
+                    )
                     await self.get_conn()
-                except TimeoutError as e:
-                    log.warning("Timeout {}. sleeping..".format(e))
+
+                else:
+                    log.warning("ClientError {}. sleeping..".format(code))
                     await asyncio.sleep(3)
 
-                except ClientError as e:
-                    code = e.response["Error"]["Code"]
-                    if code == "ProvisionedThroughputExceededException":
-                        log.warning(
-                            "{} hit ProvisionedThroughputExceededException".format(
-                                shard["ShardId"]
-                            )
-                        )
-                        shard["stats"].throttled()
-                        # todo: control the throttle ?
-                        await asyncio.sleep(0.25)
+            except Exception as e:
+                log.warning("Unknown error {}. sleeping..".format(e))
+                await asyncio.sleep(3)
 
-                    elif code == "ExpiredIteratorException":
-                        log.warning(
-                            "{} hit ExpiredIteratorException".format(shard["ShardId"])
-                        )
-
-                        shard["ShardIterator"] = await self.get_shard_iterator(
-                            shard_id=shard["ShardId"],
-                            last_sequence_number=shard.get("LastSequenceNumber"),
-                        )
-
-                    elif code == "InternalFailure":
-                        log.warning('Received InternalFailure from Kinesis, rebuilding connection.. ')
-                        await self.get_conn()
-
-                    else:
-                        log.warning("ClientError {}. sleeping..".format(code))
-                        await asyncio.sleep(3)
-
-                except Exception as e:
-                    log.warning("Unknown error {}. sleeping..".format(e))
-                    await asyncio.sleep(3)
-
-                # Connection or other issue
-                return None
+            # Connection or other issue
+            return None
 
     async def get_shard_iterator(self, shard_id, last_sequence_number=None):
 

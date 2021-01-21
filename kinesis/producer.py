@@ -55,8 +55,6 @@ class Producer(Base):
 
         self.batch_size = batch_size
 
-
-
         # A single shard can ingest up to 1 MiB of data per second (including partition keys)
         # or 1,000 records per second for writes
         self.put_rate_limit_per_shard = put_rate_limit_per_shard
@@ -119,7 +117,7 @@ class Producer(Base):
             await self.queue.put(output)
 
     async def close(self):
-        log.debug("Closing Connection..")
+        log.debug(f"Closing Connection.. (stream status:{self.stream_status})")
         if not self.stream_status == self.RECONNECT:
             # Cancel Flush Task
             self.flush_task.cancel()

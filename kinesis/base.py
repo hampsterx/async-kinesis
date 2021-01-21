@@ -9,7 +9,6 @@ import time
 
 from . import exceptions
 
-
 log = logging.getLogger(__name__)
 
 
@@ -55,7 +54,13 @@ class Base:
             )
         )
 
-        await self.get_conn()
+        try:
+            await self.get_conn()
+        except exceptions.StreamDoesNotExist:
+            await self.close()
+            raise
+        except:
+            raise
 
         return self
 
@@ -148,12 +153,19 @@ class Base:
     async def get_conn(self):
 
         async with self._conn_lock:
+
+            log.debug(f"Get Connection (stream name: {self.stream_name}), stream status: {self.stream_status})")
+
             if self.stream_status == self.INITIALIZE:
                 try:
                     await self.start()
-                    log.warning(f"Connection Successfully Initialized")
-                except Exception:
-                    log.warning(f"Connection Failed to Initialize")
+                    log.info(f"Connection Successfully Initialized")
+                except exceptions.StreamDoesNotExist:
+                    # Do not attempt to reconnect if stream does not exist
+                    log.error(f"Stream does not exist ({self.stream_name})")
+                    raise
+                except Exception as e:
+                    log.warning(f"Connection Failed to Initialize : {e.__class__} {e}")
                     await self._get_reconn_helper()
             elif self.stream_status == self.ACTIVE and (time.monotonic() - self._reconnect_timeout) > 120:
                 # reconnect_timeout is a Lock so a new connection is not created immediately

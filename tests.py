@@ -25,9 +25,11 @@ from kinesis.aggregators import (
 from kinesis.serializers import StringSerializer, JsonSerializer, Serializer
 from kinesis import exceptions
 
-coloredlogs.install(level="DEBUG")
+coloredlogs.install(level="DEBUG", fmt='%(name)s %(levelname)s %(message)s')
 
 logging.getLogger("botocore").setLevel(logging.WARNING)
+logging.getLogger("aiobotocore").setLevel(logging.INFO)
+
 
 log = logging.getLogger(__name__)
 
@@ -509,12 +511,17 @@ class KinesisTests(BaseKinesisTests):
 
         await asyncio.sleep(2)
 
+        # Producer
         with self.assertRaises(exceptions.StreamDoesNotExist):
             async with Producer(
                     stream_name='test_stream_does_not_exist', endpoint_url=ENDPOINT_URL
             ) as producer:
                 await producer.put("test")
 
+        # Consumer
+        with self.assertRaises(exceptions.StreamDoesNotExist):
+            async with Consumer(stream_name="test_stream_does_not_exist", endpoint_url=ENDPOINT_URL):
+                pass
 
     @fail_on(unused_loop=True, active_handles=True)
     async def test_producer_put(self):

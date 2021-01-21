@@ -387,10 +387,7 @@ class Consumer(Base):
             try:
                 item = self.queue.get_nowait()
 
-                if isinstance(item, (bytes, bytearray)):
-                    return item
-
-                if item and "__CHECKPOINT__" in item:
+                if item and isinstance(item, dict) and "__CHECKPOINT__" in item:
                     if self.checkpointer:
                         await self.checkpointer.checkpoint(
                             item["__CHECKPOINT__"]["ShardId"],

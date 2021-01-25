@@ -31,7 +31,7 @@ setup(
         "asyncio-throttle>=0.1.1",
     ],
     extras_require={
-        "kpl": ["aws-kinesis-agg"],
+        "kpl": ["aws-kinesis-agg>=1.1.6"],
         "redis": ["aredis>=1.1.8"],
         "msgpack": ["msgpack>=0.6.1"],
     },

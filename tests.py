@@ -185,8 +185,28 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
 
     def test_kpl_aggregator_max_size(self):
 
-        with self.assertRaises(exceptions.ValidationError):
-            KPLAggregator(max_size=2000)
+        class BytesSerializer:
+            def serialize(self, item):
+                return item
+            def deserialize(self, data):
+                return data
+
+        class KPLTestProcessor(KPLAggregator, BytesSerializer):
+            pass
+
+        # 100 K max_size
+        processor = KPLTestProcessor(max_size=1024 * 100)
+
+        # Expect nothing as batching first two 40K records
+        self.assertEqual([], list(processor.add_item(bytes(40*1024))))
+        self.assertEqual([], list(processor.add_item(bytes(40*1024))))
+
+        # output as we exceed
+        output = list(processor.add_item(bytes(40*1024)))
+
+        self.assertEqual(len(output), 1)
+
+        self.assertEqual(output[0].n, 2)
 
     def test_string_processor(self):
 

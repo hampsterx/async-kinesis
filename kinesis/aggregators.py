@@ -187,10 +187,10 @@ class KPLAggregator(Aggregator):
     """
 
     def __init__(self, max_size=None):
-        if max_size is not None:
-            # Ideally, aws_kinesis_agg will make this configurable. See https://github.com/awslabs/kinesis-aggregation/pull/129
-            raise ValidationError("KPL Aggregation does not support max_size.")
-        self.agg = aws_kinesis_agg.aggregator.RecordAggregator()
+        if max_size:
+            self.agg = aws_kinesis_agg.aggregator.RecordAggregator(max_size=max_size)
+        else:
+            self.agg = aws_kinesis_agg.aggregator.RecordAggregator()
 
     def has_items(self):
         return self.agg.get_num_user_records() > 0

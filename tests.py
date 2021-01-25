@@ -184,10 +184,10 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
         self.assertListEqual(list(processor.parse(output[0].data)), ["123", "test"])
 
     def test_kpl_aggregator_max_size(self):
-
         class BytesSerializer:
             def serialize(self, item):
                 return item
+
             def deserialize(self, data):
                 return data
 
@@ -198,11 +198,11 @@ class ProcessorAndAggregatorTests(TestCase, BaseTests):
         processor = KPLTestProcessor(max_size=1024 * 100)
 
         # Expect nothing as batching first two 40K records
-        self.assertEqual([], list(processor.add_item(bytes(40*1024))))
-        self.assertEqual([], list(processor.add_item(bytes(40*1024))))
+        self.assertEqual([], list(processor.add_item(bytes(40 * 1024))))
+        self.assertEqual([], list(processor.add_item(bytes(40 * 1024))))
 
         # output as we exceed
-        output = list(processor.add_item(bytes(40*1024)))
+        output = list(processor.add_item(bytes(40 * 1024)))
 
         self.assertEqual(len(output), 1)
 

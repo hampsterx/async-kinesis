@@ -263,7 +263,7 @@ class Consumer(Base):
                         )
                         await asyncio.sleep(self.sleep_time_no_records)
 
-                    if not result.get("NextShardIterator"):
+                    if not result.get("NextShardIterator") or result.get("NextShardIterator") == 'null':
                         shard["fetch"] = None
                         continue
 

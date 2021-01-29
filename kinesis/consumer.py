@@ -263,8 +263,9 @@ class Consumer(Base):
                         )
                         await asyncio.sleep(self.sleep_time_no_records)
 
-                    if not result["NextShardIterator"]:
-                        raise NotImplementedError("Shard is closed?")
+                    if not result.get("NextShardIterator"):
+                        shard["fetch"] = None
+                        continue
 
                     shard["ShardIterator"] = result["NextShardIterator"]
 

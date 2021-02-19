@@ -991,7 +991,8 @@ class KinesisReshardTests(BaseKinesisTests):
                     checkpointer=checkpointer,
                     record_limit=5,
                     # Limit the queue so there records will remain in the shards
-                    max_queue_size=5
+                    max_queue_size=5,
+                    shard_refresh_timer=5
             ) as consumer:
 
                 for i in range(0, 3):

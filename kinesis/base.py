@@ -14,16 +14,17 @@ log = logging.getLogger(__name__)
 
 class Base:
     def __init__(
-        self,
-        stream_name,
-        endpoint_url=None,
-        region_name=None,
-        retry_limit=None,
-        expo_backoff=None,
-        expo_backoff_limit=120,
-        skip_describe_stream=False,
-        create_stream=False,
-        create_stream_shards=1,
+            self,
+            stream_name,
+            endpoint_url=None,
+            region_name=None,
+            retry_limit=None,
+            expo_backoff=None,
+            expo_backoff_limit=120,
+            skip_describe_stream=False,
+            create_stream=False,
+            create_stream_shards=1,
+            shard_refresh_timer=None
     ):
 
         self.stream_name = stream_name
@@ -44,6 +45,7 @@ class Base:
         self.RECONNECT = "RECONNECT"
         self.ACTIVE = "ACTIVE"
         self.INITIALIZE = "INITIALIZE"
+        self.SYNC_SHARDS = "SYNC_SHARDS"
 
         self.stream_status = self.INITIALIZE
         # Short Lived producer might want to skip describing stream on startup
@@ -52,6 +54,9 @@ class Base:
         self._reconnect_timeout = time.monotonic()
         self.create_stream = create_stream
         self.create_stream_shards = create_stream_shards
+        self.shard_refresh_timer = shard_refresh_timer
+        self.shard_refresh_monotonic = time.monotonic()
+        self.checkpointer = None
 
     async def __aenter__(self):
 
@@ -131,7 +136,7 @@ class Base:
                     stream_status = stream_info["StreamStatus"]
 
                     if stream_status == self.ACTIVE:
-                        self.stream_status = stream_status
+                        self.stream_status = self.SYNC_SHARDS
                         break
 
                     if stream_status in ["CREATING", "UPDATING"]:
@@ -175,8 +180,8 @@ class Base:
                     log.warning(f"Connection Failed to Initialize : {e.__class__} {e}")
                     await self._get_reconn_helper()
             elif (
-                self.stream_status == self.ACTIVE
-                and (time.monotonic() - self._reconnect_timeout) > 120
+                    self.stream_status == self.ACTIVE
+                    and (time.monotonic() - self._reconnect_timeout) > 120
             ):
                 # reconnect_timeout is a Lock so a new connection is not created immediately
                 # after a successfully reconnection has been made since self.start() sets self.stream_status = "ACTIVE"
@@ -250,3 +255,76 @@ class Base:
                 )
             else:
                 raise
+
+
+
+
+
+    async def sync_shards(self):
+        subclass_type = type(self).__name__
+        if self.stream_status == self.SYNC_SHARDS:
+            if subclass_type == "Consumer":
+                await self.allocate_new_consumer_shards(self.shards)
+            self.stream_status = self.ACTIVE
+
+        if (time.monotonic() - self.shard_refresh_monotonic) > self.shard_refresh_timer:
+            stream_info = await self.get_stream_description()
+            if stream_info["StreamStatus"] == 'UPDATING':
+                # Check back in 1 minute
+                self.shard_refresh_monotonic = (self.shard_refresh_timer - 60)
+
+            else:
+                stream_shards = stream_info['Shards']
+                if len(stream_info['Shards']) > len(self.shards):
+                    # add new shards
+
+                    new_shards = [x for x in stream_shards
+                                  if x['ShardId'] not in [x['ShardId'] for x in self.shards]
+                                  ]
+                    if subclass_type == "Consumer":
+                        for x in new_shards:
+                            await self.checkpointer.allocate(x["ShardId"])
+
+                    await self.allocate_new_consumer_shards(new_shards)
+
+                    log.info(
+                        "{}: Stream {} has added shards ids {}".format(
+                            subclass_type, self.stream_name, ", ".join([x['ShardId'] for x in new_shards])
+                        )
+                    )
+
+                    log.info("{}: Shard count now at {}".format(subclass_type, self.shards))
+
+                elif len(stream_info['Shards']) < len(self.shards):
+                    # prune shards
+
+                    old_shards = [x for x in self.shards
+                                  if x['ShardId'] not in [x['ShardId'] for x in stream_shards]
+                                  ]
+
+                    if subclass_type == "Consumer":
+                        for x in old_shards:
+                            await self.checkpointer.deallocate(x["ShardId"])
+
+                    # track only shards that are current in kinesis
+                    self.shards = [x for x in self.shards
+                                   if x['ShardId'] in [x['ShardId'] for x in stream_shards]
+                                   ]
+
+                    log.info(
+                        "{}: Stream {} has removed stale shards ids {}".format(
+                            subclass_type, self.stream_name, ", ".join([x['ShardId'] for x in old_shards])
+                        )
+                    )
+
+                    log.info("{}: Shard count now at {}".format(subclass_type, self.shards))
+
+                log.debug(
+                    "{}: Stream {} has all shards ids in sync with kinesis".format(
+                        subclass_type, self.stream_name
+                    )
+                )
+
+                log.debug("{}: Shard count now at {}".format(subclass_type, self.shards))
+
+                self.shard_refresh_monotonic = time.monotonic()

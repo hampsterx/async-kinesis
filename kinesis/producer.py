@@ -35,6 +35,7 @@ class Producer(Base):
         expo_backoff_limit=120,
         create_stream=False,
         create_stream_shards=1,
+        shard_refresh_timer=(60 * 15)
     ):
 
         super(Producer, self).__init__(
@@ -47,6 +48,7 @@ class Producer(Base):
             skip_describe_stream=skip_describe_stream,
             create_stream=create_stream,
             create_stream_shards=create_stream_shards,
+            shard_refresh_timer=shard_refresh_timer
         )
 
         self.buffer_time = buffer_time
@@ -129,6 +131,7 @@ class Producer(Base):
     async def _flush(self):
         while True:
             if self.stream_status == self.ACTIVE:
+                await self.sync_shards()
                 if not self.is_flushing:
                     await self.flush()
             await asyncio.sleep(self.buffer_time)

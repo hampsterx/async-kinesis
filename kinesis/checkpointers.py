@@ -37,12 +37,12 @@ class BaseCheckPointer:
 
 class BaseHeartbeatCheckPointer(BaseCheckPointer):
     def __init__(
-        self,
-        name,
-        id=None,
-        session_timeout=60,
-        heartbeat_frequency=15,
-        auto_checkpoint=True,
+            self,
+            name,
+            id=None,
+            session_timeout=60,
+            heartbeat_frequency=15,
+            auto_checkpoint=True,
     ):
         super().__init__(name=name, id=id)
 
@@ -84,12 +84,29 @@ class MemoryCheckPointer(BaseCheckPointer):
         return shard_id in self._items and self._items[shard_id]["active"]
 
     async def allocate(self, shard_id):
-        if shard_id not in self._items:
-            self._items[shard_id] = {"sequence": None}
+        try:
+            if shard_id not in self._items:
+                self._items[shard_id] = {"sequence": None}
 
-        self._items[shard_id]["active"] = True
+            self._items[shard_id]["active"] = True
 
-        return True, self._items[shard_id]["sequence"]
+            checkpoint = self._items[shard_id]["sequence"]
+
+            log.info(
+                "Marking shard in use {} by checkpointer[{}] @ {}".format(
+                    shard_id, self.get_ref(), checkpoint
+                )
+            )
+
+            return checkpoint
+
+        except Exception:
+
+            log.warning(
+                "Shard in use. Could not assign shard {} to checkpointer[{}]".format(
+                    shard_id, self.get_ref()
+                )
+            )
 
     async def checkpoint(self, shard_id, sequence):
         log.debug(
@@ -100,13 +117,13 @@ class MemoryCheckPointer(BaseCheckPointer):
 
 class RedisCheckPointer(BaseHeartbeatCheckPointer):
     def __init__(
-        self,
-        name,
-        id=None,
-        session_timeout=60,
-        heartbeat_frequency=15,
-        is_cluster=False,
-        auto_checkpoint=True,
+            self,
+            name,
+            id=None,
+            session_timeout=60,
+            heartbeat_frequency=15,
+            is_cluster=False,
+            auto_checkpoint=True,
     ):
         super().__init__(
             name=name,

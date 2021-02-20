@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import time
 from datetime import datetime, timezone
 from aiohttp import ClientConnectionError
 from asyncio import TimeoutError
@@ -62,6 +61,7 @@ class Consumer(Base):
             skip_describe_stream=skip_describe_stream,
             create_stream=create_stream,
             create_stream_shards=create_stream_shards,
+            shard_refresh_timer=shard_refresh_timer
         )
 
         self.queue = asyncio.Queue(maxsize=max_queue_size)
@@ -83,10 +83,6 @@ class Consumer(Base):
         self.fetch_task = None
 
         self.shard_fetch_rate = shard_fetch_rate
-
-        self.shard_refresh_timer = shard_refresh_timer
-
-        self.shard_refresh_monotonic = time.monotonic()
 
     def __aiter__(self):
         return self
@@ -124,75 +120,36 @@ class Consumer(Base):
             # Ensure fetch is performed at most 5 times per second (the limit per shard)
             await asyncio.sleep(0.2)
             try:
-                await self.refresh_shards()
+                await self.sync_shards()
                 await self.fetch()
             except asyncio.CancelledError:
                 pass
             except Exception as e:
                 log.exception(e)
 
+    async def allocate_new_consumer_shards(self, shards):
+        for shard in shards:
+            ##TODO: allocate checkpoint not returning the correct data
+            checkpoint = await self.checkpointer.allocate(shard["ShardId"])
+            shard["ShardIterator"] = await self.get_shard_iterator(
+                shard_id=shard["ShardId"], last_sequence_number=checkpoint
+            )
+            shard["stats"] = ShardStats()
+            shard["throttler"] = Throttler(
+                rate_limit=self.shard_fetch_rate, period=1
+            )
+
+        self.shards.extend(shards)
+
     async def fetch(self):
 
         if not self.is_fetching:
             return
 
-        # todo: check for/handle new shards
-
-        shards_in_use = [
-            s for s in self.shards if self.checkpointer.is_allocated(s["ShardId"])
-        ]
-
-        # log.debug("shards in use: {}".format([s["ShardId"] for s in shards_in_use]))
-
         for shard in self.shards:
 
             if not self.is_fetching:
                 break
-
-            if not self.checkpointer.is_allocated(shard["ShardId"]):
-                if (
-                        self.max_shard_consumers
-                        and len(shards_in_use) >= self.max_shard_consumers
-                ):
-                    continue
-
-                if self.checkpointer is None:
-                    log.debug("Marking shard in use {}".format(shard["ShardId"]))
-                    shard["ShardIterator"] = await self.get_shard_iterator(
-                        shard_id=shard["ShardId"]
-                    )
-
-                else:
-                    success, checkpoint = await self.checkpointer.allocate(
-                        shard["ShardId"]
-                    )
-
-                    if not success:
-                        log.debug(
-                            "Shard in use. Could not assign shard {} to checkpointer[{}]".format(
-                                shard["ShardId"], self.checkpointer.get_ref()
-                            )
-                        )
-                        continue
-
-                    log.debug(
-                        "Marking shard in use {} by checkpointer[{}] @ {}".format(
-                            shard["ShardId"], self.checkpointer.get_ref(), checkpoint
-                        )
-                    )
-
-                    shard["ShardIterator"] = await self.get_shard_iterator(
-                        shard_id=shard["ShardId"], last_sequence_number=checkpoint
-                    )
-
-                if "ShardIterator" in shard:
-                    shard["stats"] = ShardStats()
-                    shard["throttler"] = Throttler(
-                        rate_limit=self.shard_fetch_rate, period=1
-                    )
-                    shards_in_use.append(shard)
-
-                    log.debug("Shard count now at {}".format(len(shards_in_use)))
 
             if shard.get("fetch"):
                 # timer( monotonic based) logic for refreshing shard list based on data retention time that is returned
@@ -331,6 +288,17 @@ class Consumer(Base):
                 )
             )
 
+    # async def sync_shards(self):
+    #     self.stream_status = self.SHARDS_RESYNC
+    #     response = await super().sync_shards()
+    #     if response["state"] == self.NEW_SHARDS:
+    #         for x in response["shards"]:
+    #             await self.checkpointer.allocate(x["ShardId"])
+    #     elif response["state"] == self.PRUNE_SHARDS:
+    #         for x in response["shards"]:
+    #             await self.checkpointer.deallocate(x["ShardId"])
+    #     self.stream_status = self.ACTIVE
+
     async def _add_checkpoint_record(self, result, shard):
 
         # Add checkpoint record
@@ -394,30 +362,6 @@ class Consumer(Base):
             shard["ShardIterator"] = result["NextShardIterator"]
 
             shard["fetch"] = None
-
-    async def refresh_shards(self):
-        if (time.monotonic() - self.shard_refresh_monotonic) > self.shard_refresh_timer:
-            stream_info = await self.get_stream_description()
-            if stream_info["StreamStatus"] == 'UPDATING':
-                # Check back in 1 minute
-                self.shard_refresh_monotonic = (self.shard_refresh_timer - 60)
-
-            else:
-                # todo: add to checkpoint logic
-                stream_shards = stream_info['Shards']
-                if len(stream_info['Shards']) > len(self.shards):
-                    # add new shards
-                    new_shards = [x for x in stream_shards
-                                  if x['ShardId'] not in [x['ShardId'] for x in self.shards]
-                                  ]
-                    self.shards.extend(new_shards)
-                elif len(stream_info['Shards']) > len(self.shards):
-                    # prune shards
-                    self.shards = [x for x in self.shards
-                                   if x['ShardId'] in [x['ShardId'] for x in stream_shards]
-                                   ]
-
-                self.shard_refresh_monotonic = time.monotonic()
 
     async def __anext__(self):
 

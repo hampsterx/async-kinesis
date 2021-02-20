@@ -971,7 +971,8 @@ class KinesisReshardTests(BaseKinesisTests):
             stream_name=stream_name,
             endpoint_url=ENDPOINT_URL,
             create_stream=stream_name,
-            create_stream_shards=2
+            create_stream_shards=2,
+            shard_refresh_timer=15
         ) as producer:
 
             for i in range(0, 50):
@@ -992,7 +993,7 @@ class KinesisReshardTests(BaseKinesisTests):
                     record_limit=5,
                     # Limit the queue so there records will remain in the shards
                     max_queue_size=5,
-                    shard_refresh_timer=5
+                    shard_refresh_timer=15
             ) as consumer:
 
                 for i in range(0, 3):
@@ -1022,7 +1023,9 @@ class KinesisReshardTests(BaseKinesisTests):
 
                 await producer.flush()
 
-                for i in range(0, 10):
+                await asyncio.sleep(10)
+
+                for i in range(0, 20):
                     async for item in consumer:
                         results.append(item)
                     await asyncio.sleep(0.5)

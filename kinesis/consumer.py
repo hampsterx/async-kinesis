@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from aiohttp import ClientConnectionError
 from asyncio import TimeoutError
@@ -61,7 +62,6 @@ class Consumer(Base):
             skip_describe_stream=skip_describe_stream,
             create_stream=create_stream,
             create_stream_shards=create_stream_shards,
-            shard_refresh_timer=shard_refresh_timer
         )
 
         self.queue = asyncio.Queue(maxsize=max_queue_size)
@@ -83,6 +83,8 @@ class Consumer(Base):
         self.fetch_task = None
 
         self.shard_fetch_rate = shard_fetch_rate
+
+        self.shard_refresh_timer = shard_refresh_timer
 
     def __aiter__(self):
         return self
@@ -127,20 +129,6 @@ class Consumer(Base):
             except Exception as e:
                 log.exception(e)
 
-    async def allocate_new_consumer_shards(self, shards):
-        for shard in shards:
-            ##TODO: allocate checkpoint not returning the correct data
-            checkpoint = await self.checkpointer.allocate(shard["ShardId"])
-            shard["ShardIterator"] = await self.get_shard_iterator(
-                shard_id=shard["ShardId"], last_sequence_number=checkpoint
-            )
-            shard["stats"] = ShardStats()
-            shard["throttler"] = Throttler(
-                rate_limit=self.shard_fetch_rate, period=1
-            )
-
-        self.shards.extend(shards)
-
     async def fetch(self):
 
         if not self.is_fetching:
@@ -152,7 +140,6 @@ class Consumer(Base):
                 break
 
             if shard.get("fetch"):
-                # timer( monotonic based) logic for refreshing shard list based on data retention time that is returned
                 await self.get_fetch(shard)
                 continue
 
@@ -222,6 +209,9 @@ class Consumer(Base):
 
     async def get_shard_iterator(self, shard_id, last_sequence_number=None):
 
+        # Issue with get_iterator when new shards are created.
+        # https://github.com/mhart/kinesalite/pull/103#issuecomment-782765923
+
         log.debug(
             "getting shard iterator for {} @ {}".format(
                 shard_id,
@@ -288,17 +278,6 @@ class Consumer(Base):
                 )
             )
 
-    # async def sync_shards(self):
-    #     self.stream_status = self.SHARDS_RESYNC
-    #     response = await super().sync_shards()
-    #     if response["state"] == self.NEW_SHARDS:
-    #         for x in response["shards"]:
-    #             await self.checkpointer.allocate(x["ShardId"])
-    #     elif response["state"] == self.PRUNE_SHARDS:
-    #         for x in response["shards"]:
-    #             await self.checkpointer.deallocate(x["ShardId"])
-    #     self.stream_status = self.ACTIVE
-
     async def _add_checkpoint_record(self, result, shard):
 
         # Add checkpoint record
@@ -315,6 +294,7 @@ class Consumer(Base):
         return last_record["SequenceNumber"]
 
     async def get_fetch(self, shard):
+        # actions done to this shard is pointed back to the same shard in self.shards
 
         if shard["fetch"].done():
             result = shard["fetch"].result()
@@ -342,7 +322,7 @@ class Consumer(Base):
 
                 if not result.get("NextShardIterator") or result.get("NextShardIterator") == 'null':
                     shard["fetch"] = None
-                    await self.checkpointer.deallocate(shard["ShardId"])
+                    await self._remove_shard(shard)
                     return
 
                 self._arrival_time(records, shard, total_items)
@@ -362,6 +342,101 @@ class Consumer(Base):
             shard["ShardIterator"] = result["NextShardIterator"]
 
             shard["fetch"] = None
+
+    async def _new_shards(self, shards):
+        for shard in shards:
+            success, checkpoint = await self.checkpointer.allocate(shard["ShardId"])
+            if not success and self.checkpointer.is_allocated(shard["ShardId"]):
+                continue
+            else:
+                shard["ShardIterator"] = await self.get_shard_iterator(
+                    shard_id=shard["ShardId"], last_sequence_number=checkpoint
+                )
+                shard["stats"] = ShardStats()
+                shard["throttler"] = Throttler(
+                    rate_limit=self.shard_fetch_rate, period=1
+                )
+
+        return shards
+
+    async def _remove_shard(self, shard):
+        await self.checkpointer.deallocate(shard["ShardId"])
+
+        self.shards = [x for x in self.shards
+                       if x['ShardId'] != shard['ShardId']
+                       ]
+
+    async def sync_shards(self):
+
+        subclass_type = type(self).__name__
+
+        if self.shards_status == self.INITIALIZE:
+            await self._shards_lock.acquire()
+            await self._new_shards(self.shards)
+            self.set_shard_sync_state()
+
+        # check if it's time for a RESYNC
+        elif (time.monotonic() - self.shard_refresh_monotonic) > self.shard_refresh_timer \
+                and self.shards_status == self.SYNCED:
+
+            stream_info = await self.get_stream_description()
+            if stream_info["StreamStatus"] == 'UPDATING' or stream_info["StreamStatus"] == 'CREATING':
+                pass
+
+            else:
+                await self._shards_lock.acquire()
+                self.shards_status = self.RESYNC
+                stream_shards = stream_info['Shards']
+
+                if len(stream_info['Shards']) == len(self.shards):
+                    self.set_shard_sync_state()
+
+                    log.debug(
+                        "{}: Stream {} has all shards ids in sync with kinesis".format(
+                            subclass_type, self.stream_name
+                        )
+                    )
+
+                elif len(stream_info['Shards']) > len(self.shards):
+                    # add new shards
+
+                    # Issue with get_iterator when new shards are created.
+                    # https://github.com/mhart/kinesalite/pull/103#issuecomment-782765923
+                    new_shards = [x for x in stream_shards
+                                  if x['ShardId'] not in [x['ShardId'] for x in self.shards]
+                                  ]
+                    new_shards = await self._new_shards(new_shards)
+                    self.shards.extend(new_shards)
+
+                    self.set_shard_sync_state()
+
+                    log.info(
+                        "{}: Stream {} has added shards ids {}".format(
+                            subclass_type, self.stream_name, ", ".join([x['ShardId'] for x in new_shards])
+                        )
+                    )
+
+                elif len(stream_info['Shards']) < len(self.shards):
+                    # prune shards
+
+                    old_shards = [x for x in self.shards
+                                  if x['ShardId'] not in [x['ShardId'] for x in stream_shards]
+                                  ]
+
+                    for x in old_shards:
+                        await self._remove_shard(x)
+
+                    # track only shards that are current in kinesis
+                    self.shards = [x for x in self.shards
+                                   if x['ShardId'] in [x['ShardId'] for x in stream_shards]
+                                   ]
+                    self.set_shard_sync_state()
+
+                    log.info(
+                        "{}: Stream {} has removed stale shards ids {}".format(
+                            subclass_type, self.stream_name, ", ".join([x['ShardId'] for x in old_shards])
+                        )
+                    )
 
     async def __anext__(self):
 

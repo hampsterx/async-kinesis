@@ -18,24 +18,24 @@ log = logging.getLogger(__name__)
 
 class Producer(Base):
     def __init__(
-        self,
-        stream_name,
-        endpoint_url=None,
-        region_name=None,
-        buffer_time=0.5,
-        put_rate_limit_per_shard=1000,
-        put_bandwidth_limit_per_shard=1024,
-        after_flush_fun=None,
-        batch_size=500,
-        max_queue_size=10000,
-        processor=None,
-        skip_describe_stream=False,
-        retry_limit=None,
-        expo_backoff=None,
-        expo_backoff_limit=120,
-        create_stream=False,
-        create_stream_shards=1,
-        shard_refresh_timer=(60 * 15)
+            self,
+            stream_name,
+            endpoint_url=None,
+            region_name=None,
+            buffer_time=0.5,
+            put_rate_limit_per_shard=1000,
+            put_bandwidth_limit_per_shard=1024,
+            after_flush_fun=None,
+            batch_size=500,
+            max_queue_size=10000,
+            processor=None,
+            skip_describe_stream=False,
+            retry_limit=None,
+            expo_backoff=None,
+            expo_backoff_limit=120,
+            create_stream=False,
+            create_stream_shards=1,
+            shard_refresh_timer=(60 * 15)
     ):
 
         super(Producer, self).__init__(
@@ -48,7 +48,6 @@ class Producer(Base):
             skip_describe_stream=skip_describe_stream,
             create_stream=create_stream,
             create_stream_shards=create_stream_shards,
-            shard_refresh_timer=shard_refresh_timer
         )
 
         self.buffer_time = buffer_time
@@ -65,6 +64,8 @@ class Producer(Base):
         self.put_rate_throttle = None
         self.put_bandwidth_limit_per_shard = put_bandwidth_limit_per_shard
         self.put_bandwidth_throttle = None
+
+        self.shard_refresh_timer = shard_refresh_timer
 
         if put_bandwidth_limit_per_shard > 1024:
             log.warning(
@@ -92,13 +93,13 @@ class Producer(Base):
     def set_put_rate_throttle(self):
         self.put_rate_throttle = Throttler(
             rate_limit=self.put_rate_limit_per_shard
-            * (len(self.shards) if self.shards else 1),
+                       * (len(self.shards) if self.shards else 1),
             period=1,
         )
         self.put_bandwidth_throttle = Throttler(
             # kb per second. Go below a bit to avoid hitting the threshold
             size_limit=self.put_bandwidth_limit_per_shard
-            * (len(self.shards) if self.shards else 1),
+                       * (len(self.shards) if self.shards else 1),
             period=1,
         )
 
@@ -130,8 +131,8 @@ class Producer(Base):
 
     async def _flush(self):
         while True:
+            await self.sync_shards()
             if self.stream_status == self.ACTIVE:
-                await self.sync_shards()
                 if not self.is_flushing:
                     await self.flush()
             await asyncio.sleep(self.buffer_time)
@@ -296,8 +297,8 @@ class Producer(Base):
 
                 if code == "ValidationException":
                     if (
-                        "must have length less than or equal"
-                        in err.response["Error"]["Message"]
+                            "must have length less than or equal"
+                            in err.response["Error"]["Message"]
                     ):
                         log.warning(
                             "Batch size {} exceeded the limit. retrying with less".format(
@@ -345,3 +346,69 @@ class Producer(Base):
                 log.exception(e)
                 log.critical("Unknown Exception Caught")
                 await self.get_conn()
+
+    async def sync_shards(self):
+
+        subclass_type = type(self).__name__
+
+        if self.shards_status == self.INITIALIZE:
+            await self._shards_lock.acquire()
+            self.set_shard_sync_state()
+
+        # check if it's time for a RESYNC
+        elif (time.monotonic() - self.shard_refresh_monotonic) > self.shard_refresh_timer \
+                and self.shards_status == self.SYNCED:
+
+            stream_info = await self.get_stream_description()
+            if stream_info["StreamStatus"] == 'UPDATING' or stream_info["StreamStatus"] == 'CREATING':
+                pass
+
+            else:
+                await self._shards_lock.acquire()
+                self.shards_status = self.RESYNC
+                stream_shards = stream_info['Shards']
+
+                if len(stream_info['Shards']) == len(self.shards):
+                    self.set_shard_sync_state()
+
+                    log.debug(
+                        "{}: Stream {} has all shards ids in sync with kinesis".format(
+                            subclass_type, self.stream_name
+                        )
+                    )
+                elif len(stream_info['Shards']) > len(self.shards):
+                    # add new shards
+
+                    new_shards = [x for x in stream_shards
+                                  if x['ShardId'] not in [x['ShardId'] for x in self.shards]
+                                  ]
+
+                    self.shards.extend(new_shards)
+
+                    self.set_shard_sync_state()
+
+                    log.info(
+                        "{}: Stream {} has added shards ids {}".format(
+                            subclass_type, self.stream_name, ", ".join([x['ShardId'] for x in new_shards])
+                        )
+                    )
+
+                elif len(stream_info['Shards']) < len(self.shards):
+                    # prune shards
+
+                    old_shards = [x for x in self.shards
+                                  if x['ShardId'] not in [x['ShardId'] for x in stream_shards]
+                                  ]
+
+                    # track only shards that are current in kinesis
+                    self.shards = [x for x in self.shards
+                                   if x['ShardId'] in [x['ShardId'] for x in stream_shards]
+                                   ]
+
+                    self.set_shard_sync_state()
+
+                    log.info(
+                        "{}: Stream {} has removed stale shards ids {}".format(
+                            subclass_type, self.stream_name, ", ".join([x['ShardId'] for x in old_shards])
+                        )
+                    )

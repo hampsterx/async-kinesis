@@ -1,4 +1,6 @@
 import asyncio
+
+from abc import abstractmethod
 import aiobotocore
 import logging
 from async_timeout import timeout
@@ -45,18 +47,21 @@ class Base:
         self.RECONNECT = "RECONNECT"
         self.ACTIVE = "ACTIVE"
         self.INITIALIZE = "INITIALIZE"
-        self.SYNC_SHARDS = "SYNC_SHARDS"
+        # state of local self.shards when compared to kinesis stream shards
+        self.SYNCED = "SYNCED"
+        self.RESYNC = "RESYNC"
 
         self.stream_status = self.INITIALIZE
+        self.shards_status = self.INITIALIZE
         # Short Lived producer might want to skip describing stream on startup
         self.skip_describe_stream = skip_describe_stream
         self._conn_lock = asyncio.Lock()
         self._reconnect_timeout = time.monotonic()
         self.create_stream = create_stream
         self.create_stream_shards = create_stream_shards
-        self.shard_refresh_timer = shard_refresh_timer
+
+        self._shards_lock = asyncio.Lock()
         self.shard_refresh_monotonic = time.monotonic()
-        self.checkpointer = None
 
     async def __aenter__(self):
 
@@ -136,7 +141,7 @@ class Base:
                     stream_status = stream_info["StreamStatus"]
 
                     if stream_status == self.ACTIVE:
-                        self.stream_status = self.SYNC_SHARDS
+                        self.stream_status = stream_status
                         break
 
                     if stream_status in ["CREATING", "UPDATING"]:
@@ -256,75 +261,14 @@ class Base:
             else:
                 raise
 
-
-
-
-
+    @abstractmethod
     async def sync_shards(self):
+        # Manages the State tracking Shards in self.shards
+        pass
+
+    def set_shard_sync_state(self):
         subclass_type = type(self).__name__
-        if self.stream_status == self.SYNC_SHARDS:
-            if subclass_type == "Consumer":
-                await self.allocate_new_consumer_shards(self.shards)
-            self.stream_status = self.ACTIVE
-
-        if (time.monotonic() - self.shard_refresh_monotonic) > self.shard_refresh_timer:
-            stream_info = await self.get_stream_description()
-            if stream_info["StreamStatus"] == 'UPDATING':
-                # Check back in 1 minute
-                self.shard_refresh_monotonic = (self.shard_refresh_timer - 60)
-
-            else:
-                stream_shards = stream_info['Shards']
-                if len(stream_info['Shards']) > len(self.shards):
-                    # add new shards
-
-                    new_shards = [x for x in stream_shards
-                                  if x['ShardId'] not in [x['ShardId'] for x in self.shards]
-                                  ]
-                    if subclass_type == "Consumer":
-                        for x in new_shards:
-                            await self.checkpointer.allocate(x["ShardId"])
-
-                    await self.allocate_new_consumer_shards(new_shards)
-
-                    log.info(
-                        "{}: Stream {} has added shards ids {}".format(
-                            subclass_type, self.stream_name, ", ".join([x['ShardId'] for x in new_shards])
-                        )
-                    )
-
-                    log.info("{}: Shard count now at {}".format(subclass_type, self.shards))
-
-                elif len(stream_info['Shards']) < len(self.shards):
-                    # prune shards
-
-                    old_shards = [x for x in self.shards
-                                  if x['ShardId'] not in [x['ShardId'] for x in stream_shards]
-                                  ]
-
-                    if subclass_type == "Consumer":
-                        for x in old_shards:
-                            await self.checkpointer.deallocate(x["ShardId"])
-
-                    # track only shards that are current in kinesis
-                    self.shards = [x for x in self.shards
-                                   if x['ShardId'] in [x['ShardId'] for x in stream_shards]
-                                   ]
-
-                    log.info(
-                        "{}: Stream {} has removed stale shards ids {}".format(
-                            subclass_type, self.stream_name, ", ".join([x['ShardId'] for x in old_shards])
-                        )
-                    )
-
-                    log.info("{}: Shard count now at {}".format(subclass_type, self.shards))
-
-                log.debug(
-                    "{}: Stream {} has all shards ids in sync with kinesis".format(
-                        subclass_type, self.stream_name
-                    )
-                )
-
-                log.debug("{}: Shard count now at {}".format(subclass_type, self.shards))
-
-                self.shard_refresh_monotonic = time.monotonic()
+        self.shards_status = self.SYNCED
+        self.shard_refresh_monotonic = time.monotonic()
+        self._shards_lock.release()
+        log.info("{}: Shard count now at {}".format(subclass_type, self.shards))

@@ -3,7 +3,7 @@ import uuid
 import asyncio
 import logging, coloredlogs
 from dotenv import load_dotenv
-from asynctest import TestCase as AsynTestCase, fail_on
+from asynctest import TestCase as AsynTestCase, fail_on, mock
 from unittest import skipUnless, TestCase
 from kinesis import Consumer, Producer, MemoryCheckPointer, RedisCheckPointer
 from kinesis.processors import (
@@ -61,7 +61,6 @@ class BaseKinesisTests(AsynTestCase, BaseTests):
         log.debug("Adding record. delay={}".format(delay))
         await asyncio.sleep(delay)
         await producer.put(msg)
-
 
 
 class ProcessorAndAggregatorTests(TestCase, BaseTests):
@@ -940,6 +939,113 @@ class KinesisTests(BaseKinesisTests):
                     self.assertIsNotNone(item)
 
 
+class KinesisReshardTests(BaseKinesisTests):
+    """
+    Kinesalite Reshard Tests
+    @requires https://github.com/mhart/kinesalite/pull/103
+    ./cli.js --shardLimit 100
+
+    # Test is broken with pull request for get_shard_iterator
+    https://github.com/mhart/kinesalite/pull/103#issuecomment-782765923
+    """
+
+    async def setUp(self):
+        self.stream_name = "test_{}".format(str(uuid.uuid4())[0:8])
+        producer = await Producer(
+            stream_name=self.stream_name,
+            endpoint_url=ENDPOINT_URL,
+            create_stream=self.stream_name,
+            create_stream_shards=1,
+        ).__aenter__()
+        await producer.__aexit__(None, None, None)
+
+    @staticmethod
+    async def describe_stream(client, stream_name):
+
+        result = await client.describe_stream(StreamName=stream_name)
+
+        log.info(f"Stream {result['StreamDescription']['StreamStatus']}")
+
+        for shard in result['StreamDescription']['Shards']:
+            start = shard['SequenceNumberRange']['StartingSequenceNumber']
+            end = shard['SequenceNumberRange'].get('EndingSequenceNumber', '')
+
+            log.info(f"Shard {shard['ShardId']} start={start} end={end}")
+
+    @mock.patch('kinesis.consumer.Consumer.get_shard_iterator')
+    async def test_resharding(self, *args):
+        # *args pass through mock
+
+        stream_name = "test_{}".format(str(uuid.uuid4())[0:8])
+
+        # Create stream with 2x shards. Add some records
+
+        async with Producer(
+                stream_name=stream_name,
+                endpoint_url=ENDPOINT_URL,
+                create_stream=stream_name,
+                create_stream_shards=2,
+                shard_refresh_timer=15
+        ) as producer:
+
+            for i in range(0, 50):
+                await producer.put("test.{}".format(i))
+
+            await producer.flush()
+
+            results = []
+
+            checkpointer = RedisCheckPointer(
+                name="test-{}".format(str(uuid.uuid4())[0:8]), heartbeat_frequency=3
+            )
+
+            async with Consumer(
+                    stream_name=stream_name,
+                    endpoint_url=ENDPOINT_URL,
+                    checkpointer=checkpointer,
+                    record_limit=5,
+                    # Limit the queue so there records will remain in the shards
+                    max_queue_size=5,
+                    shard_refresh_timer=15
+            ) as consumer:
+
+                for i in range(0, 3):
+                    async for item in consumer:
+                        results.append(item)
+                    await asyncio.sleep(0.5)
+
+                log.info(f"Consumed {len(results)} records")
+
+                # Start reshard operation
+                await producer.client.update_shard_count(
+                    StreamName=stream_name,
+                    TargetShardCount=4,
+                    ScalingType='UNIFORM_SCALING'
+                )
+
+                await self.describe_stream(client=producer.client, stream_name=stream_name)
+
+                await asyncio.sleep(1)
+
+                await self.describe_stream(client=producer.client, stream_name=stream_name)
+
+                # Now add some more records
+
+                for i in range(50, 100):
+                    await producer.put("test.{}".format(i))
+
+                await producer.flush()
+
+                for i in range(0, 10):
+                    async for item in consumer:
+                        results.append(item)
+                    await asyncio.sleep(0.5)
+
+                log.info(f"Consumed {len(results)} records")
+
+                assert len(results) == 100
+
+
 class AWSKinesisTests(BaseKinesisTests):
     """
     AWS Kinesis Tests
@@ -959,6 +1065,8 @@ class AWSKinesisTests(BaseKinesisTests):
             )
         )
 
+        ### TODO: Stream is not being created in AWS
+
         producer = await Producer(
             stream_name=self.STREAM_NAME_SINGLE_SHARD,
             endpoint_url=ENDPOINT_URL,
@@ -966,7 +1074,6 @@ class AWSKinesisTests(BaseKinesisTests):
             create_stream_shards=1,
         ).__aenter__()
         await producer.__aexit__(None, None, None)
-
 
     @classmethod
     def tearDownClass(cls):
@@ -1099,22 +1206,12 @@ class AWSKinesisTests(BaseKinesisTests):
     )
     async def test_resharding(self):
 
-
-        stream_name = "TEST_RESHARD_STREAM"
-
-        """
-        Kinesalite Reshard Tests
-        @requires https://github.com/mhart/kinesalite/pull/103
-        ./cli.js --shardLimit 100
-        """
-
+        stream_name = self.STREAM_NAME_SINGLE_SHARD
 
         # Create stream with 2x shards. Add some records
 
         async with Producer(
                 stream_name=stream_name,
-                create_stream=stream_name,
-                create_stream_shards=2,
                 shard_refresh_timer=15
         ) as producer:
 

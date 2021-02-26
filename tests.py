@@ -390,27 +390,9 @@ class CheckpointTests(BaseKinesisTests):
     Checkpoint Tests
     """
 
-    @classmethod
-    def patch_consumer_fetch(cls, consumer):
-        async def get_shard_iterator(shard_id, last_sequence_number=None):
-            log.info(
-                "getting shard iterator for {} @ {}".format(
-                    shard_id, last_sequence_number
-                )
-            )
-            return True
-
-        consumer.get_shard_iterator = get_shard_iterator
-
-        async def get_records(shard):
-            log.info("get records shard={}".format(shard["ShardId"]))
-            return {}
-
-        consumer.get_records = get_records
-
-        consumer.is_fetching = True
-
-    async def test_memory_checkpoint(self):
+    @mock.patch('kinesis.consumer.Consumer.get_shard_iterator')
+    async def test_memory_checkpoint(self, *args):
+        # *args pass through mock
         # first consumer
         checkpointer = MemoryCheckPointer(name="test")
 
@@ -421,11 +403,15 @@ class CheckpointTests(BaseKinesisTests):
             endpoint_url=ENDPOINT_URL,
         )
 
-        self.patch_consumer_fetch(consumer_a)
+        consumer_a.get_shard_iterator.return_value = True
 
-        consumer_a.shards = [{"ShardId": "test-1"}, {"ShardId": "test-2"}]
+        consumer_a.shards = [{"ShardId": "test-1", "SequenceNumberRange": {}},
+                             {"ShardId": "test-2", "SequenceNumberRange": {}}]
 
-        await consumer_a.fetch()
+        consumer_a.stream_status = consumer_a.ACTIVE
+        consumer_a.shards_status = consumer_a.INITIALIZE
+
+        await consumer_a.sync_shards()
 
         shards = [s["ShardId"] for s in consumer_a.shards if s.get("stats")]
 
@@ -441,16 +427,21 @@ class CheckpointTests(BaseKinesisTests):
             endpoint_url=ENDPOINT_URL,
         )
 
-        self.patch_consumer_fetch(consumer_b)
 
-        consumer_b.shards = [{"ShardId": "test-1"}, {"ShardId": "test-2"}]
+        consumer_b.get_shard_iterator.return_value = True
 
-        await consumer_b.fetch()
+        consumer_b.shards = [{"ShardId": "test-1", "SequenceNumberRange": {}},
+                             {"ShardId": "test-2", "SequenceNumberRange": {}}]
+
+        consumer_b.stream_status = consumer_b.ACTIVE
+        consumer_b.shards_status = consumer_b.INITIALIZE
+
+        await consumer_b.sync_shards()
 
         shards = [s["ShardId"] for s in consumer_b.shards if s.get("stats")]
 
-        # Expect only one shard assigned as max = 1
-        self.assertEqual(["test-2"], shards)
+        # Expect only one shard assigned as max = 2
+        self.assertEqual(["test-1", "test-2"], shards)
 
     async def test_redis_checkpoint_locking(self):
         name = "test-{}".format(str(uuid.uuid4())[0:8])
@@ -1065,11 +1056,8 @@ class AWSKinesisTests(BaseKinesisTests):
             )
         )
 
-        ### TODO: Stream is not being created in AWS
-
         producer = await Producer(
             stream_name=self.STREAM_NAME_SINGLE_SHARD,
-            endpoint_url=ENDPOINT_URL,
             create_stream=self.STREAM_NAME_SINGLE_SHARD,
             create_stream_shards=1,
         ).__aenter__()
@@ -1246,7 +1234,7 @@ class AWSKinesisTests(BaseKinesisTests):
                 # TODO: Producer not writing to new shards, shards are being found and checkpointed
                 await producer.client.update_shard_count(
                     StreamName=stream_name,
-                    TargetShardCount=4,
+                    TargetShardCount=2,
                     ScalingType='UNIFORM_SCALING'
                 )
 

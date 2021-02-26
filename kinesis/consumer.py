@@ -49,7 +49,7 @@ class Consumer(Base):
             skip_describe_stream=False,
             create_stream=False,
             create_stream_shards=1,
-            shard_refresh_timer=None
+            shard_refresh_timer=(60 * 15)
     ):
 
         super(Consumer, self).__init__(
@@ -84,8 +84,6 @@ class Consumer(Base):
         self.fetch_task = None
 
         self.shard_fetch_rate = shard_fetch_rate
-
-        self.shard_refresh_timer = shard_refresh_timer
 
     def __aiter__(self):
         return self
@@ -349,10 +347,18 @@ class Consumer(Base):
             shard["fetch"] = None
 
     async def _spilt_shards(self, shards):
-        shards = self.current_shards(shards)
         new_shards = []
         for shard in shards:
+
+            if type(self.max_shard_consumers) == int and self.max_shard_consumers <= len(new_shards):
+                continue
+
             if shard["SequenceNumberRange"].get("EndingSequenceNumber"):
+                existing_shard = any(x for x in self.shards if x['ShardId'] == shard["ShardId"])
+                if existing_shard:
+                    ## TODO: change check point after reshard
+                    ## NotImplementedError: test-b64c5c96/100942 checkpointed on shardId-000000000000 but ref is different test-b64c5c96/100942
+                    await self.checkpointer.deallocate(shard["ShardId"])
                 continue
 
             success, checkpoint = await self.checkpointer.allocate(shard["ShardId"])
@@ -371,22 +377,25 @@ class Consumer(Base):
         self.shards = new_shards
         log.info(
             " Stream {} has added shards ids {}".format(
-                self.stream_name, ", ".join([x['ShardId'] for x in self.shards])
+                self.stream_name, ", ".join([x['ShardId'] for x in new_shards])
             )
         )
 
     async def _merge_shards(self, shards):
-        shards = self.current_shards(shards)
         new_shards = []
+        old_shards = []
         for shard in shards:
             if shard["SequenceNumberRange"].get("EndingSequenceNumber"):
-                await self.checkpointer.deallocate(shard['ShardId'])
+                existing_shard = any(x for x in self.shards if x['ShardId'] == shard["ShardId"])
+                if existing_shard:
+                    await self.checkpointer.deallocate(shard["ShardId"])
+                    old_shards.append(shard)
                 continue
             new_shards.append(shard)
         self.shards = new_shards
         log.info(
             " Stream {} has removed stale shards ids {}".format(
-                self.stream_name, ", ".join([x['ShardId'] for x in self.shards])
+                self.stream_name, ", ".join([x['ShardId'] for x in old_shards])
             )
         )
 

@@ -35,7 +35,7 @@ class Producer(Base):
             expo_backoff_limit=120,
             create_stream=False,
             create_stream_shards=1,
-            shard_refresh_timer=None
+            shard_refresh_timer=(60 * 15)
     ):
 
         super(Producer, self).__init__(
@@ -65,8 +65,6 @@ class Producer(Base):
         self.put_rate_throttle = None
         self.put_bandwidth_limit_per_shard = put_bandwidth_limit_per_shard
         self.put_bandwidth_throttle = None
-
-        self.shard_refresh_timer = shard_refresh_timer
 
         if put_bandwidth_limit_per_shard > 1024:
             log.warning(
@@ -349,7 +347,6 @@ class Producer(Base):
                 await self.get_conn()
 
     async def _spilt_shards(self, shards):
-        shards = self.current_shards(shards)
         new_shards = []
         for shard in shards:
             if shard["SequenceNumberRange"].get("EndingSequenceNumber"):
@@ -359,20 +356,20 @@ class Producer(Base):
         self.shards = new_shards
         log.info(
             " Stream {} has added shards ids {}".format(
-                self.stream_name, ", ".join([x['ShardId'] for x in self.shards])
+                self.stream_name, ", ".join([x['ShardId'] for x in new_shards])
             )
         )
 
     async def _merge_shards(self, shards):
-        shards = self.current_shards(shards)
         new_shards = []
+        old_shards = []
         for shard in shards:
             if shard["SequenceNumberRange"].get("EndingSequenceNumber"):
-                continue
+                old_shards.append(shard)
             new_shards.append(shard)
         self.shards = new_shards
         log.info(
             " Stream {} has removed stale shards ids {}".format(
-                self.stream_name, ", ".join([x['ShardId'] for x in self.shards])
+                self.stream_name, ", ".join([x['ShardId'] for x in old_shards])
             )
         )

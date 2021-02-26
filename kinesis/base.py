@@ -282,18 +282,14 @@ class Base:
         # https://brandur.org/kinesis-by-example
         pass
 
-    def current_shards(self, shards):
-        if shards != self.shards:
-            shards = shards + self.shards
-        return shards
-
     async def sync_shards(self):
 
         subclass_type = type(self).__name__
 
         if self.shards_status == self.INITIALIZE:
+            stream_info = await self.get_stream_description()
             await self._shards_lock.acquire()
-            await self._spilt_shards(self.shards)
+            await self._spilt_shards(stream_info['Shards'])
             self.set_shard_sync_state()
 
         # check if it's time for a RESYNC

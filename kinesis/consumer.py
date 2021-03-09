@@ -401,9 +401,6 @@ class Consumer(Base):
 
     async def __anext__(self):
 
-        if not self.shards:
-            await self.get_conn()
-
         if not self.fetch_task:
             await self.start_consumer()
 

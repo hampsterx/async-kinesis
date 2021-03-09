@@ -182,7 +182,8 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
                 )
             )
 
-        if previous_val["ref"] != self.get_ref():
+        # Could be None due to a Reshard event
+        if previous_val["ref"] != self.get_ref() and previous_val["ref"] is not None:
             raise NotImplementedError(
                 "{} checkpointed on {} but ref is different {}".format(
                     self.get_ref(), shard_id, val["ref"]

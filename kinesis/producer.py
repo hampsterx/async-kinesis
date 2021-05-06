@@ -337,7 +337,8 @@ class Producer(Base):
                     # raise err
             except ClientConnectionError as err:
                 await self.get_conn()
-
+            except asyncio.CancelledError:
+                return
             except Exception as e:
                 log.exception(e)
                 log.critical("Unknown Exception Caught")

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from aiohttp import ClientConnectionError
 from asyncio import TimeoutError
@@ -30,24 +31,25 @@ class ShardStats:
 
 class Consumer(Base):
     def __init__(
-        self,
-        stream_name,
-        endpoint_url=None,
-        region_name=None,
-        max_queue_size=10000,
-        max_shard_consumers=None,
-        record_limit=10000,
-        sleep_time_no_records=2,
-        iterator_type="TRIM_HORIZON",
-        shard_fetch_rate=1,
-        checkpointer=None,
-        processor=None,
-        retry_limit=None,
-        expo_backoff=None,
-        expo_backoff_limit=120,
-        skip_describe_stream=False,
-        create_stream=False,
-        create_stream_shards=1,
+            self,
+            stream_name,
+            endpoint_url=None,
+            region_name=None,
+            max_queue_size=10000,
+            max_shard_consumers=None,
+            record_limit=10000,
+            sleep_time_no_records=2,
+            iterator_type="TRIM_HORIZON",
+            shard_fetch_rate=1,
+            checkpointer=None,
+            processor=None,
+            retry_limit=None,
+            expo_backoff=None,
+            expo_backoff_limit=120,
+            skip_describe_stream=False,
+            create_stream=False,
+            create_stream_shards=1,
+            shard_refresh_timer=(60 * 15)
     ):
 
         super(Consumer, self).__init__(
@@ -60,6 +62,7 @@ class Consumer(Base):
             skip_describe_stream=skip_describe_stream,
             create_stream=create_stream,
             create_stream_shards=create_stream_shards,
+            shard_refresh_timer=shard_refresh_timer
         )
 
         self.queue = asyncio.Queue(maxsize=max_queue_size)
@@ -118,6 +121,7 @@ class Consumer(Base):
             # Ensure fetch is performed at most 5 times per second (the limit per shard)
             await asyncio.sleep(0.2)
             try:
+                await self.sync_shards()
                 await self.fetch()
             except asyncio.CancelledError:
                 pass
@@ -129,150 +133,14 @@ class Consumer(Base):
         if not self.is_fetching:
             return
 
-        # todo: check for/handle new shards
-
-        shards_in_use = [
-            s for s in self.shards if self.checkpointer.is_allocated(s["ShardId"])
-        ]
-
-        # log.debug("shards in use: {}".format([s["ShardId"] for s in shards_in_use]))
-
         for shard in self.shards:
 
             if not self.is_fetching:
                 break
 
-            if not self.checkpointer.is_allocated(shard["ShardId"]):
-                if (
-                    self.max_shard_consumers
-                    and len(shards_in_use) >= self.max_shard_consumers
-                ):
-                    continue
-
-                if self.checkpointer is None:
-                    log.debug("Marking shard in use {}".format(shard["ShardId"]))
-                    shard["ShardIterator"] = await self.get_shard_iterator(
-                        shard_id=shard["ShardId"]
-                    )
-
-                else:
-                    success, checkpoint = await self.checkpointer.allocate(
-                        shard["ShardId"]
-                    )
-
-                    if not success:
-                        log.debug(
-                            "Shard in use. Could not assign shard {} to checkpointer[{}]".format(
-                                shard["ShardId"], self.checkpointer.get_ref()
-                            )
-                        )
-                        continue
-
-                    log.debug(
-                        "Marking shard in use {} by checkpointer[{}] @ {}".format(
-                            shard["ShardId"], self.checkpointer.get_ref(), checkpoint
-                        )
-                    )
-
-                    shard["ShardIterator"] = await self.get_shard_iterator(
-                        shard_id=shard["ShardId"], last_sequence_number=checkpoint
-                    )
-
-                if "ShardIterator" in shard:
-                    shard["stats"] = ShardStats()
-                    shard["throttler"] = Throttler(
-                        rate_limit=self.shard_fetch_rate, period=1
-                    )
-                    shards_in_use.append(shard)
-
-                    log.debug("Shard count now at {}".format(len(shards_in_use)))
-
             if shard.get("fetch"):
-                if shard["fetch"].done():
-                    result = shard["fetch"].result()
-
-                    if not result:
-                        shard["fetch"] = None
-                        continue
-
-                    records = result["Records"]
-
-                    if records:
-                        log.debug(
-                            "Shard {} got {} records".format(
-                                shard["ShardId"], len(records)
-                            )
-                        )
-
-                        total_items = 0
-                        for row in result["Records"]:
-                            for n, output in enumerate(
-                                self.processor.parse(row["Data"])
-                            ):
-                                await self.queue.put(output)
-                            total_items += n + 1
-
-                        # Get approx minutes behind..
-                        last_arrival = records[-1].get("ApproximateArrivalTimestamp")
-                        if last_arrival:
-                            last_arrival = round(
-                                (
-                                    (
-                                        datetime.now(timezone.utc) - last_arrival
-                                    ).total_seconds()
-                                    / 60
-                                )
-                            )
-
-                            log.debug(
-                                "Shard {} added {} items from {} records. Consumer is {}m behind".format(
-                                    shard["ShardId"],
-                                    total_items,
-                                    len(records),
-                                    last_arrival,
-                                ),
-                                extra={"consumer_behind_m": last_arrival},
-                            )
-
-                        else:
-                            # ApproximateArrivalTimestamp not available in kinesis-lite
-                            log.debug(
-                                "Shard {} added {} items from {} records".format(
-                                    shard["ShardId"], total_items, len(records)
-                                )
-                            )
-
-                        # Add checkpoint record
-                        last_record = result["Records"][-1]
-                        await self.queue.put(
-                            {
-                                "__CHECKPOINT__": {
-                                    "ShardId": shard["ShardId"],
-                                    "SequenceNumber": last_record["SequenceNumber"],
-                                }
-                            }
-                        )
-
-                        shard["LastSequenceNumber"] = last_record["SequenceNumber"]
-
-                    else:
-                        log.debug(
-                            "Shard {} caught up, sleeping {}s".format(
-                                shard["ShardId"], self.sleep_time_no_records
-                            )
-                        )
-                        await asyncio.sleep(self.sleep_time_no_records)
-
-                    if not result["NextShardIterator"]:
-                        raise NotImplementedError("Shard is closed?")
-
-                    shard["ShardIterator"] = result["NextShardIterator"]
-
-                    shard["fetch"] = None
-
-                else:
-                    # log.debug("shard {} fetch in progress..".format(shard['ShardId']))
-                    continue
+                await self.get_fetch(shard)
+                continue
 
             if "ShardIterator" in shard and shard["ShardIterator"] is not None:
                 shard["fetch"] = asyncio.create_task(self.get_records(shard=shard))
@@ -340,6 +208,9 @@ class Consumer(Base):
 
     async def get_shard_iterator(self, shard_id, last_sequence_number=None):
 
+        # Issue with get_iterator when new shards are created.
+        # https://github.com/mhart/kinesalite/pull/103#issuecomment-782765923
+
         log.debug(
             "getting shard iterator for {} @ {}".format(
                 shard_id,
@@ -374,10 +245,161 @@ class Consumer(Base):
 
         log.debug("start_consumer completed.. queue size={}".format(self.queue.qsize()))
 
-    async def __anext__(self):
+    @staticmethod
+    def _arrival_time(records, shard, total_items):
+        # Get approx minutes behind..
+        last_arrival = records[-1].get("ApproximateArrivalTimestamp")
+        if last_arrival:
+            last_arrival = round(
+                (
+                        (
+                                datetime.now(timezone.utc) - last_arrival
+                        ).total_seconds()
+                        / 60
+                )
+            )
 
-        if not self.shards:
-            await self.get_conn()
+            log.debug(
+                "Shard {} added {} items from {} records. Consumer is {}m behind".format(
+                    shard["ShardId"],
+                    total_items,
+                    len(records),
+                    last_arrival,
+                ),
+                extra={"consumer_behind_m": last_arrival},
+            )
+
+        else:
+            # ApproximateArrivalTimestamp not available in kinesis-lite
+            log.debug(
+                "Shard {} added {} items from {} records".format(
+                    shard["ShardId"], total_items, len(records)
+                )
+            )
+
+    async def _add_checkpoint_record(self, result, shard):
+
+        # Add checkpoint record
+        last_record = result["Records"][-1]
+        await self.queue.put(
+            {
+                "__CHECKPOINT__": {
+                    "ShardId": shard["ShardId"],
+                    "SequenceNumber": last_record["SequenceNumber"],
+                }
+            }
+        )
+
+        return last_record["SequenceNumber"]
+
+    async def get_fetch(self, shard):
+        # actions done to this shard is pointed back to the same shard in self.shards
+
+        if shard["fetch"].done():
+            result = shard["fetch"].result()
+
+            if not result:
+                shard["fetch"] = None
+                return
+
+            records = result["Records"]
+
+            if records:
+                log.debug(
+                    "Shard {} got {} records".format(
+                        shard["ShardId"], len(records)
+                    )
+                )
+
+                total_items = 0
+                for row in result["Records"]:
+                    for n, output in enumerate(
+                            self.processor.parse(row["Data"])
+                    ):
+                        await self.queue.put(output)
+                    total_items += n + 1
+
+                if not result.get("NextShardIterator") or result.get("NextShardIterator") == 'null':
+                    shard["fetch"] = None
+                    await self.checkpointer.deallocate(shard["ShardId"])
+
+                    self.shards = [x for x in self.shards
+                                   if x['ShardId'] != shard['ShardId']
+                                   ]
+                    return
+
+                self._arrival_time(records, shard, total_items)
+
+                shard["LastSequenceNumber"] = await self._add_checkpoint_record(result, shard)
+
+            else:
+                log.debug(
+                    "Shard {} caught up, sleeping {}s".format(
+                        shard["ShardId"], self.sleep_time_no_records
+                    )
+                )
+                await asyncio.sleep(self.sleep_time_no_records)
+                shard["fetch"] = None
+                return
+
+            shard["ShardIterator"] = result["NextShardIterator"]
+
+            shard["fetch"] = None
+
+    async def _spilt_shards(self, shards):
+        new_shards = []
+        for shard in shards:
+
+            if type(self.max_shard_consumers) == int and self.max_shard_consumers <= len(new_shards):
+                continue
+
+            if shard["SequenceNumberRange"].get("EndingSequenceNumber"):
+                existing_shard = any(x for x in self.shards if x['ShardId'] == shard["ShardId"])
+                if existing_shard:
+                    ## TODO: change check point after reshard
+                    ## NotImplementedError: test-b64c5c96/100942 checkpointed on shardId-000000000000 but ref is different test-b64c5c96/100942
+                    await self.checkpointer.deallocate(shard["ShardId"])
+                continue
+
+            success, checkpoint = await self.checkpointer.allocate(shard["ShardId"])
+            if not success and self.checkpointer.is_allocated(shard["ShardId"]):
+                continue
+            else:
+                shard["ShardIterator"] = await self.get_shard_iterator(
+                    shard_id=shard["ShardId"], last_sequence_number=checkpoint
+                )
+                shard["stats"] = ShardStats()
+                shard["throttler"] = Throttler(
+                    rate_limit=self.shard_fetch_rate, period=1
+                )
+            new_shards.append(shard)
+
+        self.shards = new_shards
+        log.info(
+            " Stream {} has added shards ids {}".format(
+                self.stream_name, ", ".join([x['ShardId'] for x in new_shards])
+            )
+        )
+
+    async def _merge_shards(self, shards):
+        new_shards = []
+        old_shards = []
+        for shard in shards:
+            if shard["SequenceNumberRange"].get("EndingSequenceNumber"):
+                existing_shard = any(x for x in self.shards if x['ShardId'] == shard["ShardId"])
+                if existing_shard:
+                    await self.checkpointer.deallocate(shard["ShardId"])
+                    old_shards.append(shard)
+                continue
+            new_shards.append(shard)
+        self.shards = new_shards
+        log.info(
+            " Stream {} has removed stale shards ids {}".format(
+                self.stream_name, ", ".join([x['ShardId'] for x in old_shards])
+            )
+        )
+
+    async def __anext__(self):
 
         if not self.fetch_task:
             await self.start_consumer()

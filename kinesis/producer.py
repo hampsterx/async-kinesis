@@ -18,23 +18,24 @@ log = logging.getLogger(__name__)
 
 class Producer(Base):
     def __init__(
-        self,
-        stream_name,
-        endpoint_url=None,
-        region_name=None,
-        buffer_time=0.5,
-        put_rate_limit_per_shard=1000,
-        put_bandwidth_limit_per_shard=1024,
-        after_flush_fun=None,
-        batch_size=500,
-        max_queue_size=10000,
-        processor=None,
-        skip_describe_stream=False,
-        retry_limit=None,
-        expo_backoff=None,
-        expo_backoff_limit=120,
-        create_stream=False,
-        create_stream_shards=1,
+            self,
+            stream_name,
+            endpoint_url=None,
+            region_name=None,
+            buffer_time=0.5,
+            put_rate_limit_per_shard=1000,
+            put_bandwidth_limit_per_shard=1024,
+            after_flush_fun=None,
+            batch_size=500,
+            max_queue_size=10000,
+            processor=None,
+            skip_describe_stream=False,
+            retry_limit=None,
+            expo_backoff=None,
+            expo_backoff_limit=120,
+            create_stream=False,
+            create_stream_shards=1,
+            shard_refresh_timer=(60 * 15)
     ):
 
         super(Producer, self).__init__(
@@ -47,6 +48,7 @@ class Producer(Base):
             skip_describe_stream=skip_describe_stream,
             create_stream=create_stream,
             create_stream_shards=create_stream_shards,
+            shard_refresh_timer=shard_refresh_timer
         )
 
         self.buffer_time = buffer_time
@@ -90,13 +92,13 @@ class Producer(Base):
     def set_put_rate_throttle(self):
         self.put_rate_throttle = Throttler(
             rate_limit=self.put_rate_limit_per_shard
-            * (len(self.shards) if self.shards else 1),
+                       * (len(self.shards) if self.shards else 1),
             period=1,
         )
         self.put_bandwidth_throttle = Throttler(
             # kb per second. Go below a bit to avoid hitting the threshold
             size_limit=self.put_bandwidth_limit_per_shard
-            * (len(self.shards) if self.shards else 1),
+                       * (len(self.shards) if self.shards else 1),
             period=1,
         )
 
@@ -128,6 +130,7 @@ class Producer(Base):
 
     async def _flush(self):
         while True:
+            await self.sync_shards()
             if self.stream_status == self.ACTIVE:
                 if not self.is_flushing:
                     await self.flush()
@@ -293,8 +296,8 @@ class Producer(Base):
 
                 if code == "ValidationException":
                     if (
-                        "must have length less than or equal"
-                        in err.response["Error"]["Message"]
+                            "must have length less than or equal"
+                            in err.response["Error"]["Message"]
                     ):
                         log.warning(
                             "Batch size {} exceeded the limit. retrying with less".format(
@@ -343,3 +346,31 @@ class Producer(Base):
                 log.exception(e)
                 log.critical("Unknown Exception Caught")
                 await self.get_conn()
+
+    async def _spilt_shards(self, shards):
+        new_shards = []
+        for shard in shards:
+            if shard["SequenceNumberRange"].get("EndingSequenceNumber"):
+                continue
+            new_shards.append(shard)
+
+        self.shards = new_shards
+        log.info(
+            " Stream {} has added shards ids {}".format(
+                self.stream_name, ", ".join([x['ShardId'] for x in new_shards])
+            )
+        )
+
+    async def _merge_shards(self, shards):
+        new_shards = []
+        old_shards = []
+        for shard in shards:
+            if shard["SequenceNumberRange"].get("EndingSequenceNumber"):
+                old_shards.append(shard)
+            new_shards.append(shard)
+        self.shards = new_shards
+        log.info(
+            " Stream {} has removed stale shards ids {}".format(
+                self.stream_name, ", ".join([x['ShardId'] for x in old_shards])
+            )
+        )

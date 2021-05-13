@@ -48,6 +48,7 @@ class Consumer(Base):
         skip_describe_stream=False,
         create_stream=False,
         create_stream_shards=1,
+        timestamp=None,
     ):
 
         super(Consumer, self).__init__(
@@ -81,6 +82,8 @@ class Consumer(Base):
         self.fetch_task = None
 
         self.shard_fetch_rate = shard_fetch_rate
+
+        self.timestamp = timestamp
 
     def __aiter__(self):
         return self
@@ -357,6 +360,9 @@ class Consumer(Base):
 
         if last_sequence_number:
             params["StartingSequenceNumber"] = last_sequence_number
+
+        if self.iterator_type == 'AT_TIMESTAMP' and self.timestamp:
+            params['Timestamp'] = self.timestamp
 
         response = await self.client.get_shard_iterator(**params)
         return response["ShardIterator"]

@@ -91,7 +91,7 @@ Options:
 | max_shard_consumers | None | Max number of shards to use. None = all |
 | record_limit | 10000 | Number of records to fetch with get_records() |
 | sleep_time_no_records | 2 | No of seconds to sleep when caught up |
-| iterator_type | TRIM_HORIZON | Default shard iterator type for new/unknown shards (ie start from start of stream). Alternative is "LATEST" (ie end of stream) |
+| iterator_type | TRIM_HORIZON | Default shard iterator type for new/unknown shards (ie start from start of stream). Alternatives are "LATEST" (ie end of stream), "AT_TIMESTAMP" (ie particular point in time, requires defining `timestamp` arg) |
 | shard_fetch_rate | 1 | No of fetches per second (max = 5). 1 is recommended as allows having multiple consumers without hitting the max limit. |
 | checkpointer | MemoryCheckPointer() | Checkpointer to use |
 | processor | JsonProcessor() |  Record aggregator/serializer. Must Match processor used by Producer() |
@@ -100,6 +100,7 @@ Options:
 | expo_backoff_limit | 120 | Max amount of seconds Exponential Backoff can grow |
 | create_stream | False | Creates a Kinesis Stream based on the `stream_name` keyword argument. Note if stream already existing it will ignore |
 | create_stream_shards | 1 | Sets the amount of shard you want for your new stream. Note if stream already existing it will ignore  |
+| timestamp | None | Timestamp to start reading stream from. Used with iterator type "AT_TIMESTAMP"
 
 
 ## Checkpointers

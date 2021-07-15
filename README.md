@@ -46,6 +46,7 @@ Options:
 
 | Arg | Default | Description |
 | --- | --- | --- |
+| session | None | AioSession (to use non default profile etc) |
 | region_name | None | AWS Region |
 | buffer_time | 0.5 | Buffer time in seconds before auto flushing records |
 | put_rate_limit_per_shard | 1000 | "A single shard can ingest up to 1 MiB of data per second (including partition keys) or 1,000 records per second for writes" |
@@ -86,6 +87,7 @@ Options:
 
 | Arg | Default | Description |
 | --- | --- | --- |
+| session | None | AioSession (to use non default profile etc) |
 | region_name | None | AWS Region |
 | max_queue_size | 10000 | the fetch() task shard will block when queue is at max |
 | max_shard_consumers | None | Max number of shards to use. None = all |

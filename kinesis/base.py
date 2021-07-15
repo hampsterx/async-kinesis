@@ -1,7 +1,7 @@
 import asyncio
-import aiobotocore
 import logging
 from async_timeout import timeout
+from aiobotocore.session import AioSession
 from asyncio import CancelledError
 from botocore.exceptions import ClientError
 from botocore.config import Config
@@ -16,6 +16,7 @@ class Base:
     def __init__(
         self,
         stream_name,
+        session=None,
         endpoint_url=None,
         region_name=None,
         retry_limit=None,
@@ -27,6 +28,12 @@ class Base:
     ):
 
         self.stream_name = stream_name
+
+        if session:
+            assert isinstance(session, AioSession)
+            self.session = session
+        else:
+            self.session = AioSession()
 
         self.endpoint_url = endpoint_url
         self.region_name = region_name
@@ -76,14 +83,13 @@ class Base:
         await self.client.__aexit__(exc_type, exc, tb)
 
     async def get_client(self):
-        session = aiobotocore.session.AioSession()
 
         # Note: max_attempts = 0
         # Boto RetryHandler only handles these errors:
         #  GENERAL_CONNECTION_ERROR => ConnectionError, ConnectionClosedError, ReadTimeoutError, EndpointConnectionError
         # Still have to handle ClientError anyway~
 
-        self.client = await session.create_client(
+        self.client = await self.session.create_client(
             "kinesis",
             endpoint_url=self.endpoint_url,
             region_name=self.region_name,

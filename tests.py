@@ -2,6 +2,8 @@ import os
 import uuid
 import asyncio
 import logging, coloredlogs
+
+from aiobotocore import AioSession
 from dotenv import load_dotenv
 from asynctest import TestCase as AsynTestCase, fail_on
 from unittest import skipUnless, TestCase
@@ -541,6 +543,7 @@ class KinesisTests(BaseKinesisTests):
         # Producer
         with self.assertRaises(exceptions.StreamDoesNotExist):
             async with Producer(
+                session=AioSession(),
                 stream_name="test_stream_does_not_exist", endpoint_url=ENDPOINT_URL
             ) as producer:
                 await producer.put("test")
@@ -963,12 +966,10 @@ class AWSKinesisTests(BaseKinesisTests):
         )
 
         async def create(stream_name, shards):
-            async with Producer(stream_name=stream_name) as producer:
-                await producer.create_stream(shards=shards)
+            async with Producer(stream_name=stream_name, create_stream=True, create_stream_shards=shards) as producer:
                 await producer.start()
 
         asyncio.run(create(stream_name=cls.STREAM_NAME_SINGLE_SHARD, shards=1))
-        #   create(loop=setup_loop, stream_name=cls.STREAM_NAME_MULTI_SHARD, shards=3)
 
     @classmethod
     def tearDownClass(cls):

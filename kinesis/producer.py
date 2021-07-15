@@ -20,6 +20,7 @@ class Producer(Base):
     def __init__(
         self,
         stream_name,
+        session=None,
         endpoint_url=None,
         region_name=None,
         buffer_time=0.5,
@@ -39,6 +40,7 @@ class Producer(Base):
 
         super(Producer, self).__init__(
             stream_name,
+            session=session,
             endpoint_url=endpoint_url,
             region_name=region_name,
             retry_limit=retry_limit,

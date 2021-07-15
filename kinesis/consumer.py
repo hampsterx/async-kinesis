@@ -32,6 +32,7 @@ class Consumer(Base):
     def __init__(
         self,
         stream_name,
+        session=None,
         endpoint_url=None,
         region_name=None,
         max_queue_size=10000,
@@ -53,6 +54,7 @@ class Consumer(Base):
 
         super(Consumer, self).__init__(
             stream_name,
+            session=session,
             endpoint_url=endpoint_url,
             region_name=region_name,
             retry_limit=retry_limit,

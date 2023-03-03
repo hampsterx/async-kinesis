@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from aiohttp import ClientConnectionError
 from asyncio import TimeoutError
@@ -51,7 +52,6 @@ class Consumer(Base):
         create_stream_shards=1,
         timestamp=None,
     ):
-
         super(Consumer, self).__init__(
             stream_name,
             session=session,
@@ -86,6 +86,10 @@ class Consumer(Base):
         self.shard_fetch_rate = shard_fetch_rate
 
         self.timestamp = timestamp
+
+        self.closed_shards = set()
+
+        self.shards_updated_at = None
 
     def __aiter__(self):
         return self
@@ -134,7 +138,13 @@ class Consumer(Base):
         if not self.is_fetching:
             return
 
-        # todo: check for/handle new shards
+        # check for new shards every fetch call. rate limit is 1000/s per stream so this is fine.
+        # get all shards active at any point in the stream retention period
+        current_shard_ids = [s["ShardId"] for s in self.shards]
+        all_shards = (await self.client.list_shards(StreamName=self.stream_name))["Shards"]
+        for shard in all_shards:
+            if shard["ShardId"] not in current_shard_ids:
+                self.shards.append(shard)
 
         shards_in_use = [
             s for s in self.shards if self.checkpointer.is_allocated(s["ShardId"])
@@ -143,6 +153,9 @@ class Consumer(Base):
         # log.debug("shards in use: {}".format([s["ShardId"] for s in shards_in_use]))
 
         for shard in self.shards:
+
+            if shard["ShardId"] in self.closed_shards:
+                continue
 
             if not self.is_fetching:
                 break
@@ -268,8 +281,13 @@ class Consumer(Base):
                         )
                         await asyncio.sleep(self.sleep_time_no_records)
 
-                    if not result["NextShardIterator"]:
-                        raise NotImplementedError("Shard is closed?")
+                    if "NextShardIterator" not in result or not result["NextShardIterator"]:
+                        # Shard is closed now. Don't fetch again.
+                        # print("Closing shard", shard["ShardId"])
+                        await self.checkpointer.deallocate(shard["ShardId"])
+                        self.closed_shards.add(shard["ShardId"])
+                        # print("All closed shards:", self.closed_shards)
+                        continue
 
                     shard["ShardIterator"] = result["NextShardIterator"]
 

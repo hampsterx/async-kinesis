@@ -247,7 +247,7 @@ class Producer(Base):
                     self.overflow.append(item)
 
                 elif num <= self.batch_size:
-                    async with self.put_bandwidth_throttle(size=self.flush_total_size):
+                    async with self.put_bandwidth_throttle(size=size_kb):
                         items.append(item)
                         self.flush_total_size += size_kb
                         self.flush_total_records += item[1]

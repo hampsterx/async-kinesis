@@ -17,7 +17,7 @@ pip install async-kinesis
   - deadlock + reallocation of shards if checkpoint fails to heartbeat within "session_timeout"
 - processors (aggregator + serializer)
     - json line delimited, msgpack
-
+- Address Kinesis streams by name or [ARN]
 
 See [docs/design](./docs/DESIGN.md) for more details.
 See [docs/yetanother](docs/YETANOTHER.md) as to why reinvent the wheel.
@@ -30,6 +30,11 @@ As required by boto3
 AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY
 ```
+
+## Stream addressing
+
+The `stream_name` argument to consumer and producer accepts either the [StreamName]
+like `test`, or a full [StreamARN] like `arn:aws:kinesis:eu-central-1:842404475894:stream/test`.
 
 ## Producer
 
@@ -206,3 +211,6 @@ TESTING_USE_AWS_KINESIS=1
 Note you can ignore these tests if submitting PR unless core batching/processing behaviour is being changed.
 
 
+[ARN]: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference-arns.html
+[StreamARN]: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_StreamDescription.html#Streams-Type-StreamDescription-StreamARN
+[StreamName]: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_StreamDescription.html#Streams-Type-StreamDescription-StreamName

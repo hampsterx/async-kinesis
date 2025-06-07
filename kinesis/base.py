@@ -82,6 +82,19 @@ class Base:
         await self.close()
         await self.client.__aexit__(exc_type, exc, tb)
 
+    @property
+    def address(self):
+        """
+        Return address of stream, either as StreamName or StreamARN, when applicable.
+
+        https://docs.aws.amazon.com/kinesis/latest/APIReference/API_StreamDescription.html#Streams-Type-StreamDescription-StreamName
+        https://docs.aws.amazon.com/kinesis/latest/APIReference/API_StreamDescription.html#Streams-Type-StreamDescription-StreamARN
+        """
+        if self.stream_name.startswith("arn:"):
+            return {"StreamARN": self.stream_name}
+        else:
+            return {"StreamName": self.stream_name}
+
     async def get_client(self):
 
         # Note: max_attempts = 0
@@ -101,7 +114,7 @@ class Base:
     async def get_stream_description(self):
 
         try:
-            return (await self.client.describe_stream(StreamName=self.stream_name))[
+            return (await self.client.describe_stream(**self.address))[
                 "StreamDescription"
             ]
         except ClientError as err:
@@ -240,7 +253,7 @@ class Base:
 
         try:
             await self.client.create_stream(
-                StreamName=self.stream_name, ShardCount=self.create_stream_shards
+                **self.address, ShardCount=self.create_stream_shards
             )
         except ClientError as err:
             code = err.response["Error"]["Code"]

@@ -353,12 +353,12 @@ class Consumer(Base):
         )
 
         params = {
-            "StreamName": self.stream_name,
             "ShardId": shard_id,
             "ShardIteratorType": "AFTER_SEQUENCE_NUMBER"
             if last_sequence_number
             else self.iterator_type,
         }
+        params.update(self.address)
 
         if last_sequence_number:
             params["StartingSequenceNumber"] = last_sequence_number

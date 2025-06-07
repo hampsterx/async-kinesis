@@ -279,7 +279,7 @@ class Producer(Base):
                         }
                         for item in items
                     ],
-                    StreamName=self.stream_name,
+                    **self.address,
                 )
 
                 log.info(

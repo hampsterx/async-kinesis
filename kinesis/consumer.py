@@ -1,56 +1,60 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
+from typing import Optional, Any, Dict, Iterator, AsyncIterator
+
 from aiohttp import ClientConnectionError
 from asyncio import TimeoutError
 from asyncio.queues import QueueEmpty
 from botocore.exceptions import ClientError
+from aiobotocore.session import AioSession
+
 from .utils import Throttler
 from .base import Base
-from .checkpointers import MemoryCheckPointer
-from .processors import JsonProcessor
+from .checkpointers import MemoryCheckPointer, CheckPointer
+from .processors import JsonProcessor, Processor
 
 log = logging.getLogger(__name__)
 
 
 class ShardStats:
-    def __init__(self):
-        self._throttled = 0
-        self._success = 0
+    def __init__(self) -> None:
+        self._throttled: int = 0
+        self._success: int = 0
 
-    def succeded(self):
+    def succeded(self) -> None:
         self._success += 1
 
-    def throttled(self):
+    def throttled(self) -> None:
         self._throttled += 1
 
-    def to_data(self):
+    def to_data(self) -> Dict[str, int]:
         return {"throttled": self._throttled, "success": self._success}
 
 
 class Consumer(Base):
     def __init__(
         self,
-        stream_name,
-        session=None,
-        endpoint_url=None,
-        region_name=None,
-        max_queue_size=10000,
-        max_shard_consumers=None,
-        record_limit=10000,
-        sleep_time_no_records=2,
-        iterator_type="TRIM_HORIZON",
-        shard_fetch_rate=1,
-        checkpointer=None,
-        processor=None,
-        retry_limit=None,
-        expo_backoff=None,
-        expo_backoff_limit=120,
-        skip_describe_stream=False,
-        create_stream=False,
-        create_stream_shards=1,
-        timestamp=None,
-    ):
+        stream_name: str,
+        session: Optional[AioSession] = None,
+        endpoint_url: Optional[str] = None,
+        region_name: Optional[str] = None,
+        max_queue_size: int = 10000,
+        max_shard_consumers: Optional[int] = None,
+        record_limit: int = 10000,
+        sleep_time_no_records: float = 2,
+        iterator_type: str = "TRIM_HORIZON",
+        shard_fetch_rate: int = 1,
+        checkpointer: Optional[CheckPointer] = None,
+        processor: Optional[Processor] = None,
+        retry_limit: Optional[int] = None,
+        expo_backoff: Optional[float] = None,
+        expo_backoff_limit: int = 120,
+        skip_describe_stream: bool = False,
+        create_stream: bool = False,
+        create_stream_shards: int = 1,
+        timestamp: Optional[datetime] = None,
+    ) -> None:
 
         super(Consumer, self).__init__(
             stream_name,
@@ -87,7 +91,7 @@ class Consumer(Base):
 
         self.timestamp = timestamp
 
-    def __aiter__(self):
+    def __aiter__(self) -> AsyncIterator[Any]:
         return self
 
     async def close(self):

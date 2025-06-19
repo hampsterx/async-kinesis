@@ -2,16 +2,17 @@ import asyncio
 import logging
 import time
 import math
-from aiohttp import ClientConnectionError
+from typing import Optional, Any, Callable, Awaitable, Union
 
+from aiohttp import ClientConnectionError
 from asyncio.queues import QueueEmpty
+from botocore.exceptions import ClientError
+from aiobotocore.session import AioSession
 
 from .utils import Throttler
-from botocore.exceptions import ClientError
-
 from .base import Base
 from . import exceptions
-from .processors import JsonProcessor
+from .processors import JsonProcessor, Processor
 
 log = logging.getLogger(__name__)
 
@@ -19,24 +20,24 @@ log = logging.getLogger(__name__)
 class Producer(Base):
     def __init__(
         self,
-        stream_name,
-        session=None,
-        endpoint_url=None,
-        region_name=None,
-        buffer_time=0.5,
-        put_rate_limit_per_shard=1000,
-        put_bandwidth_limit_per_shard=1024,
-        after_flush_fun=None,
-        batch_size=500,
-        max_queue_size=10000,
-        processor=None,
-        skip_describe_stream=False,
-        retry_limit=None,
-        expo_backoff=None,
-        expo_backoff_limit=120,
-        create_stream=False,
-        create_stream_shards=1,
-    ):
+        stream_name: str,
+        session: Optional[AioSession] = None,
+        endpoint_url: Optional[str] = None,
+        region_name: Optional[str] = None,
+        buffer_time: float = 0.5,
+        put_rate_limit_per_shard: int = 1000,
+        put_bandwidth_limit_per_shard: int = 1024,
+        after_flush_fun: Optional[Callable[[], Awaitable[None]]] = None,
+        batch_size: int = 500,
+        max_queue_size: int = 10000,
+        processor: Optional[Processor] = None,
+        skip_describe_stream: bool = False,
+        retry_limit: Optional[int] = None,
+        expo_backoff: Optional[float] = None,
+        expo_backoff_limit: int = 120,
+        create_stream: bool = False,
+        create_stream_shards: int = 1,
+    ) -> None:
 
         super(Producer, self).__init__(
             stream_name,
@@ -102,7 +103,7 @@ class Producer(Base):
             period=1,
         )
 
-    async def put(self, data):
+    async def put(self, data: Any) -> None:
 
         # Raise exception from Flush Task to main task otherwise raise exception inside
         # Flush Task will fail silently
@@ -171,6 +172,12 @@ class Producer(Base):
         self.is_flushing = False
 
     async def process_result(self, result, items):
+        if not result:
+            log.warning("Received empty result from Kinesis, assuming success")
+            if self.after_flush_fun:
+                await self.after_flush_fun(items)
+            return
+            
         if result["FailedRecordCount"]:
 
             errors = list(

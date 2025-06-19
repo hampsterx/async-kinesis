@@ -1,14 +1,17 @@
+from typing import Protocol, Any, Iterator, List
 from .aggregators import (
     NewlineAggregator,
     SimpleAggregator,
     NetstringAggregator,
     ListAggregator,
     KPLAggregator,
+    OutputItem,
 )
 from .serializers import StringSerializer, JsonSerializer, MsgpackSerializer
 
 
 class Processor:
+    """Base class for processors that combine aggregation and serialization."""
     pass
 
 

@@ -1,11 +1,13 @@
 import asyncio
 import logging
-from async_timeout import timeout
+import time
+from typing import Optional, Any, Dict, List, Union
+
+from .timeout_compat import timeout
 from aiobotocore.session import AioSession
 from asyncio import CancelledError
 from botocore.exceptions import ClientError
 from botocore.config import Config
-import time
 
 from . import exceptions
 
@@ -15,37 +17,37 @@ log = logging.getLogger(__name__)
 class Base:
     def __init__(
         self,
-        stream_name,
-        session=None,
-        endpoint_url=None,
-        region_name=None,
-        retry_limit=None,
-        expo_backoff=None,
-        expo_backoff_limit=120,
-        skip_describe_stream=False,
-        create_stream=False,
-        create_stream_shards=1,
-    ):
+        stream_name: str,
+        session: Optional[AioSession] = None,
+        endpoint_url: Optional[str] = None,
+        region_name: Optional[str] = None,
+        retry_limit: Optional[int] = None,
+        expo_backoff: Optional[float] = None,
+        expo_backoff_limit: int = 120,
+        skip_describe_stream: bool = False,
+        create_stream: bool = False,
+        create_stream_shards: int = 1,
+    ) -> None:
 
-        self.stream_name = stream_name
+        self.stream_name: str = stream_name
 
         if session:
             assert isinstance(session, AioSession)
-            self.session = session
+            self.session: AioSession = session
         else:
             self.session = AioSession()
 
-        self.endpoint_url = endpoint_url
-        self.region_name = region_name
+        self.endpoint_url: Optional[str] = endpoint_url
+        self.region_name: Optional[str] = region_name
 
-        self.client = None
-        self.shards = None
+        self.client: Optional[Any] = None  # aiobotocore client
+        self.shards: Optional[List[Dict[str, Any]]] = None
 
-        self.stream_status = None
+        self.stream_status: Optional[str] = None
 
-        self.retry_limit = retry_limit
-        self.expo_backoff = expo_backoff
-        self.expo_backoff_limit = expo_backoff_limit
+        self.retry_limit: Optional[int] = retry_limit
+        self.expo_backoff: Optional[float] = expo_backoff
+        self.expo_backoff_limit: int = expo_backoff_limit
 
         # connection states of kinesis client
         self.RECONNECT = "RECONNECT"
@@ -60,7 +62,7 @@ class Base:
         self.create_stream = create_stream
         self.create_stream_shards = create_stream_shards
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "Base":
 
         log.info(
             "creating client with {}".format(
@@ -78,12 +80,12 @@ class Base:
 
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         await self.close()
         await self.client.__aexit__(exc_type, exc, tb)
 
     @property
-    def address(self):
+    def address(self) -> Dict[str, str]:
         """
         Return address of stream, either as StreamName or StreamARN, when applicable.
 

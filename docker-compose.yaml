@@ -1,8 +1,7 @@
-version: '3.3'
 services:
 
   kinesis:
-    image: vsouza/kinesis-local:latest
+    image: instructure/kinesalite:latest
     command: --port 4567 --shardLimit 10000
     restart: always
     ports:
@@ -15,10 +14,11 @@ services:
 
   test:
      container_name: async-kinesis-test
-     command: ['nosetests']
+     command: ['pytest', '-v', '--cov=kinesis']
      volumes:
-      - ./tests.py:/app/tests.py
+      - ./tests:/app/tests
       - ./kinesis:/app/kinesis
+      - ./pytest.ini:/app/pytest.ini
      build:
        context: .
        dockerfile: Dockerfile
@@ -27,8 +27,9 @@ services:
       - ENDPOINT_URL=http://kinesis:4567
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - AWS_ACCESS_KEY_ID=
-      - AWS_SECRET_ACCESS_KEY=
-     links:
-      - kinesis:kinesis
-      - redis:redis
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+     depends_on:
+      - kinesis
+      - redis
+

@@ -3,20 +3,45 @@ import asyncio
 import os
 import json
 from datetime import timezone, datetime
+from typing import Protocol, Optional, Union, Dict, Tuple, Any
 
 log = logging.getLogger(__name__)
 
 
-class BaseCheckPointer:
-    def __init__(self, name="", id=None):
-        self._id = id if id else os.getpid()
-        self._name = name
-        self._items = {}
+class CheckPointer(Protocol):
+    """Protocol for checkpointer implementations."""
+    
+    async def allocate(self, shard_id: str) -> Tuple[bool, Optional[str]]:
+        """Allocate a shard for processing."""
+        ...
+    
+    async def deallocate(self, shard_id: str) -> None:
+        """Deallocate a shard."""
+        ...
+    
+    async def checkpoint(self, shard_id: str, sequence_number: str) -> None:
+        """Checkpoint progress for a shard."""
+        ...
+    
+    def get_all_checkpoints(self) -> Dict[str, str]:
+        """Get all checkpoints."""
+        ...
+    
+    async def close(self) -> None:
+        """Close the checkpointer."""
+        ...
 
-    def get_id(self):
+
+class BaseCheckPointer:
+    def __init__(self, name: str = "", id: Optional[Union[str, int]] = None) -> None:
+        self._id: Union[str, int] = id if id else os.getpid()
+        self._name: str = name
+        self._items: Dict[str, Any] = {}
+
+    def get_id(self) -> Union[str, int]:
         return self._id
 
-    def get_ref(self):
+    def get_ref(self) -> str:
         return "{}/{}".format(self._name, self._id)
 
     def get_all_checkpoints(self):
@@ -84,6 +109,9 @@ class MemoryCheckPointer(BaseCheckPointer):
         return shard_id in self._items and self._items[shard_id]["active"]
 
     async def allocate(self, shard_id):
+        if self.is_allocated(shard_id):
+            return False, None
+            
         if shard_id not in self._items:
             self._items[shard_id] = {"sequence": None}
 
@@ -117,9 +145,9 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
         )
 
         if is_cluster:
-            from aredis import StrictRedisCluster as Redis
+            from redis.asyncio.cluster import RedisCluster as Redis
         else:
-            from aredis import StrictRedis as Redis
+            from redis.asyncio import Redis
 
         params = {
             "host": os.environ.get("REDIS_HOST", "localhost"),

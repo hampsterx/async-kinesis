@@ -277,8 +277,8 @@ class TestConsumer:
             expo_backoff=0.1,
         ) as consumer:
             # Test that retry parameters are set
-            assert hasattr(consumer, 'retry_limit')
-            assert hasattr(consumer, 'expo_backoff')
+            assert hasattr(consumer, "retry_limit")
+            assert hasattr(consumer, "expo_backoff")
 
     @pytest.mark.asyncio
     async def test_consumer_stream_arn_support(self, endpoint_url):
@@ -306,7 +306,7 @@ class TestConsumer:
             async with Consumer(
                 "nonexistent-stream-issue-35-test",
                 retry_limit=1,  # Fail quickly
-                endpoint_url="http://invalid-endpoint-for-test:9999"
+                endpoint_url="http://invalid-endpoint-for-test:9999",
             ) as consumer:
                 async for item in consumer:
                     break

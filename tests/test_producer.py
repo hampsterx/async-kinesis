@@ -77,7 +77,9 @@ class TestProducer:
             await asyncio.sleep(0.1)
 
     @pytest.mark.asyncio
-    async def test_producer_different_processors(self, random_stream_name, endpoint_url):
+    async def test_producer_different_processors(
+        self, random_stream_name, endpoint_url
+    ):
         """Test producer with different processors."""
         processors = [
             JsonProcessor(),
@@ -119,7 +121,9 @@ class TestProducer:
             await producer.put({"message": "3"})
 
     @pytest.mark.asyncio
-    async def test_producer_after_flush_callback(self, random_stream_name, endpoint_url):
+    async def test_producer_after_flush_callback(
+        self, random_stream_name, endpoint_url
+    ):
         """Test after flush callback functionality."""
         callback_called = False
 
@@ -250,7 +254,7 @@ class TestProducer:
                 "nonexistent-stream-issue-35-test",
                 processor=JsonProcessor(),
                 retry_limit=1,  # Fail quickly
-                endpoint_url="http://invalid-endpoint-for-test:9999"
+                endpoint_url="http://invalid-endpoint-for-test:9999",
             ) as producer:
                 await producer.put({"test": "data"})
 
@@ -260,8 +264,6 @@ class TestProducer:
         # Test scenario that mimics the original issue report
         with pytest.raises(ConnectionError):
             async with Producer(
-                "auth-fail-test-stream", 
-                processor=JsonProcessor(),
-                retry_limit=1
+                "auth-fail-test-stream", processor=JsonProcessor(), retry_limit=1
             ) as producer:
                 await producer.put({"test": "data"})

@@ -17,10 +17,9 @@ class TestCheckpointers:
     @staticmethod
     def patch_consumer_fetch(consumer):
         """Helper to patch consumer methods for testing."""
+
         async def get_shard_iterator(shard_id, last_sequence_number=None):
-            log.info(
-                f"getting shard iterator for {shard_id} @ {last_sequence_number}"
-            )
+            log.info(f"getting shard iterator for {shard_id} @ {last_sequence_number}")
             return True
 
         consumer.get_shard_iterator = get_shard_iterator

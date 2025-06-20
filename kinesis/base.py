@@ -233,7 +233,9 @@ class Base:
                 log.warning(e)
                 conn_attempts += 1
                 # Default retry limit of 5 if not specified
-                retry_limit = self.retry_limit if isinstance(self.retry_limit, int) else 5
+                retry_limit = (
+                    self.retry_limit if isinstance(self.retry_limit, int) else 5
+                )
                 if conn_attempts >= (retry_limit + 1):
                     await self.close()
                     raise ConnectionError(

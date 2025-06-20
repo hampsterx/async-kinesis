@@ -141,10 +141,12 @@ class Consumer(Base):
                 log.exception(e)
                 error_count += 1
                 if error_count >= max_errors:
-                    log.error(f"Too many fetch errors ({max_errors}), stopping fetch task")
+                    log.error(
+                        f"Too many fetch errors ({max_errors}), stopping fetch task"
+                    )
                     self.is_fetching = False
                     break
-                await asyncio.sleep(min(2 ** error_count, 30))  # Exponential backoff
+                await asyncio.sleep(min(2**error_count, 30))  # Exponential backoff
 
     async def fetch(self):
 
@@ -232,7 +234,9 @@ class Consumer(Base):
                                 self.processor.parse(row["Data"])
                             ):
                                 try:
-                                    await asyncio.wait_for(self.queue.put(output), timeout=30.0)
+                                    await asyncio.wait_for(
+                                        self.queue.put(output), timeout=30.0
+                                    )
                                 except asyncio.TimeoutError:
                                     log.warning("Queue put timed out, skipping record")
                                     continue
@@ -276,11 +280,13 @@ class Consumer(Base):
                                     {
                                         "__CHECKPOINT__": {
                                             "ShardId": shard["ShardId"],
-                                            "SequenceNumber": last_record["SequenceNumber"],
+                                            "SequenceNumber": last_record[
+                                                "SequenceNumber"
+                                            ],
                                         }
                                     }
                                 ),
-                                timeout=30.0
+                                timeout=30.0,
                             )
                         except asyncio.TimeoutError:
                             log.warning("Checkpoint queue put timed out")
@@ -440,7 +446,9 @@ class Consumer(Base):
                         )
                     checkpoint_count += 1
                     if checkpoint_count >= max_checkpoints:
-                        log.warning(f"Processed {max_checkpoints} checkpoints, stopping iteration")
+                        log.warning(
+                            f"Processed {max_checkpoints} checkpoints, stopping iteration"
+                        )
                         raise StopAsyncIteration
                     continue
 

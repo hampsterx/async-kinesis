@@ -1,13 +1,14 @@
-import os
-import uuid
-import pytest
-import pytest_asyncio
 import asyncio
 import logging
+import os
+import uuid
 from unittest.mock import patch
 
+import pytest
+import pytest_asyncio
 from dotenv import load_dotenv
-from kinesis import Producer, Consumer
+
+from kinesis import Consumer, Producer
 
 # Load environment variables
 load_dotenv()
@@ -19,6 +20,10 @@ TESTING_USE_AWS_KINESIS = os.environ.get("TESTING_USE_AWS_KINESIS", "0") == "1"
 # Set up Redis port for docker-compose
 if "REDIS_PORT" not in os.environ:
     os.environ["REDIS_PORT"] = "16379"
+
+# Set default AWS region for tests
+if "AWS_DEFAULT_REGION" not in os.environ:
+    os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -54,11 +59,11 @@ async def test_stream(random_stream_name, endpoint_url):
         region_name="ap-southeast-2",
         create_stream=True,
         create_stream_shards=1,
-    ) as producer:
+    ):
         pass  # Stream created
-    
+
     yield random_stream_name
-    
+
     # Cleanup would go here if needed
     # For now, kinesalite doesn't persist between runs
 
@@ -76,7 +81,7 @@ async def producer(random_stream_name, endpoint_url):
         yield prod
 
 
-@pytest_asyncio.fixture 
+@pytest_asyncio.fixture
 async def consumer(random_stream_name, endpoint_url):
     """Create a consumer for testing."""
     async with Consumer(
@@ -90,20 +95,22 @@ async def consumer(random_stream_name, endpoint_url):
 @pytest.fixture
 def random_string():
     """Generate random strings for testing."""
+
     def _random_string(length):
         from random import choice
         from string import ascii_uppercase
+
         return "".join(choice(ascii_uppercase) for i in range(length))
+
     return _random_string
 
 
 # Skip markers for conditional tests
 skip_if_no_aws = pytest.mark.skipif(
     not TESTING_USE_AWS_KINESIS,
-    reason="AWS testing not enabled (set TESTING_USE_AWS_KINESIS=1)"
+    reason="AWS testing not enabled (set TESTING_USE_AWS_KINESIS=1)",
 )
 
 skip_if_no_redis = pytest.mark.skipif(
-    not os.environ.get("REDIS_HOST"),
-    reason="Redis not available (set REDIS_HOST)"
+    not os.environ.get("REDIS_HOST"), reason="Redis not available (set REDIS_HOST)"
 )

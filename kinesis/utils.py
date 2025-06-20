@@ -1,14 +1,14 @@
 """
-    Source: https://github.com/hallazzang/asyncio-throttle
+Source: https://github.com/hallazzang/asyncio-throttle
 
-    Mods:
-        - add size_limit to support throttling by size
+Mods:
+    - add size_limit to support throttling by size
 """
 
-import time
-import math
 import asyncio
 import logging
+import math
+import time
 from collections import deque
 
 log = logging.getLogger(__name__)

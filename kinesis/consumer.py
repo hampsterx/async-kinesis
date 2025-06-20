@@ -1,18 +1,18 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Optional, Any, Dict, Iterator, AsyncIterator
-
-from aiohttp import ClientConnectionError
 from asyncio import TimeoutError
 from asyncio.queues import QueueEmpty
-from botocore.exceptions import ClientError
-from aiobotocore.session import AioSession
+from datetime import datetime, timezone
+from typing import Any, AsyncIterator, Dict, Optional
 
-from .utils import Throttler
+from aiobotocore.session import AioSession
+from aiohttp import ClientConnectionError
+from botocore.exceptions import ClientError
+
 from .base import Base
-from .checkpointers import MemoryCheckPointer, CheckPointer
+from .checkpointers import CheckPointer, MemoryCheckPointer
 from .processors import JsonProcessor, Processor
+from .utils import Throttler
 
 log = logging.getLogger(__name__)
 
@@ -106,7 +106,8 @@ class Consumer(Base):
 
             if self.checkpointer:
                 await self.checkpointer.close()
-        await self.client.close()
+        if self.client is not None:
+            await self.client.close()
 
     async def flush(self):
 
@@ -123,15 +124,29 @@ class Consumer(Base):
                     await shard["fetch"]
 
     async def _fetch(self):
+        error_count = 0
+        max_errors = 10
+
         while self.is_fetching:
             # Ensure fetch is performed at most 5 times per second (the limit per shard)
             await asyncio.sleep(0.2)
             try:
                 await self.fetch()
+                error_count = 0  # Reset error count on successful fetch
             except asyncio.CancelledError:
-                pass
+                log.debug("Fetch task cancelled")
+                self.is_fetching = False
+                break
             except Exception as e:
                 log.exception(e)
+                error_count += 1
+                if error_count >= max_errors:
+                    log.error(
+                        f"Too many fetch errors ({max_errors}), stopping fetch task"
+                    )
+                    self.is_fetching = False
+                    break
+                await asyncio.sleep(min(2**error_count, 30))  # Exponential backoff
 
     async def fetch(self):
 
@@ -218,7 +233,13 @@ class Consumer(Base):
                             for n, output in enumerate(
                                 self.processor.parse(row["Data"])
                             ):
-                                await self.queue.put(output)
+                                try:
+                                    await asyncio.wait_for(
+                                        self.queue.put(output), timeout=30.0
+                                    )
+                                except asyncio.TimeoutError:
+                                    log.warning("Queue put timed out, skipping record")
+                                    continue
                             total_items += n + 1
 
                         # Get approx minutes behind..
@@ -253,14 +274,23 @@ class Consumer(Base):
 
                         # Add checkpoint record
                         last_record = result["Records"][-1]
-                        await self.queue.put(
-                            {
-                                "__CHECKPOINT__": {
-                                    "ShardId": shard["ShardId"],
-                                    "SequenceNumber": last_record["SequenceNumber"],
-                                }
-                            }
-                        )
+                        try:
+                            await asyncio.wait_for(
+                                self.queue.put(
+                                    {
+                                        "__CHECKPOINT__": {
+                                            "ShardId": shard["ShardId"],
+                                            "SequenceNumber": last_record[
+                                                "SequenceNumber"
+                                            ],
+                                        }
+                                    }
+                                ),
+                                timeout=30.0,
+                            )
+                        except asyncio.TimeoutError:
+                            log.warning("Checkpoint queue put timed out")
+                            # Continue without checkpoint - not critical
 
                         shard["LastSequenceNumber"] = last_record["SequenceNumber"]
 
@@ -302,7 +332,7 @@ class Consumer(Base):
                 shard["stats"].succeded()
                 return result
 
-            except ClientConnectionError as e:
+            except ClientConnectionError:
                 await self.get_conn()
             except TimeoutError as e:
                 log.warning("Timeout {}. sleeping..".format(e))
@@ -358,17 +388,17 @@ class Consumer(Base):
 
         params = {
             "ShardId": shard_id,
-            "ShardIteratorType": "AFTER_SEQUENCE_NUMBER"
-            if last_sequence_number
-            else self.iterator_type,
+            "ShardIteratorType": (
+                "AFTER_SEQUENCE_NUMBER" if last_sequence_number else self.iterator_type
+            ),
         }
         params.update(self.address)
 
         if last_sequence_number:
             params["StartingSequenceNumber"] = last_sequence_number
 
-        if self.iterator_type == 'AT_TIMESTAMP' and self.timestamp:
-            params['Timestamp'] = self.timestamp
+        if self.iterator_type == "AT_TIMESTAMP" and self.timestamp:
+            params["Timestamp"] = self.timestamp
 
         response = await self.client.get_shard_iterator(**params)
         return response["ShardIterator"]
@@ -397,7 +427,12 @@ class Consumer(Base):
         # Raise exception from Fetch Task to main task otherwise raise exception inside
         # Fetch Task will fail silently
         if self.fetch_task.done():
-            raise self.fetch_task.exception()
+            exception = self.fetch_task.exception()
+            if exception:
+                raise exception
+
+        checkpoint_count = 0
+        max_checkpoints = 100  # Prevent infinite checkpoint processing
 
         while True:
             try:
@@ -409,6 +444,12 @@ class Consumer(Base):
                             item["__CHECKPOINT__"]["ShardId"],
                             item["__CHECKPOINT__"]["SequenceNumber"],
                         )
+                    checkpoint_count += 1
+                    if checkpoint_count >= max_checkpoints:
+                        log.warning(
+                            f"Processed {max_checkpoints} checkpoints, stopping iteration"
+                        )
+                        raise StopAsyncIteration
                     continue
 
                 return item

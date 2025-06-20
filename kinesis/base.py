@@ -1,15 +1,15 @@
 import asyncio
 import logging
 import time
-from typing import Optional, Any, Dict, List, Union
-
-from .timeout_compat import timeout
-from aiobotocore.session import AioSession
 from asyncio import CancelledError
-from botocore.exceptions import ClientError
+from typing import Any, Dict, List, Optional
+
+from aiobotocore.session import AioSession
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from . import exceptions
+from .timeout_compat import timeout
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +44,7 @@ class Base:
         self.shards: Optional[List[Dict[str, Any]]] = None
 
         self.stream_status: Optional[str] = None
+        self.client: Optional[Any] = None
 
         self.retry_limit: Optional[int] = retry_limit
         self.expo_backoff: Optional[float] = expo_backoff
@@ -75,14 +76,15 @@ class Base:
         except exceptions.StreamDoesNotExist:
             await self.close()
             raise
-        except:
+        except Exception:
             raise
 
         return self
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         await self.close()
-        await self.client.__aexit__(exc_type, exc, tb)
+        if self.client is not None:
+            await self.client.__aexit__(exc_type, exc, tb)
 
     @property
     def address(self) -> Dict[str, str]:
@@ -187,7 +189,7 @@ class Base:
             if self.stream_status == self.INITIALIZE:
                 try:
                     await self.start()
-                    log.info(f"Connection Successfully Initialized")
+                    log.info("Connection Successfully Initialized")
                 except exceptions.StreamDoesNotExist:
                     # Do not attempt to reconnect if stream does not exist
                     log.error(f"Stream does not exist ({self.stream_name})")
@@ -230,14 +232,17 @@ class Base:
                     raise e
                 log.warning(e)
                 conn_attempts += 1
-                if isinstance(self.retry_limit, int):
-                    if conn_attempts >= (self.retry_limit + 1):
-                        await self.close()
-                        raise ConnectionError(
-                            f"Kinesis client has exceeded {self.retry_limit} connection attempts"
-                        )
+                # Default retry limit of 5 if not specified
+                retry_limit = (
+                    self.retry_limit if isinstance(self.retry_limit, int) else 5
+                )
+                if conn_attempts >= (retry_limit + 1):
+                    await self.close()
+                    raise ConnectionError(
+                        f"Kinesis client has exceeded {retry_limit} connection attempts"
+                    )
                 if self.expo_backoff:
-                    backoff_delay = (conn_attempts ** 2) * self.expo_backoff
+                    backoff_delay = (conn_attempts**2) * self.expo_backoff
                     if backoff_delay >= self.expo_backoff_limit:
                         backoff_delay = self.expo_backoff_limit
                 await self.close()

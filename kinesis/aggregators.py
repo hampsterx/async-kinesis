@@ -1,8 +1,8 @@
 import logging
 import math
 from collections import namedtuple
-from .exceptions import ValidationError
-from .exceptions import ExceededPutLimit
+
+from .exceptions import ExceededPutLimit, ValidationError
 
 try:
     import aws_kinesis_agg

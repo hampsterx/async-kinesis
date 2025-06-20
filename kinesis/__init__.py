@@ -1,17 +1,17 @@
-from .producer import Producer
+from .aggregators import (
+    ListAggregator,
+    NetstringAggregator,
+    NewlineAggregator,
+    SimpleAggregator,
+)
+from .checkpointers import MemoryCheckPointer, RedisCheckPointer
 from .consumer import Consumer
 from .processors import (
-    StringProcessor,
-    JsonProcessor,
     JsonLineProcessor,
     JsonListProcessor,
+    JsonProcessor,
     MsgpackProcessor,
+    StringProcessor,
 )
-from .serializers import StringSerializer, JsonSerializer, MsgpackSerializer
-from .checkpointers import MemoryCheckPointer, RedisCheckPointer
-from .aggregators import (
-    SimpleAggregator,
-    NewlineAggregator,
-    NetstringAggregator,
-    ListAggregator,
-)
+from .producer import Producer
+from .serializers import JsonSerializer, MsgpackSerializer, StringSerializer

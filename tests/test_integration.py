@@ -1,18 +1,18 @@
-import os
-import pytest
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 
-from kinesis.timeout_compat import timeout
+import pytest
 
-from kinesis import Producer, Consumer, MemoryCheckPointer, RedisCheckPointer
+from kinesis import Consumer, MemoryCheckPointer, Producer, RedisCheckPointer
 from kinesis.processors import (
-    JsonProcessor,
-    StringProcessor,
     JsonLineProcessor,
     JsonListProcessor,
+    JsonProcessor,
+    StringProcessor,
 )
+from kinesis.timeout_compat import timeout
 from tests.conftest import skip_if_no_aws, skip_if_no_redis
 
 log = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ class TestIntegration:
                 pass
 
         assert len(consumed_messages) >= len(test_messages)
-        
+
         # Verify message content (order might be different)
         consumed_ids = {msg["id"] for msg in consumed_messages[:3]}
         expected_ids = {msg["id"] for msg in test_messages}
@@ -110,9 +110,9 @@ class TestIntegration:
     async def test_producer_consumer_checkpointing(self, test_stream, endpoint_url):
         """Test producer -> consumer with checkpointing."""
         checkpointer = MemoryCheckPointer(name="integration_test")
-        
+
         test_messages = [
-            {"checkpoint_test": i, "data": f"message-{i}"} 
+            {"checkpoint_test": i, "data": f"message-{i}"}
             for i in range(5)
         ]
 
@@ -169,9 +169,9 @@ class TestIntegration:
         """Test producer -> consumer with Redis checkpointing."""
         import uuid
         checkpoint_name = f"integration_test_{str(uuid.uuid4())[0:8]}"
-        
+
         test_messages = [
-            {"redis_test": i, "data": f"message-{i}"} 
+            {"redis_test": i, "data": f"message-{i}"}
             for i in range(3)
         ]
 
@@ -186,7 +186,7 @@ class TestIntegration:
 
         # Consumer with Redis checkpointing
         checkpointer = RedisCheckPointer(name=checkpoint_name, id="test-consumer")
-        
+
         try:
             consumed_messages = []
             async with Consumer(
@@ -205,7 +205,7 @@ class TestIntegration:
                     pass
 
             assert len(consumed_messages) >= len(test_messages)
-            
+
         finally:
             await checkpointer.close()
 
@@ -215,7 +215,7 @@ class TestIntegration:
         # Create messages with large payloads (but within limits)
         large_payload = random_string(1024 * 100)  # 100KB
         test_messages = [
-            {"id": i, "large_data": large_payload} 
+            {"id": i, "large_data": large_payload}
             for i in range(3)
         ]
 
@@ -245,7 +245,7 @@ class TestIntegration:
                 pass
 
         assert len(consumed_messages) >= len(test_messages)
-        
+
         # Verify large payload integrity
         for msg in consumed_messages[:3]:
             if "large_data" in msg:
@@ -256,7 +256,7 @@ class TestIntegration:
         """Test producer -> consumer with high message volume."""
         message_count = 100
         test_messages = [
-            {"id": i, "timestamp": datetime.now(timezone.utc).isoformat()} 
+            {"id": i, "timestamp": datetime.now(timezone.utc).isoformat()}
             for i in range(message_count)
         ]
 
@@ -296,7 +296,7 @@ class TestIntegration:
         """Test producer -> consumer with multiple shards."""
         shard_count = 2
         test_messages = [
-            {"shard_test": i, "data": f"message-{i}"} 
+            {"shard_test": i, "data": f"message-{i}"}
             for i in range(20)
         ]
 
@@ -339,9 +339,9 @@ class TestIntegration:
 
         import uuid
         stream_name = f"async-kinesis-test-{str(uuid.uuid4())[0:8]}"
-        
+
         test_messages = [
-            {"aws_test": i, "message": f"aws-message-{i}"} 
+            {"aws_test": i, "message": f"aws-message-{i}"}
             for i in range(5)
         ]
 
@@ -381,11 +381,10 @@ class TestIntegration:
             pytest.skip(f"AWS integration test failed: {e}")
 
     @pytest.mark.asyncio
-    @pytest.mark.skipif(
-        any(host in os.environ.get("ENDPOINT_URL", "") for host in ["localhost", "kinesis:", "localstack"]),
-        reason="LocalStack/kinesalite timing issues with LATEST iterator"
-    )
     async def test_consumer_iterator_types_integration(self, test_stream, endpoint_url):
+        # Skip test for LocalStack/kinesalite due to LATEST iterator timing issues
+        if any(host in endpoint_url for host in ["localhost", "kinesis:", "localstack"]):
+            pytest.skip("LocalStack/kinesalite timing issues with LATEST iterator")
         """Test different iterator types in integration scenario."""
         # Produce some initial messages
         async with Producer(

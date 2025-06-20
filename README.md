@@ -202,6 +202,25 @@ python benchmark.py --iterations 3
 | JsonListProcessor | 1 | 2.7 MB | 2.6 MB | 2.8 | 17857 | 982.1 kB | 946.4 kB |
 | MsgpackProcessor | 1 | 2.7 MB | 33.9 MB | 35.8 | 1397 | 77.0 kB | 969.8 kB |
 
+*Note: MsgpackProcessor performance varies significantly with record size. While it appears slower here with small records due to netstring framing overhead (~9%) and msgpack serialization costs, it can be faster than JSON processors with larger, complex data structures where msgpack's binary efficiency provides benefits.*
+
+### Processor Recommendations
+
+Choose the optimal processor based on your use case:
+
+| Use Case | Recommended Processor | Reason |
+| --- | --- | --- |
+| **High-frequency small messages** (<500 bytes) | JsonLineProcessor | Minimal aggregation overhead, simple parsing |
+| **Individual JSON messages** | JsonProcessor | Maximum compatibility, no aggregation complexity |
+| **Batch processing arrays** | JsonListProcessor | Highest throughput for compatible consumers |
+| **Large complex data** (>1KB) | MsgpackProcessor | Binary efficiency outweighs overhead |
+| **Raw text/logs** | StringProcessor | Minimal processing overhead |
+| **Binary data or deeply nested objects** | MsgpackProcessor | Compact binary representation |
+| **Real-time streaming** | JsonLineProcessor | Simple, fast parsing with good compression |
+| **Bandwidth-constrained environments** | MsgpackProcessor | Smaller payload sizes |
+
+**Performance Testing:** Use the benchmark tool with different `--record-size-kb` and `--processors` options to determine the best processor for your specific data patterns.
+
 
 ## Unit Testing
 

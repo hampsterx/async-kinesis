@@ -427,3 +427,31 @@ class TestIntegration:
             # Should not contain initial message
             phases = [msg.get("phase") for msg in consumed_messages]
             assert "after_latest" in phases
+
+    @pytest.mark.asyncio 
+    async def test_producer_session_cleanup_on_connection_failure(self):
+        """Test that producer cleans up properly when connection fails (Issue #35)."""
+        # This test verifies the fix for AttributeError on session cleanup
+        # when connection fails with non-existent streams or invalid endpoints
+        with pytest.raises(ConnectionError):
+            async with Producer(
+                "nonexistent-stream-issue-35-test",
+                processor=JsonProcessor(),
+                retry_limit=1,  # Fail quickly
+                endpoint_url="http://invalid-endpoint-for-test:9999"
+            ) as producer:
+                await producer.put({"test": "data"})
+
+    @pytest.mark.asyncio
+    async def test_consumer_session_cleanup_on_connection_failure(self):
+        """Test that consumer cleans up properly when connection fails (Issue #35)."""
+        # This test verifies the fix for AttributeError on session cleanup
+        # when connection fails with non-existent streams or invalid endpoints
+        with pytest.raises(ConnectionError):
+            async with Consumer(
+                "nonexistent-stream-issue-35-test",
+                retry_limit=1,  # Fail quickly
+                endpoint_url="http://invalid-endpoint-for-test:9999"
+            ) as consumer:
+                async for item in consumer:
+                    break

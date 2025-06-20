@@ -169,9 +169,38 @@ Note:
 
 See [benchmark.py](./benchmark.py) for code
 
-50k items of approx 1k (python) in size, using single shard.
+The benchmark tool allows you to test the performance of different processors with AWS Kinesis streams.
 
-![Benchmark](docs/benchmark.png)
+### Usage
+
+```bash
+# Run with default settings (50k records)
+python benchmark.py
+
+# Dry run without creating AWS resources
+python benchmark.py --dry-run
+
+# Custom parameters
+python benchmark.py --records 10000 --shards 2 --processors json msgpack
+
+# Generate markdown output
+python benchmark.py --markdown
+
+# Run multiple iterations
+python benchmark.py --iterations 3
+```
+
+### Example Results
+
+50k items of approx 1k (python) in size, using single shard:
+
+| Processor | Iteration | Python Bytes | Kinesis Bytes | Time (s) | Records/s | Python MB/s | Kinesis MB/s |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| StringProcessor | 1 | 2.7 MB | 50.0 MB | 51.2 | 977 | 53.9 kB | 1000.0 kB |
+| JsonProcessor | 1 | 2.7 MB | 50.0 MB | 52.1 | 960 | 52.9 kB | 982.5 kB |
+| JsonLineProcessor | 1 | 2.7 MB | 41.5 MB | 43.5 | 1149 | 63.4 kB | 976.7 kB |
+| JsonListProcessor | 1 | 2.7 MB | 2.6 MB | 2.8 | 17857 | 982.1 kB | 946.4 kB |
+| MsgpackProcessor | 1 | 2.7 MB | 33.9 MB | 35.8 | 1397 | 77.0 kB | 969.8 kB |
 
 
 ## Unit Testing

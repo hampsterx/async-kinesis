@@ -1,0 +1,147 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    services:
+      kinesis:
+        image: localstack/localstack:latest
+        ports:
+          - 4566:4566
+        env:
+          SERVICES: kinesis
+          KINESIS_ERROR_PROBABILITY: 0.0
+          DEBUG: 1
+
+      redis:
+        image: redis:latest
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/test-requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r test-requirements.txt
+        sudo apt-get update && sudo apt-get install -y netcat-openbsd redis-tools curl
+
+    - name: Wait for services
+      run: |
+        # Give services time to start
+        sleep 20
+        # Wait for LocalStack port to be available (skip health check due to S3 errors)
+        timeout 120 bash -c 'until nc -z localhost 4566; do echo "Waiting for localstack port..."; sleep 3; done'
+        echo "LocalStack port is ready"
+        # Wait for Redis
+        timeout 60 bash -c 'until redis-cli -h localhost ping; do echo "Waiting for redis..."; sleep 2; done'
+        echo "Redis is ready"
+
+    - name: Run tests
+      run: |
+        timeout 600 pytest -v --cov=kinesis --cov-report=xml --cov-report=term-missing
+      env:
+        ENDPOINT_URL: http://localhost:4566
+        REDIS_HOST: localhost
+        REDIS_PORT: 6379
+        AWS_DEFAULT_REGION: ap-southeast-2
+        AWS_ACCESS_KEY_ID: test
+        AWS_SECRET_ACCESS_KEY: test
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.12"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install black isort flake8
+
+    - name: Check code formatting with black
+      run: black --check --diff kinesis tests
+
+    - name: Check import sorting with isort
+      run: isort --check-only --diff kinesis tests
+
+    - name: Lint with flake8
+      run: flake8 kinesis tests --max-line-length=88 --extend-ignore=E203,W503,E501
+
+  publish:
+    needs: [test, lint]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # For trusted publishing
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.12"
+
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+
+    - name: Extract tag version
+      id: get_version
+      run: |
+        echo "tag_version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Update version in setup.py
+      run: |
+        sed -i 's/version="[^"]*"/version="${{ steps.get_version.outputs.tag_version }}"/' setup.py
+
+    - name: Verify version update
+      run: |
+        echo "Updated version in setup.py:"
+        grep 'version=' setup.py
+
+    - name: Build package
+      run: python -m build
+
+    - name: Check package
+      run: twine check dist/*
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        repository-url: https://upload.pypi.org/legacy/

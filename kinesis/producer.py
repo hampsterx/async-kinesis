@@ -1,18 +1,18 @@
 import asyncio
 import logging
-import time
 import math
-from typing import Optional, Any, Callable, Awaitable, Union
-
-from aiohttp import ClientConnectionError
+import time
 from asyncio.queues import QueueEmpty
-from botocore.exceptions import ClientError
-from aiobotocore.session import AioSession
+from typing import Any, Awaitable, Callable, Optional
 
-from .utils import Throttler
-from .base import Base
+from aiobotocore.session import AioSession
+from aiohttp import ClientConnectionError
+from botocore.exceptions import ClientError
+
 from . import exceptions
+from .base import Base
 from .processors import JsonProcessor, Processor
+from .utils import Throttler
 
 log = logging.getLogger(__name__)
 
@@ -124,10 +124,15 @@ class Producer(Base):
         if not self.stream_status == self.RECONNECT:
             # Cancel Flush Task
             self.flush_task.cancel()
+            try:
+                await self.flush_task
+            except asyncio.CancelledError:
+                pass
             # final flush (probably not required but no harm)
             await self.flush()
 
-        await self.client.close()
+        if self.client is not None:
+            await self.client.close()
 
     async def _flush(self):
         while True:
@@ -177,7 +182,7 @@ class Producer(Base):
             if self.after_flush_fun:
                 await self.after_flush_fun(items)
             return
-            
+
         if result["FailedRecordCount"]:
 
             errors = list(
@@ -344,7 +349,7 @@ class Producer(Base):
                     log.exception(err)
                     await self.get_conn()
                     # raise err
-            except ClientConnectionError as err:
+            except ClientConnectionError:
                 await self.get_conn()
             except asyncio.CancelledError:
                 return

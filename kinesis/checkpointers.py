@@ -1,32 +1,32 @@
-import logging
 import asyncio
-import os
 import json
-from datetime import timezone, datetime
-from typing import Protocol, Optional, Union, Dict, Tuple, Any
+import logging
+import os
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional, Protocol, Tuple, Union
 
 log = logging.getLogger(__name__)
 
 
 class CheckPointer(Protocol):
     """Protocol for checkpointer implementations."""
-    
+
     async def allocate(self, shard_id: str) -> Tuple[bool, Optional[str]]:
         """Allocate a shard for processing."""
         ...
-    
+
     async def deallocate(self, shard_id: str) -> None:
         """Deallocate a shard."""
         ...
-    
+
     async def checkpoint(self, shard_id: str, sequence_number: str) -> None:
         """Checkpoint progress for a shard."""
         ...
-    
+
     def get_all_checkpoints(self) -> Dict[str, str]:
         """Get all checkpoints."""
         ...
-    
+
     async def close(self) -> None:
         """Close the checkpointer."""
         ...
@@ -111,7 +111,7 @@ class MemoryCheckPointer(BaseCheckPointer):
     async def allocate(self, shard_id):
         if self.is_allocated(shard_id):
             return False, None
-            
+
         if shard_id not in self._items:
             self._items[shard_id] = {"sequence": None}
 

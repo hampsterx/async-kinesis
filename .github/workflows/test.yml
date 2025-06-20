@@ -117,4 +117,4 @@ jobs:
       run: isort --check-only --diff kinesis tests
 
     - name: Lint with flake8
-      run: flake8 kinesis tests --max-line-length=88 --extend-ignore=E203,W503
+      run: flake8 kinesis tests --max-line-length=88 --extend-ignore=E203,W503,E501

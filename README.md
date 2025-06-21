@@ -4,10 +4,6 @@
 
 High-performance async Python library for AWS Kinesis with production-ready resharding support.
 
-```bash
-pip install async-kinesis
-```
-
 ## Quick Start
 
 **Producer:**
@@ -16,8 +12,6 @@ from kinesis import Producer
 
 async with Producer(stream_name="my-stream") as producer:
     await producer.put({"message": "hello world"})
-    # Optional: specify partition key for ordering and distribution
-    await producer.put({"user_id": "123", "action": "login"}, partition_key="user-123")
 ```
 
 **Consumer:**
@@ -29,18 +23,40 @@ async with Consumer(stream_name="my-stream") as consumer:
         print(message)
 ```
 
+📚 **New to async-kinesis?** Check out our [comprehensive Getting Started guide](./docs/getting-started.md) for step-by-step tutorials and examples.
+
+## Table of Contents
+
+- [Key Features](#key-features)
+- [Installation](#installation)
+- [Basic Usage](#basic-usage)
+  - [Producer](#producer)
+  - [Consumer](#consumer)
+- [Configuration](#configuration)
+  - [Environment Variables](#environment-variables)
+  - [Producer Options](#producer-options)
+  - [Consumer Options](#consumer-options)
+- [Advanced Features](#advanced-features)
+  - [Custom Partition Keys](#custom-partition-keys)
+  - [Rate Limiting & API Optimization](#rate-limiting--api-optimization)
+  - [Resharding Support](#resharding-support)
+  - [Checkpointing](#checkpointers)
+  - [Processors](#processors-aggregator--serializer)
+- [Development](#development--testing)
+- [Documentation](#documentation)
+
 ## Key Features
 
-✅ **Production-Ready Resharding**: Automatic shard discovery and topology management
-✅ **Async/Await Native**: Built for modern Python async patterns
-✅ **High Performance**: Queue-based architecture with configurable batching
-✅ **AWS Best Practices**: Parent-child shard ordering and proper error handling
-✅ **Rate Limit Optimization**: Skip DescribeStream or use ListShards for better API limits
-✅ **Stream Addressing**: Support for both stream names and ARNs
-✅ **Custom Partition Keys**: Control record distribution and ordering across shards
-✅ **Multi-Consumer Support**: Redis-based checkpointing with heartbeats
-✅ **Flexible Processing**: Pluggable serialization (JSON, MessagePack, KPL)
-✅ **Operational Visibility**: Rich monitoring APIs for production debugging
+- **Production-Ready Resharding**: Automatic shard discovery and topology management
+- **Async/Await Native**: Built for modern Python async patterns
+- **High Performance**: Queue-based architecture with configurable batching
+- **AWS Best Practices**: Parent-child shard ordering and proper error handling
+- **Rate Limit Optimization**: Skip DescribeStream or use ListShards for better API limits
+- **Stream Addressing**: Support for both stream names and ARNs
+- **Custom Partition Keys**: Control record distribution and ordering across shards
+- **Multi-Consumer Support**: Redis-based checkpointing with heartbeats
+- **Flexible Processing**: Pluggable serialization (JSON, MessagePack, KPL)
+- **Operational Visibility**: Rich monitoring APIs for production debugging
 
 ### Resharding Support Highlights
 
@@ -54,7 +70,15 @@ Unlike basic Kinesis libraries, async-kinesis provides enterprise-grade reshardi
 
 📖 **[Architecture Details](./docs/DESIGN.md)** | **[Why Another Library?](docs/YETANOTHER.md)**
 
-## Environment Variables
+## Installation
+
+```bash
+pip install async-kinesis
+```
+
+## Basic Usage
+
+### Environment Variables
 
 As required by boto3
 
@@ -63,21 +87,27 @@ AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY
 ```
 
-## Stream addressing
+### Stream Addressing
 
 The `stream_name` argument to consumer and producer accepts either the [StreamName]
 like `test`, or a full [StreamARN] like `arn:aws:kinesis:eu-central-1:842404475894:stream/test`.
 
-## Producer
+### Producer
 
-    from kinesis import Producer
+```python
+from kinesis import Producer
 
-    async with Producer(stream_name="test") as producer:
-        # Put item onto queue to be flushed via put_records()
-        await producer.put({'my': 'data'})
+async with Producer(stream_name="test") as producer:
+    # Put item onto queue to be flushed via put_records()
+    await producer.put({'my': 'data'})
 
-        # Use custom partition key for record distribution control
-        await producer.put({'user_id': '123', 'action': 'login'}, partition_key='user-123')
+    # Use custom partition key for record distribution control
+    await producer.put({'user_id': '123', 'action': 'login'}, partition_key='user-123')
+```
+
+## Configuration
+
+### Producer Options
 
 ### Custom Partition Keys
 
@@ -113,11 +143,11 @@ async with Producer(stream_name="my-stream") as producer:
 - **KPL Aggregators**: Custom partition keys not supported (raises `ValueError`)
 - **Other Aggregators**: Automatically group records by partition key within batches
 
-## Rate Limiting & API Optimization
+### Rate Limiting & API Optimization
 
 AWS Kinesis APIs have strict rate limits that can impact performance in high-throughput or multi-consumer scenarios. async-kinesis provides optimization options to work around these constraints:
 
-### API Rate Limits
+#### API Rate Limits
 - **DescribeStream**: 10 operations/second **account-wide** (shared across all applications)
 - **ListShards**: 100 operations/second **per stream** (much higher limit)
 
@@ -163,28 +193,24 @@ async with Consumer(
 
 **⚠️ Important**: `skip_describe_stream=True` assumes the stream exists and is active. Use only when you're certain the stream is available.
 
-Options:
-
-(comments in quotes are Kinesis Limits as per AWS Docs)
-
-| Arg | Default | Description |
+| Parameter | Default | Description |
 | --- | --- | --- |
-| session | None | AioSession (to use non default profile etc) |
-| region_name | None | AWS Region |
-| buffer_time | 0.5 | Buffer time in seconds before auto flushing records |
-| put_rate_limit_per_shard | 1000 | "A single shard can ingest up to 1 MiB of data per second (including partition keys) or 1,000 records per second for writes" |
-| put_bandwidth_limit_per_shard | 1024 | Kb per sec. max is 1024 per shard (ie 1 MiB). Keep below to minimize ProvisionedThroughputExceeded" errors * |
-| batch_size | 500 | "Each PutRecords request can support up to 500 records" |
-| max_queue_size | 10000 | put() method will block when queue is at max |
-| after_flush_fun | None | async function to call after doing a flush (err put_records()) call |
-| processor | JsonProcessor() | Record aggregator/serializer. Default is JSON without aggregation. Note this is highly inefficient as each record can be up to 1Mib |
-| retry_limit | None | How many connection attempts should be made before raising a exception |
-| expo_backoff | None | Exponential Backoff when connection attempt fails |
-| expo_backoff_limit | 120 | Max amount of seconds Exponential Backoff can grow |
-| skip_describe_stream | False | Skip DescribeStream API calls for better rate limits (assumes stream exists and is active) |
-| use_list_shards | False | Use ListShards API instead of DescribeStream for better rate limits (100 ops/s vs 10 ops/s) |
-| create_stream | False | Creates a Kinesis Stream based on the `stream_name` keyword argument. Note if stream already existing it will ignore |
-| create_stream_shards | 1 | Sets the amount of shard you want for your new stream. Note if stream already existing it will ignore  |
+| **session** | None | AioSession (to use non default profile etc) |
+| **region_name** | None | AWS Region |
+| **buffer_time** | 0.5 | Buffer time in seconds before auto flushing records |
+| **put_rate_limit_per_shard** | 1000 | "A single shard can ingest up to 1 MiB of data per second (including partition keys) or 1,000 records per second for writes" |
+| **put_bandwidth_limit_per_shard** | 1024 | Kb per sec. max is 1024 per shard (ie 1 MiB). Keep below to minimize ProvisionedThroughputExceeded" errors * |
+| **batch_size** | 500 | "Each PutRecords request can support up to 500 records" |
+| **max_queue_size** | 10000 | put() method will block when queue is at max |
+| **after_flush_fun** | None | async function to call after doing a flush (err put_records()) call |
+| **processor** | JsonProcessor() | Record aggregator/serializer. Default is JSON without aggregation. Note this is highly inefficient as each record can be up to 1Mib |
+| **retry_limit** | None | How many connection attempts should be made before raising a exception |
+| **expo_backoff** | None | Exponential Backoff when connection attempt fails |
+| **expo_backoff_limit** | 120 | Max amount of seconds Exponential Backoff can grow |
+| **skip_describe_stream** | False | Skip DescribeStream API calls for better rate limits (assumes stream exists and is active) |
+| **use_list_shards** | False | Use ListShards API instead of DescribeStream for better rate limits (100 ops/s vs 10 ops/s) |
+| **create_stream** | False | Creates a Kinesis Stream based on the `stream_name` keyword argument. Note if stream already existing it will ignore |
+| **create_stream_shards** | 1 | Sets the amount of shard you want for your new stream. Note if stream already existing it will ignore  |
 
 * Throughput exceeded. The docs (for Java/KPL see: https://docs.aws.amazon.com/streams/latest/dev/kinesis-producer-adv-retries-rate-limiting.html) state:
 
@@ -194,15 +220,16 @@ Even though our default here is to limit at this threshold (1024kb) in reality t
 If you wish to avoid excessive throttling or have multiple producers on a stream you will want to set this quite a bit lower.
 
 
-## Consumer
+### Consumer
 
-    from kinesis import Consumer
+```python
+from kinesis import Consumer
 
-    async with Consumer(stream_name="test") as consumer:
-        while True:
-            async for item in consumer:
-                print(item)
-            # caught up.. take a breather~
+async with Consumer(stream_name="test") as consumer:
+    async for item in consumer:
+        print(item)
+    # Consumer continues to wait for new messages after catching up
+```
 
 
 Options:
@@ -489,6 +516,14 @@ python tests/resharding/test_resharding_integration.py
 python tests/resharding/resharding_test.py --scenario scale-up-small
 ```
 
+
+## Documentation
+
+- 📚 **[Getting Started Guide](./docs/getting-started.md)** - Step-by-step tutorials for beginners
+- 🔧 **[Common Patterns](./docs/common-patterns.md)** - Real-world use cases and examples
+- 🩹 **[Troubleshooting Guide](./docs/troubleshooting.md)** - Solutions for common issues
+- 🏗️ **[Architecture Details](./docs/DESIGN.md)** - Technical deep dive into the implementation
+- ❓ **[Why Another Library?](./docs/YETANOTHER.md)** - Comparison with other Kinesis libraries
 
 [ARN]: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference-arns.html
 [StreamARN]: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_StreamDescription.html#Streams-Type-StreamDescription-StreamARN

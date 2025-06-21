@@ -241,7 +241,7 @@ Refer https://aws.amazon.com/blogs/big-data/implementing-efficient-and-reliable-
 | JsonListProcessor | ListAggregator | JsonSerializer | Multiple JSON record returned by list |
 | MsgpackProcessor | NetstringAggregator | MsgpackSerializer | Multiple Msgpack record framed with Netstring Protocol (https://en.wikipedia.org/wiki/Netstring) |
 | KPLJsonProcessor | KPLAggregator | JsonSerializer | Multiple JSON record in a KPL Aggregated Record (https://github.com/awslabs/amazon-kinesis-producer/blob/master/aggregation-format.md) |
-| KPLStringProcessor | KPLAggregator | StringSerializer | Multiple String record in a KPL Aggregated Record (https://github.com/awslabs/amazon-kinesis-producer/blob/master/aggregation-format.md) | 
+| KPLStringProcessor | KPLAggregator | StringSerializer | Multiple String record in a KPL Aggregated Record (https://github.com/awslabs/amazon-kinesis-producer/blob/master/aggregation-format.md) |
 
 Note you can define your own processor easily as it's simply a class inheriting the Aggregator + Serializer.
 

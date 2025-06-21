@@ -1,10 +1,4 @@
-from .aggregators import (
-    KPLAggregator,
-    ListAggregator,
-    NetstringAggregator,
-    NewlineAggregator,
-    SimpleAggregator,
-)
+from .aggregators import KPLAggregator, ListAggregator, NetstringAggregator, NewlineAggregator, SimpleAggregator
 from .serializers import JsonSerializer, MsgpackSerializer, StringSerializer
 
 

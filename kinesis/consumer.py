@@ -150,9 +150,7 @@ class Consumer(Base):
                 log.exception(e)
                 error_count += 1
                 if error_count >= max_errors:
-                    log.error(
-                        f"Too many fetch errors ({max_errors}), stopping fetch task"
-                    )
+                    log.error(f"Too many fetch errors ({max_errors}), stopping fetch task")
                     self.is_fetching = False
                     break
                 await asyncio.sleep(min(2**error_count, 30))  # Exponential backoff
@@ -165,9 +163,7 @@ class Consumer(Base):
         # Refresh shards to discover new ones and handle closed ones
         await self.refresh_shards()
 
-        shards_in_use = [
-            s for s in self.shards if self.checkpointer.is_allocated(s["ShardId"])
-        ]
+        shards_in_use = [s for s in self.shards if self.checkpointer.is_allocated(s["ShardId"])]
 
         # log.debug("shards in use: {}".format([s["ShardId"] for s in shards_in_use]))
 
@@ -183,27 +179,18 @@ class Consumer(Base):
             if not self.checkpointer.is_allocated(shard["ShardId"]):
                 # Check parent-child ordering before allocation
                 if not self._should_allocate_shard(shard["ShardId"]):
-                    log.debug(
-                        f"Skipping child shard {shard['ShardId']} - parent not exhausted"
-                    )
+                    log.debug(f"Skipping child shard {shard['ShardId']} - parent not exhausted")
                     continue
 
-                if (
-                    self.max_shard_consumers
-                    and len(shards_in_use) >= self.max_shard_consumers
-                ):
+                if self.max_shard_consumers and len(shards_in_use) >= self.max_shard_consumers:
                     continue
 
                 if self.checkpointer is None:
                     log.debug("Marking shard in use {}".format(shard["ShardId"]))
-                    shard["ShardIterator"] = await self.get_shard_iterator(
-                        shard_id=shard["ShardId"]
-                    )
+                    shard["ShardIterator"] = await self.get_shard_iterator(shard_id=shard["ShardId"])
 
                 else:
-                    success, checkpoint = await self.checkpointer.allocate(
-                        shard["ShardId"]
-                    )
+                    success, checkpoint = await self.checkpointer.allocate(shard["ShardId"])
 
                     if not success:
                         log.debug(
@@ -225,9 +212,7 @@ class Consumer(Base):
 
                 if "ShardIterator" in shard:
                     shard["stats"] = ShardStats()
-                    shard["throttler"] = Throttler(
-                        rate_limit=self.shard_fetch_rate, period=1
-                    )
+                    shard["throttler"] = Throttler(rate_limit=self.shard_fetch_rate, period=1)
                     shards_in_use.append(shard)
 
                     log.debug("Shard count now at {}".format(len(shards_in_use)))
@@ -243,21 +228,13 @@ class Consumer(Base):
                     records = result["Records"]
 
                     if records:
-                        log.debug(
-                            "Shard {} got {} records".format(
-                                shard["ShardId"], len(records)
-                            )
-                        )
+                        log.debug("Shard {} got {} records".format(shard["ShardId"], len(records)))
 
                         total_items = 0
                         for row in result["Records"]:
-                            for n, output in enumerate(
-                                self.processor.parse(row["Data"])
-                            ):
+                            for n, output in enumerate(self.processor.parse(row["Data"])):
                                 try:
-                                    await asyncio.wait_for(
-                                        self.queue.put(output), timeout=30.0
-                                    )
+                                    await asyncio.wait_for(self.queue.put(output), timeout=30.0)
                                 except asyncio.TimeoutError:
                                     log.warning("Queue put timed out, skipping record")
                                     continue
@@ -266,14 +243,7 @@ class Consumer(Base):
                         # Get approx minutes behind..
                         last_arrival = records[-1].get("ApproximateArrivalTimestamp")
                         if last_arrival:
-                            last_arrival = round(
-                                (
-                                    (
-                                        datetime.now(timezone.utc) - last_arrival
-                                    ).total_seconds()
-                                    / 60
-                                )
-                            )
+                            last_arrival = round(((datetime.now(timezone.utc) - last_arrival).total_seconds() / 60))
 
                             log.debug(
                                 "Shard {} added {} items from {} records. Consumer is {}m behind".format(
@@ -301,9 +271,7 @@ class Consumer(Base):
                                     {
                                         "__CHECKPOINT__": {
                                             "ShardId": shard["ShardId"],
-                                            "SequenceNumber": last_record[
-                                                "SequenceNumber"
-                                            ],
+                                            "SequenceNumber": last_record["SequenceNumber"],
                                         }
                                     }
                                 ),
@@ -317,30 +285,22 @@ class Consumer(Base):
 
                     else:
                         log.debug(
-                            "Shard {} caught up, sleeping {}s".format(
-                                shard["ShardId"], self.sleep_time_no_records
-                            )
+                            "Shard {} caught up, sleeping {}s".format(shard["ShardId"], self.sleep_time_no_records)
                         )
                         await asyncio.sleep(self.sleep_time_no_records)
 
                     if not result["NextShardIterator"]:
                         # Shard is closed - this is normal during resharding
                         shard_id = shard["ShardId"]
-                        log.info(
-                            f"Shard {shard_id} is closed (NextShardIterator is null)"
-                        )
+                        log.info(f"Shard {shard_id} is closed (NextShardIterator is null)")
                         self._closed_shards.add(shard_id)
 
                         # If this is a parent shard, mark it as exhausted to allow child consumption
                         if shard_id in self._parent_shards:
                             self._exhausted_parents.add(shard_id)
-                            children = self._shard_topology.get(shard_id, {}).get(
-                                "children", set()
-                            )
+                            children = self._shard_topology.get(shard_id, {}).get("children", set())
                             if children:
-                                log.info(
-                                    f"Parent shard {shard_id} exhausted, enabling child shards: {children}"
-                                )
+                                log.info(f"Parent shard {shard_id} exhausted, enabling child shards: {children}")
 
                         # Deallocate the shard so other consumers can take over child shards
                         if self.checkpointer:
@@ -371,9 +331,7 @@ class Consumer(Base):
 
             try:
 
-                result = await self.client.get_records(
-                    ShardIterator=shard["ShardIterator"], Limit=self.record_limit
-                )
+                result = await self.client.get_records(ShardIterator=shard["ShardIterator"], Limit=self.record_limit)
 
                 shard["stats"].succeded()
                 return result
@@ -387,21 +345,13 @@ class Consumer(Base):
             except ClientError as e:
                 code = e.response["Error"]["Code"]
                 if code == "ProvisionedThroughputExceededException":
-                    log.warning(
-                        "{} hit ProvisionedThroughputExceededException".format(
-                            shard["ShardId"]
-                        )
-                    )
+                    log.warning("{} hit ProvisionedThroughputExceededException".format(shard["ShardId"]))
                     shard["stats"].throttled()
                     # todo: control the throttle ?
                     await asyncio.sleep(0.25)
 
                 elif code == "ExpiredIteratorException":
-                    log.warning(
-                        "{} hit ExpiredIteratorException, recreating iterator".format(
-                            shard["ShardId"]
-                        )
-                    )
+                    log.warning("{} hit ExpiredIteratorException, recreating iterator".format(shard["ShardId"]))
 
                     try:
                         # Try to get a new iterator from the last known sequence number
@@ -409,23 +359,17 @@ class Consumer(Base):
                             shard_id=shard["ShardId"],
                             last_sequence_number=shard.get("LastSequenceNumber"),
                         )
-                        log.debug(
-                            f"Successfully recreated iterator for shard {shard['ShardId']}"
-                        )
+                        log.debug(f"Successfully recreated iterator for shard {shard['ShardId']}")
                     except ClientError as iterator_error:
                         iterator_code = iterator_error.response["Error"]["Code"]
                         if iterator_code == "ResourceNotFoundException":
-                            log.warning(
-                                f"Shard {shard['ShardId']} no longer exists, marking as closed"
-                            )
+                            log.warning(f"Shard {shard['ShardId']} no longer exists, marking as closed")
                             self._closed_shards.add(shard["ShardId"])
                             if self.checkpointer:
                                 await self.checkpointer.deallocate(shard["ShardId"])
                             shard.pop("ShardIterator", None)
                         else:
-                            log.error(
-                                f"Failed to recreate iterator for shard {shard['ShardId']}: {iterator_code}"
-                            )
+                            log.error(f"Failed to recreate iterator for shard {shard['ShardId']}: {iterator_code}")
                             # For other errors, remove the iterator to avoid infinite loops
                             shard.pop("ShardIterator", None)
                     except Exception as iterator_error:
@@ -435,9 +379,7 @@ class Consumer(Base):
                         shard.pop("ShardIterator", None)
 
                 elif code == "InternalFailure":
-                    log.warning(
-                        "Received InternalFailure from Kinesis, rebuilding connection.. "
-                    )
+                    log.warning("Received InternalFailure from Kinesis, rebuilding connection.. ")
                     await self.get_conn()
 
                 else:
@@ -479,9 +421,7 @@ class Consumer(Base):
             new_shards = stream_info["Shards"]
 
             # Get current shard IDs
-            current_shard_ids = (
-                {s["ShardId"] for s in self.shards} if self.shards else set()
-            )
+            current_shard_ids = {s["ShardId"] for s in self.shards} if self.shards else set()
             new_shard_ids = {s["ShardId"] for s in new_shards}
 
             # Build shard topology map for parent-child relationships
@@ -494,9 +434,7 @@ class Consumer(Base):
                 # Check if this might be a resharding event
                 new_child_shards = discovered_shards & self._child_shards
                 if new_child_shards:
-                    log.info(
-                        f"Resharding detected: new child shards {new_child_shards}"
-                    )
+                    log.info(f"Resharding detected: new child shards {new_child_shards}")
 
             # Find shards that no longer exist (though this is rare)
             missing_shards = current_shard_ids - new_shard_ids
@@ -545,13 +483,8 @@ class Consumer(Base):
             # Check if we have active parents with children (mid-resharding)
             active_parents_with_children = 0
             for parent_id in self._parent_shards:
-                if (
-                    parent_id not in self._closed_shards
-                    and parent_id not in self._exhausted_parents
-                ):
-                    if parent_id in self._shard_topology and self._shard_topology[
-                        parent_id
-                    ].get("children"):
+                if parent_id not in self._closed_shards and parent_id not in self._exhausted_parents:
+                    if parent_id in self._shard_topology and self._shard_topology[parent_id].get("children"):
                         active_parents_with_children += 1
 
             if active_parents_with_children > 0:
@@ -566,9 +499,7 @@ class Consumer(Base):
                 # (i.e., all parents are exhausted and we have active children)
                 if self._parent_shards and self._child_shards:
                     # If all parents are exhausted, resharding is complete, not in progress
-                    all_parents_exhausted = all(
-                        p in self._exhausted_parents for p in self._parent_shards
-                    )
+                    all_parents_exhausted = all(p in self._exhausted_parents for p in self._parent_shards)
                     if all_parents_exhausted:
                         return False
 
@@ -615,9 +546,7 @@ class Consumer(Base):
         # but might not be in the current shard list (if they're already closed)
         self._parent_shards = parent_shard_ids & all_shard_ids
 
-        log.debug(
-            f"Shard topology: {len(self._parent_shards)} parents, {len(self._child_shards)} children"
-        )
+        log.debug(f"Shard topology: {len(self._parent_shards)} parents, {len(self._child_shards)} children")
         if self._parent_shards:
             log.debug(f"Parent shards: {self._parent_shards}")
         if self._child_shards:
@@ -637,10 +566,7 @@ class Consumer(Base):
             parent_id = self._shard_topology.get(shard_id, {}).get("parent")
             if parent_id:
                 # Parent must be exhausted (closed) before we can consume child
-                return (
-                    parent_id in self._exhausted_parents
-                    or parent_id in self._closed_shards
-                )
+                return parent_id in self._exhausted_parents or parent_id in self._closed_shards
 
         # If not in any topology (independent shard), always allow
         return True
@@ -656,9 +582,7 @@ class Consumer(Base):
 
         params = {
             "ShardId": shard_id,
-            "ShardIteratorType": (
-                "AFTER_SEQUENCE_NUMBER" if last_sequence_number else self.iterator_type
-            ),
+            "ShardIteratorType": ("AFTER_SEQUENCE_NUMBER" if last_sequence_number else self.iterator_type),
         }
         params.update(self.address)
 
@@ -691,8 +615,7 @@ class Consumer(Base):
                 "shard_id": shard["ShardId"],
                 "is_allocated": self.checkpointer.is_allocated(shard["ShardId"]),
                 "is_closed": shard["ShardId"] in self._closed_shards,
-                "has_iterator": "ShardIterator" in shard
-                and shard["ShardIterator"] is not None,
+                "has_iterator": "ShardIterator" in shard and shard["ShardIterator"] is not None,
                 "sequence_range": shard.get("SequenceNumberRange", {}),
                 "parent_shard_id": shard.get("ParentShardId"),
                 "is_parent": shard["ShardId"] in self._parent_shards,
@@ -717,16 +640,8 @@ class Consumer(Base):
             "exhausted_parents": len(self._exhausted_parents),
             "resharding_in_progress": self.is_resharding_likely_in_progress(),
             "topology": {
-                "parent_child_map": {
-                    k: list(v["children"])
-                    for k, v in self._shard_topology.items()
-                    if v["children"]
-                },
-                "child_parent_map": {
-                    k: v["parent"]
-                    for k, v in self._shard_topology.items()
-                    if v["parent"]
-                },
+                "parent_child_map": {k: list(v["children"]) for k, v in self._shard_topology.items() if v["children"]},
+                "child_parent_map": {k: v["parent"] for k, v in self._shard_topology.items() if v["parent"]},
             },
             "shard_details": shard_details,
         }
@@ -774,9 +689,7 @@ class Consumer(Base):
                         )
                     checkpoint_count += 1
                     if checkpoint_count >= max_checkpoints:
-                        log.warning(
-                            f"Processed {max_checkpoints} checkpoints, stopping iteration"
-                        )
+                        log.warning(f"Processed {max_checkpoints} checkpoints, stopping iteration")
                         raise StopAsyncIteration
                     continue
 

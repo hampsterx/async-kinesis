@@ -71,9 +71,7 @@ logger = logging.getLogger(__name__)
 class ReshardingTestSuite:
     """Test suite for evaluating resharding behavior"""
 
-    def __init__(
-        self, endpoint_url: Optional[str] = None, region_name: str = "us-east-1"
-    ):
+    def __init__(self, endpoint_url: Optional[str] = None, region_name: str = "us-east-1"):
         self.endpoint_url = endpoint_url
         self.region_name = region_name
         self.test_streams = []  # Track streams for cleanup
@@ -111,17 +109,13 @@ class ReshardingTestSuite:
     async def setup(self):
         """Initialize AWS clients and test environment"""
         if not HAS_BOTO3:
-            logger.error(
-                "boto3 is required for resharding tests. Install with: pip install boto3"
-            )
+            logger.error("boto3 is required for resharding tests. Install with: pip install boto3")
             raise ImportError("boto3 not available")
 
         if not self.endpoint_url:
             # Real AWS
             session = boto3.Session()
-            self.kinesis_client = session.client(
-                "kinesis", region_name=self.region_name
-            )
+            self.kinesis_client = session.client("kinesis", region_name=self.region_name)
         else:
             # LocalStack or test environment
             self.kinesis_client = boto3.client(
@@ -132,9 +126,7 @@ class ReshardingTestSuite:
                 aws_secret_access_key="testing",
             )
 
-        logger.info(
-            f"Connected to Kinesis {'(LocalStack)' if self.endpoint_url else '(AWS)'}"
-        )
+        logger.info(f"Connected to Kinesis {'(LocalStack)' if self.endpoint_url else '(AWS)'}")
 
     async def cleanup(self):
         """Clean up all test streams"""
@@ -153,14 +145,10 @@ class ReshardingTestSuite:
 
     async def create_test_stream(self, base_name: str, shard_count: int) -> str:
         """Create a test stream with specified shard count"""
-        stream_name = (
-            f"resharding-test-{base_name}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
-        )
+        stream_name = f"resharding-test-{base_name}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
 
         try:
-            self.kinesis_client.create_stream(
-                StreamName=stream_name, ShardCount=shard_count
-            )
+            self.kinesis_client.create_stream(StreamName=stream_name, ShardCount=shard_count)
             self.test_streams.append(stream_name)
 
             # Wait for stream to become active
@@ -188,9 +176,7 @@ class ReshardingTestSuite:
                     logger.debug(f"Stream {stream_name} status: {status}")
                     await asyncio.sleep(2)
                 else:
-                    raise Exception(
-                        f"Stream {stream_name} in unexpected status: {status}"
-                    )
+                    raise Exception(f"Stream {stream_name} in unexpected status: {status}")
 
             except ClientError as e:
                 if e.response["Error"]["Code"] == "ResourceNotFoundException":
@@ -199,24 +185,16 @@ class ReshardingTestSuite:
                 else:
                     raise
 
-        raise TimeoutError(
-            f"Stream {stream_name} did not become ACTIVE within {timeout}s"
-        )
+        raise TimeoutError(f"Stream {stream_name} did not become ACTIVE within {timeout}s")
 
-    async def reshard_stream(
-        self, stream_name: str, target_shards: int
-    ) -> Dict[str, Any]:
+    async def reshard_stream(self, stream_name: str, target_shards: int) -> Dict[str, Any]:
         """Perform resharding operation and measure timing"""
         logger.info(f"Resharding {stream_name} to {target_shards} shards...")
 
         # Get current shard count
-        current_description = self.kinesis_client.describe_stream(
-            StreamName=stream_name
-        )
+        current_description = self.kinesis_client.describe_stream(StreamName=stream_name)
         current_shards = len(current_description["StreamDescription"]["Shards"])
-        current_shard_ids = [
-            s["ShardId"] for s in current_description["StreamDescription"]["Shards"]
-        ]
+        current_shard_ids = [s["ShardId"] for s in current_description["StreamDescription"]["Shards"]]
 
         logger.info(f"Current shards: {current_shards} → Target: {target_shards}")
         logger.debug(f"Current shard IDs: {current_shard_ids}")
@@ -235,9 +213,7 @@ class ReshardingTestSuite:
             await self.wait_for_stream_active(stream_name)
 
             # Get final shard information
-            final_description = self.kinesis_client.describe_stream(
-                StreamName=stream_name
-            )
+            final_description = self.kinesis_client.describe_stream(StreamName=stream_name)
             final_shards = final_description["StreamDescription"]["Shards"]
             final_shard_ids = [s["ShardId"] for s in final_shards]
 
@@ -247,9 +223,7 @@ class ReshardingTestSuite:
             parent_child_relationships = []
             for shard in final_shards:
                 if "ParentShardId" in shard:
-                    parent_child_relationships.append(
-                        {"parent": shard["ParentShardId"], "child": shard["ShardId"]}
-                    )
+                    parent_child_relationships.append({"parent": shard["ParentShardId"], "child": shard["ShardId"]})
 
             result = {
                 "success": True,
@@ -263,9 +237,7 @@ class ReshardingTestSuite:
             }
 
             logger.info(f"Resharding completed in {resharding_time:.1f}s")
-            logger.info(
-                f"Topology changes: {len(parent_child_relationships)} parent-child relationships"
-            )
+            logger.info(f"Topology changes: {len(parent_child_relationships)} parent-child relationships")
 
             return result
 
@@ -277,9 +249,7 @@ class ReshardingTestSuite:
                 "resharding_time": time.time() - start_time,
             }
 
-    async def saturate_stream(
-        self, stream_name: str, duration: int = 30
-    ) -> Dict[str, Any]:
+    async def saturate_stream(self, stream_name: str, duration: int = 30) -> Dict[str, Any]:
         """Saturate the stream with data before resharding"""
         logger.info(f"Saturating stream {stream_name} for {duration} seconds...")
 
@@ -331,18 +301,12 @@ class ReshardingTestSuite:
             "rate_per_second": rate,
         }
 
-        logger.info(
-            f"Saturation complete: {messages_sent} messages in {saturation_time:.1f}s ({rate:.0f} msg/s)"
-        )
+        logger.info(f"Saturation complete: {messages_sent} messages in {saturation_time:.1f}s ({rate:.0f} msg/s)")
         return result
 
-    async def test_consumer_behavior(
-        self, stream_name: str, test_duration: int = 60
-    ) -> Dict[str, Any]:
+    async def test_consumer_behavior(self, stream_name: str, test_duration: int = 60) -> Dict[str, Any]:
         """Test consumer behavior during and after resharding"""
-        logger.info(
-            f"Testing consumer behavior on {stream_name} for {test_duration}s..."
-        )
+        logger.info(f"Testing consumer behavior on {stream_name} for {test_duration}s...")
 
         messages_consumed = 0
         shard_status_history = []
@@ -420,17 +384,11 @@ class ReshardingTestSuite:
             "error_count": error_count,
             "shard_status_history": shard_status_history,
             "topology_transitions": len(
-                [
-                    s
-                    for s in shard_status_history
-                    if s["parent_shards"] > 0 or s["child_shards"] > 0
-                ]
+                [s for s in shard_status_history if s["parent_shards"] > 0 or s["child_shards"] > 0]
             ),
         }
 
-        logger.info(
-            f"Consumer test complete: {messages_consumed} messages in {test_time:.1f}s ({rate:.1f} msg/s)"
-        )
+        logger.info(f"Consumer test complete: {messages_consumed} messages in {test_time:.1f}s ({rate:.1f} msg/s)")
         logger.info(f"Topology transitions detected: {result['topology_transitions']}")
 
         return result
@@ -453,12 +411,8 @@ class ReshardingTestSuite:
 
         try:
             # Phase 1: Create initial stream
-            logger.info(
-                f"\n--- Phase 1: Creating stream with {scenario['initial_shards']} shards ---"
-            )
-            stream_name = await self.create_test_stream(
-                scenario_name, scenario["initial_shards"]
-            )
+            logger.info(f"\n--- Phase 1: Creating stream with {scenario['initial_shards']} shards ---")
+            stream_name = await self.create_test_stream(scenario_name, scenario["initial_shards"])
             results["stream_name"] = stream_name
 
             # Phase 2: Saturate stream
@@ -472,17 +426,13 @@ class ReshardingTestSuite:
             )
 
             # Start consumer behavior test in background
-            consumer_task = asyncio.create_task(
-                self.test_consumer_behavior(stream_name, test_duration=120)
-            )
+            consumer_task = asyncio.create_task(self.test_consumer_behavior(stream_name, test_duration=120))
 
             # Wait a moment for consumer to start
             await asyncio.sleep(5)
 
             # Perform resharding
-            resharding_result = await self.reshard_stream(
-                stream_name, scenario["target_shards"]
-            )
+            resharding_result = await self.reshard_stream(stream_name, scenario["target_shards"])
             results["phases"]["resharding"] = resharding_result
 
             # Wait for consumer test to complete
@@ -498,15 +448,11 @@ class ReshardingTestSuite:
                 # Brief pause between resharding operations
                 await asyncio.sleep(10)
 
-                consumer_task2 = asyncio.create_task(
-                    self.test_consumer_behavior(stream_name, test_duration=90)
-                )
+                consumer_task2 = asyncio.create_task(self.test_consumer_behavior(stream_name, test_duration=90))
 
                 await asyncio.sleep(5)
 
-                resharding_result2 = await self.reshard_stream(
-                    stream_name, scenario.get("final_shards", 8)
-                )
+                resharding_result2 = await self.reshard_stream(stream_name, scenario.get("final_shards", 8))
                 results["phases"]["second_resharding"] = resharding_result2
 
                 consumer_result2 = await consumer_task2
@@ -515,9 +461,7 @@ class ReshardingTestSuite:
             results["success"] = True
             results["total_time"] = time.time() - results["start_time"]
 
-            logger.info(
-                f"\n=== Scenario {scenario['name']} completed successfully in {results['total_time']:.1f}s ==="
-            )
+            logger.info(f"\n=== Scenario {scenario['name']} completed successfully in {results['total_time']:.1f}s ===")
 
         except Exception as e:
             logger.error(f"Scenario {scenario_name} failed: {e}")
@@ -534,9 +478,7 @@ class ReshardingTestSuite:
         print("=" * 80)
 
         # Summary table
-        summary_data = [
-            ["Scenario", "Status", "Duration", "Resharding Time", "Topology Changes"]
-        ]
+        summary_data = [["Scenario", "Status", "Duration", "Resharding Time", "Topology Changes"]]
 
         for result in all_results:
             scenario_name = result["scenario_info"]["name"]
@@ -544,12 +486,8 @@ class ReshardingTestSuite:
             duration = f"{result['total_time']:.1f}s"
 
             if result["success"] and "resharding" in result["phases"]:
-                resharding_time = (
-                    f"{result['phases']['resharding']['resharding_time']:.1f}s"
-                )
-                topology_changes = result["phases"]["resharding"].get(
-                    "topology_changes", 0
-                )
+                resharding_time = f"{result['phases']['resharding']['resharding_time']:.1f}s"
+                topology_changes = result["phases"]["resharding"].get("topology_changes", 0)
             else:
                 resharding_time = "N/A"
                 topology_changes = "N/A"
@@ -581,9 +519,7 @@ class ReshardingTestSuite:
             # Saturation phase
             if "saturation" in result["phases"]:
                 sat = result["phases"]["saturation"]
-                print(
-                    f"Saturation: {sat['messages_sent']} messages @ {sat['rate_per_second']:.0f} msg/s"
-                )
+                print(f"Saturation: {sat['messages_sent']} messages @ {sat['rate_per_second']:.0f} msg/s")
 
             # Resharding phase
             if "resharding" in result["phases"]:
@@ -596,9 +532,7 @@ class ReshardingTestSuite:
             # Consumer behavior
             if "consumer_behavior" in result["phases"]:
                 cons = result["phases"]["consumer_behavior"]
-                print(
-                    f"Consumer: {cons['messages_consumed']} messages @ {cons['consumption_rate']:.1f} msg/s"
-                )
+                print(f"Consumer: {cons['messages_consumed']} messages @ {cons['consumption_rate']:.1f} msg/s")
                 print(f"Topology transitions detected: {cons['topology_transitions']}")
                 print(f"Consumer errors: {cons['error_count']}")
 
@@ -613,17 +547,13 @@ class ReshardingTestSuite:
 
 
 async def main():
-    parser = argparse.ArgumentParser(
-        description="Test async-kinesis resharding capabilities"
-    )
+    parser = argparse.ArgumentParser(description="Test async-kinesis resharding capabilities")
     parser.add_argument(
         "--scenario",
         choices=["scale-up-small", "scale-up-large", "scale-down", "complex"],
         help="Specific scenario to run",
     )
-    parser.add_argument(
-        "--all-scenarios", action="store_true", help="Run all resharding scenarios"
-    )
+    parser.add_argument("--all-scenarios", action="store_true", help="Run all resharding scenarios")
     parser.add_argument("--endpoint-url", help="Kinesis endpoint URL (for LocalStack)")
     parser.add_argument("--region", default="us-east-1", help="AWS region")
     parser.add_argument(
@@ -631,28 +561,20 @@ async def main():
         action="store_true",
         help="Show what would be tested without creating resources",
     )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose logging"
-    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
 
     # Configure logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
     if HAS_COLOREDLOGS:
-        coloredlogs.install(
-            level=log_level, fmt="%(asctime)s %(levelname)s %(message)s"
-        )
+        coloredlogs.install(level=log_level, fmt="%(asctime)s %(levelname)s %(message)s")
     else:
-        logging.basicConfig(
-            level=log_level, format="%(asctime)s %(levelname)s %(message)s"
-        )
+        logging.basicConfig(level=log_level, format="%(asctime)s %(levelname)s %(message)s")
 
     if args.dry_run:
         print("DRY RUN MODE - No AWS resources will be created")
-        test_suite = ReshardingTestSuite(
-            endpoint_url=args.endpoint_url, region_name=args.region
-        )
+        test_suite = ReshardingTestSuite(endpoint_url=args.endpoint_url, region_name=args.region)
 
         scenarios_to_show = []
         if args.all_scenarios:
@@ -670,9 +592,7 @@ async def main():
         return
 
     # Real test execution
-    test_suite = ReshardingTestSuite(
-        endpoint_url=args.endpoint_url, region_name=args.region
-    )
+    test_suite = ReshardingTestSuite(endpoint_url=args.endpoint_url, region_name=args.region)
 
     # Setup cleanup handlers
     def cleanup_handler(signum=None, frame=None):

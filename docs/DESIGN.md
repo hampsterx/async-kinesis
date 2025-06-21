@@ -22,4 +22,3 @@ This pattern seemed like the easiest way to maintain a pool of consumers without
 See also
 
 https://aws.amazon.com/blogs/big-data/implementing-efficient-and-reliable-producers-with-the-amazon-kinesis-producer-library/
-

@@ -41,9 +41,7 @@ class ReshardingIntegrationTest:
 
     async def create_test_stream(self, base_name: str, shard_count: int) -> str:
         """Create a test stream and return its name"""
-        stream_name = (
-            f"resharding-test-{base_name}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
-        )
+        stream_name = f"resharding-test-{base_name}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
         self.test_streams.append(stream_name)
 
         # Create stream using Producer (which handles stream creation)
@@ -59,28 +57,18 @@ class ReshardingIntegrationTest:
         logger.info(f"Created stream {stream_name} with {shard_count} shards")
         return stream_name
 
-    async def saturate_and_test_consumption(
-        self, stream_name: str, test_duration: int = 30
-    ):
+    async def saturate_and_test_consumption(self, stream_name: str, test_duration: int = 30):
         """Saturate stream with data and test consumer behavior"""
-        logger.info(
-            f"Saturating {stream_name} and testing consumption for {test_duration}s"
-        )
+        logger.info(f"Saturating {stream_name} and testing consumption for {test_duration}s")
 
         # Start producer to generate data
-        producer_task = asyncio.create_task(
-            self._run_producer(stream_name, test_duration)
-        )
+        producer_task = asyncio.create_task(self._run_producer(stream_name, test_duration))
 
         # Start consumer to consume data and track shard status
-        consumer_task = asyncio.create_task(
-            self._run_consumer(stream_name, test_duration)
-        )
+        consumer_task = asyncio.create_task(self._run_consumer(stream_name, test_duration))
 
         # Wait for both to complete
-        producer_result, consumer_result = await asyncio.gather(
-            producer_task, consumer_task
-        )
+        producer_result, consumer_result = await asyncio.gather(producer_task, consumer_task)
 
         return {"producer": producer_result, "consumer": consumer_result}
 
@@ -120,9 +108,7 @@ class ReshardingIntegrationTest:
 
         result = {"messages_sent": messages_sent, "duration": duration, "rate": rate}
 
-        logger.info(
-            f"Producer: {messages_sent} messages in {duration:.1f}s ({rate:.1f} msg/s)"
-        )
+        logger.info(f"Producer: {messages_sent} messages in {duration:.1f}s ({rate:.1f} msg/s)")
         return result
 
     async def _run_consumer(self, stream_name: str, duration: int):
@@ -159,9 +145,7 @@ class ReshardingIntegrationTest:
                         shard_status_history.append(status_entry)
                         last_status_check = current_time
 
-                        logger.debug(
-                            f"Status: {status['allocated_shards']}/{status['total_shards']} shards allocated"
-                        )
+                        logger.debug(f"Status: {status['allocated_shards']}/{status['total_shards']} shards allocated")
 
                     # Try to consume messages
                     try:
@@ -185,9 +169,7 @@ class ReshardingIntegrationTest:
             "shard_status_history": shard_status_history,
         }
 
-        logger.info(
-            f"Consumer: {messages_consumed} messages in {duration:.1f}s ({rate:.1f} msg/s)"
-        )
+        logger.info(f"Consumer: {messages_consumed} messages in {duration:.1f}s ({rate:.1f} msg/s)")
         return result
 
     async def test_single_shard_baseline(self):
@@ -201,9 +183,7 @@ class ReshardingIntegrationTest:
         consumer_result = result["consumer"]
         if consumer_result["shard_status_history"]:
             final_status = consumer_result["shard_status_history"][-1]
-            assert (
-                final_status["total_shards"] == 1
-            ), f"Expected 1 shard, got {final_status['total_shards']}"
+            assert final_status["total_shards"] == 1, f"Expected 1 shard, got {final_status['total_shards']}"
             assert final_status["parent_shards"] == 0, "Should have no parent shards"
             assert final_status["child_shards"] == 0, "Should have no child shards"
 
@@ -221,9 +201,7 @@ class ReshardingIntegrationTest:
         consumer_result = result["consumer"]
         if consumer_result["shard_status_history"]:
             final_status = consumer_result["shard_status_history"][-1]
-            assert (
-                final_status["total_shards"] == 3
-            ), f"Expected 3 shards, got {final_status['total_shards']}"
+            assert final_status["total_shards"] == 3, f"Expected 3 shards, got {final_status['total_shards']}"
             # LocalStack creates independent shards, not parent-child relationships
             # But our consumer should handle them correctly
 
@@ -248,17 +226,11 @@ class ReshardingIntegrationTest:
             await asyncio.sleep(2)
 
             status = consumer.get_shard_status()
-            logger.info(
-                f"Limited allocation: {status['allocated_shards']}/{status['total_shards']} shards"
-            )
+            logger.info(f"Limited allocation: {status['allocated_shards']}/{status['total_shards']} shards")
 
             # Should allocate at most 2 shards
-            assert (
-                status["allocated_shards"] <= 2
-            ), f"Should allocate max 2 shards, got {status['allocated_shards']}"
-            assert (
-                status["total_shards"] == 4
-            ), f"Should see 4 total shards, got {status['total_shards']}"
+            assert status["allocated_shards"] <= 2, f"Should allocate max 2 shards, got {status['allocated_shards']}"
+            assert status["total_shards"] == 4, f"Should see 4 total shards, got {status['total_shards']}"
 
         logger.info("✅ Shard allocation limits working correctly")
         return {"test": "allocation_logic", "status": "PASS"}
@@ -270,9 +242,7 @@ class ReshardingIntegrationTest:
         stream_name = await self.create_test_stream("recovery-test", 2)
 
         # First consumer session - produce some data
-        async with Producer(
-            stream_name=stream_name, endpoint_url=self.endpoint_url
-        ) as producer:
+        async with Producer(stream_name=stream_name, endpoint_url=self.endpoint_url) as producer:
             for i in range(50):
                 await producer.put({"sequence": i, "data": f"message-{i}"})
             await producer.flush()
@@ -317,9 +287,7 @@ class ReshardingIntegrationTest:
                 if consumed_second >= 10:
                     break
 
-        logger.info(
-            f"Recovery test: Session 1: {consumed_first}, Session 2: {consumed_second}"
-        )
+        logger.info(f"Recovery test: Session 1: {consumed_first}, Session 2: {consumed_second}")
         logger.info("✅ Consumer recovery working correctly")
 
         return {
@@ -349,9 +317,7 @@ class ReshardingIntegrationTest:
                 logger.info(f"✅ {result['test']}: {result['status']}")
             except Exception as e:
                 logger.error(f"❌ {test.__name__}: FAIL - {e}")
-                results.append(
-                    {"test": test.__name__, "status": "FAIL", "error": str(e)}
-                )
+                results.append({"test": test.__name__, "status": "FAIL", "error": str(e)})
 
         # Cleanup
         await self.cleanup()

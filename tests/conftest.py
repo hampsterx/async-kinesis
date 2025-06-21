@@ -111,6 +111,4 @@ skip_if_no_aws = pytest.mark.skipif(
     reason="AWS testing not enabled (set TESTING_USE_AWS_KINESIS=1)",
 )
 
-skip_if_no_redis = pytest.mark.skipif(
-    not os.environ.get("REDIS_HOST"), reason="Redis not available (set REDIS_HOST)"
-)
+skip_if_no_redis = pytest.mark.skipif(not os.environ.get("REDIS_HOST"), reason="Redis not available (set REDIS_HOST)")

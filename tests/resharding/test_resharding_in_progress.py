@@ -59,9 +59,7 @@ class ReshardingInProgressTest:
 
     async def simulate_updating_stream_status(self, stream_name: str):
         """Simulate a stream in UPDATING status to test consumer behavior"""
-        logger.info(
-            f"Testing consumer behavior with potentially updating stream {stream_name}"
-        )
+        logger.info(f"Testing consumer behavior with potentially updating stream {stream_name}")
 
         # Start a consumer while stream might be in UPDATING status
         try:
@@ -76,9 +74,7 @@ class ReshardingInProgressTest:
                 # Let consumer initialize and discover initial shards
                 await asyncio.sleep(2)
                 initial_status = consumer.get_shard_status()
-                logger.info(
-                    f"Initial shard status: {initial_status['total_shards']} shards"
-                )
+                logger.info(f"Initial shard status: {initial_status['total_shards']} shards")
 
                 # Force a shard refresh to test discovery logic
                 await consumer.refresh_shards()
@@ -116,9 +112,7 @@ class ReshardingInProgressTest:
 
     async def test_producer_during_potential_resharding(self, stream_name: str):
         """Test producer behavior when stream might be resharding"""
-        logger.info(
-            f"Testing producer with potentially resharding stream {stream_name}"
-        )
+        logger.info(f"Testing producer with potentially resharding stream {stream_name}")
 
         messages_sent = 0
         errors = 0
@@ -159,11 +153,7 @@ class ReshardingInProgressTest:
                 result = {
                     "messages_sent": messages_sent,
                     "errors": errors,
-                    "success_rate": (
-                        messages_sent / (messages_sent + errors)
-                        if (messages_sent + errors) > 0
-                        else 0
-                    ),
+                    "success_rate": (messages_sent / (messages_sent + errors) if (messages_sent + errors) > 0 else 0),
                     "producer_resilient": errors < 10,
                 }
 
@@ -213,9 +203,7 @@ class ReshardingInProgressTest:
 
                 # Analyze status changes
                 shard_counts = [s["total_shards"] for s in shard_status_history]
-                stable_shard_count = all(
-                    count == shard_counts[0] for count in shard_counts
-                )
+                stable_shard_count = all(count == shard_counts[0] for count in shard_counts)
 
                 result = {
                     "shard_status_history": shard_status_history,
@@ -233,36 +221,25 @@ class ReshardingInProgressTest:
             logger.error(f"Consumer shard discovery failed: {e}")
             return {"error": str(e), "shard_discovery_working": False}
 
-    async def test_concurrent_producer_consumer_during_resharding(
-        self, stream_name: str
-    ):
+    async def test_concurrent_producer_consumer_during_resharding(self, stream_name: str):
         """Test producer and consumer running concurrently during potential resharding"""
         logger.info(f"Testing concurrent producer/consumer with {stream_name}")
 
         # Run producer and consumer concurrently
-        producer_task = asyncio.create_task(
-            self.test_producer_during_potential_resharding(stream_name)
-        )
-        consumer_task = asyncio.create_task(
-            self.simulate_updating_stream_status(stream_name)
-        )
+        producer_task = asyncio.create_task(self.test_producer_during_potential_resharding(stream_name))
+        consumer_task = asyncio.create_task(self.simulate_updating_stream_status(stream_name))
 
-        producer_result, consumer_result = await asyncio.gather(
-            producer_task, consumer_task
-        )
+        producer_result, consumer_result = await asyncio.gather(producer_task, consumer_task)
 
         result = {
             "producer": producer_result,
             "consumer": consumer_result,
             "both_resilient": (
-                producer_result.get("producer_resilient", False)
-                and consumer_result.get("consumer_resilient", False)
+                producer_result.get("producer_resilient", False) and consumer_result.get("consumer_resilient", False)
             ),
         }
 
-        logger.info(
-            f"Concurrent test results: both_resilient={result['both_resilient']}"
-        )
+        logger.info(f"Concurrent test results: both_resilient={result['both_resilient']}")
         return result
 
     async def test_stream_status_handling(self, stream_name: str):
@@ -288,8 +265,7 @@ class ReshardingInProgressTest:
 
             result = {
                 "stream_status": stream_status,
-                "connection_successful": stream_status
-                in [consumer.ACTIVE, consumer.UPDATING],
+                "connection_successful": stream_status in [consumer.ACTIVE, consumer.UPDATING],
                 "status_handling_working": True,
             }
 
@@ -389,9 +365,7 @@ class ReshardingInProgressTest:
         total = len(results)
 
         if passed == total:
-            logger.info(
-                f"🎉 ALL RESHARDING-IN-PROGRESS TESTS PASSED ({passed}/{total})"
-            )
+            logger.info(f"🎉 ALL RESHARDING-IN-PROGRESS TESTS PASSED ({passed}/{total})")
             logger.info("✅ Consumer/Producer handle resharding gracefully")
             logger.info("✅ Shard discovery works during stream updates")
             logger.info("✅ Concurrent operations are resilient")
@@ -415,9 +389,7 @@ async def main():
 
         for result in results:
             status_icon = "✅" if result["status"] == "PASS" else "❌"
-            print(
-                f"{status_icon} {result['test']} ({result['stream_type']}): {result['status']}"
-            )
+            print(f"{status_icon} {result['test']} ({result['stream_type']}): {result['status']}")
             if "error" in result:
                 print(f"   Error: {result['error']}")
 

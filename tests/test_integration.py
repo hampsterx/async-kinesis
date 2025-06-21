@@ -6,12 +6,7 @@ from datetime import datetime, timezone
 import pytest
 
 from kinesis import Consumer, MemoryCheckPointer, Producer, RedisCheckPointer
-from kinesis.processors import (
-    JsonLineProcessor,
-    JsonListProcessor,
-    JsonProcessor,
-    StringProcessor,
-)
+from kinesis.processors import JsonLineProcessor, JsonListProcessor, JsonProcessor, StringProcessor
 from kinesis.timeout_compat import timeout
 from tests.conftest import skip_if_no_aws, skip_if_no_redis
 
@@ -111,9 +106,7 @@ class TestIntegration:
         """Test producer -> consumer with checkpointing."""
         checkpointer = MemoryCheckPointer(name="integration_test")
 
-        test_messages = [
-            {"checkpoint_test": i, "data": f"message-{i}"} for i in range(5)
-        ]
+        test_messages = [{"checkpoint_test": i, "data": f"message-{i}"} for i in range(5)]
 
         # Produce messages
         async with Producer(
@@ -164,9 +157,7 @@ class TestIntegration:
 
     @pytest.mark.asyncio
     @skip_if_no_redis
-    async def test_producer_consumer_redis_checkpointing(
-        self, test_stream, endpoint_url
-    ):
+    async def test_producer_consumer_redis_checkpointing(self, test_stream, endpoint_url):
         """Test producer -> consumer with Redis checkpointing."""
         import uuid
 
@@ -209,9 +200,7 @@ class TestIntegration:
             await checkpointer.close()
 
     @pytest.mark.asyncio
-    async def test_producer_consumer_large_messages(
-        self, test_stream, endpoint_url, random_string
-    ):
+    async def test_producer_consumer_large_messages(self, test_stream, endpoint_url, random_string):
         """Test producer -> consumer with large messages."""
         # Create messages with large payloads (but within limits)
         large_payload = random_string(1024 * 100)  # 100KB
@@ -253,10 +242,7 @@ class TestIntegration:
     async def test_producer_consumer_high_throughput(self, test_stream, endpoint_url):
         """Test producer -> consumer with high message volume."""
         message_count = 100
-        test_messages = [
-            {"id": i, "timestamp": datetime.now(timezone.utc).isoformat()}
-            for i in range(message_count)
-        ]
+        test_messages = [{"id": i, "timestamp": datetime.now(timezone.utc).isoformat()} for i in range(message_count)]
 
         # Produce many messages quickly
         async with Producer(
@@ -287,14 +273,10 @@ class TestIntegration:
                 pass
 
         # Should consume most or all messages (LocalStack may have limitations)
-        assert (
-            len(consumed_messages) >= message_count * 0.5
-        )  # Allow for LocalStack variance
+        assert len(consumed_messages) >= message_count * 0.5  # Allow for LocalStack variance
 
     @pytest.mark.asyncio
-    async def test_producer_consumer_multiple_shards(
-        self, random_stream_name, endpoint_url
-    ):
+    async def test_producer_consumer_multiple_shards(self, random_stream_name, endpoint_url):
         """Test producer -> consumer with multiple shards."""
         shard_count = 2
         test_messages = [{"shard_test": i, "data": f"message-{i}"} for i in range(20)]
@@ -340,9 +322,7 @@ class TestIntegration:
 
         stream_name = f"async-kinesis-test-{str(uuid.uuid4())[0:8]}"
 
-        test_messages = [
-            {"aws_test": i, "message": f"aws-message-{i}"} for i in range(5)
-        ]
+        test_messages = [{"aws_test": i, "message": f"aws-message-{i}"} for i in range(5)]
 
         try:
             # Create stream and produce messages
@@ -382,9 +362,7 @@ class TestIntegration:
     @pytest.mark.asyncio
     async def test_consumer_iterator_types_integration(self, test_stream, endpoint_url):
         # Skip test for LocalStack/kinesalite due to LATEST iterator timing issues
-        if any(
-            host in endpoint_url for host in ["localhost", "kinesis:", "localstack"]
-        ):
+        if any(host in endpoint_url for host in ["localhost", "kinesis:", "localstack"]):
             pytest.skip("LocalStack/kinesalite timing issues with LATEST iterator")
         """Test different iterator types in integration scenario."""
         # Produce some initial messages
@@ -458,24 +436,16 @@ class TestIntegration:
                     break
 
     @pytest.mark.asyncio
-    async def test_producer_consumer_with_stream_arn(
-        self, random_stream_name, endpoint_url
-    ):
+    async def test_producer_consumer_with_stream_arn(self, random_stream_name, endpoint_url):
         """Test producer and consumer with stream ARN instead of name (PR #39)."""
         # Skip for LocalStack as it may not support ARN addressing
-        if any(
-            host in endpoint_url for host in ["localhost", "kinesis:", "localstack"]
-        ):
+        if any(host in endpoint_url for host in ["localhost", "kinesis:", "localstack"]):
             pytest.skip("LocalStack may not fully support ARN addressing")
 
         # Create a mock ARN for the stream
-        stream_arn = (
-            f"arn:aws:kinesis:us-east-1:123456789012:stream/{random_stream_name}"
-        )
+        stream_arn = f"arn:aws:kinesis:us-east-1:123456789012:stream/{random_stream_name}"
 
-        test_messages = [
-            {"arn_test": i, "message": f"arn-message-{i}"} for i in range(3)
-        ]
+        test_messages = [{"arn_test": i, "message": f"arn-message-{i}"} for i in range(3)]
 
         # First create the stream with regular name
         async with Producer(

@@ -113,8 +113,7 @@ class StartDuringReshardingTest:
                 "parent_shards": status["parent_shards"],
                 "child_shards": status["child_shards"],
                 "resharding_in_progress": status["resharding_in_progress"],
-                "topology_handling": status["parent_shards"] > 0
-                or status["child_shards"] > 0,
+                "topology_handling": status["parent_shards"] > 0 or status["child_shards"] > 0,
             }
 
             logger.info(f"Consumer resharding detection: {result}")
@@ -175,11 +174,7 @@ class StartDuringReshardingTest:
             result = {
                 "messages_sent": messages_sent,
                 "errors": errors,
-                "success_rate": (
-                    messages_sent / (messages_sent + errors)
-                    if (messages_sent + errors) > 0
-                    else 0
-                ),
+                "success_rate": (messages_sent / (messages_sent + errors) if (messages_sent + errors) > 0 else 0),
                 "producer_resilient": messages_sent > 0,
                 "multiple_attempts_successful": messages_sent >= 20,
             }
@@ -200,9 +195,7 @@ class StartDuringReshardingTest:
         try:
             # Check stream status multiple times to simulate transitions
             for check in range(5):
-                consumer = Consumer(
-                    stream_name=stream_name, endpoint_url=self.endpoint_url
-                )
+                consumer = Consumer(stream_name=stream_name, endpoint_url=self.endpoint_url)
 
                 try:
                     await consumer.get_conn()
@@ -212,8 +205,7 @@ class StartDuringReshardingTest:
                         "check": check,
                         "timestamp": time.time(),
                         "status": stream_status,
-                        "connection_successful": stream_status
-                        in [consumer.ACTIVE, consumer.UPDATING],
+                        "connection_successful": stream_status in [consumer.ACTIVE, consumer.UPDATING],
                     }
                     status_checks.append(status_check)
 
@@ -227,9 +219,7 @@ class StartDuringReshardingTest:
             # Analyze status stability
             statuses = [check["status"] for check in status_checks]
             stable_status = all(status == statuses[0] for status in statuses)
-            all_successful = all(
-                check["connection_successful"] for check in status_checks
-            )
+            all_successful = all(check["connection_successful"] for check in status_checks)
 
             result = {
                 "status_checks": status_checks,
@@ -239,9 +229,7 @@ class StartDuringReshardingTest:
                 "status_transitions_handled": True,
             }
 
-            logger.info(
-                f"Status transition results: stable={stable_status}, successful={all_successful}"
-            )
+            logger.info(f"Status transition results: stable={stable_status}, successful={all_successful}")
             return result
 
         except Exception as e:
@@ -262,28 +250,20 @@ class StartDuringReshardingTest:
 
                 try:
                     # Start producer and consumer simultaneously
-                    producer_task = asyncio.create_task(
-                        self._quick_producer_cycle(stream_name, cycle)
-                    )
-                    consumer_task = asyncio.create_task(
-                        self._quick_consumer_cycle(stream_name, cycle)
-                    )
+                    producer_task = asyncio.create_task(self._quick_producer_cycle(stream_name, cycle))
+                    consumer_task = asyncio.create_task(self._quick_consumer_cycle(stream_name, cycle))
 
                     producer_result, consumer_result = await asyncio.gather(
                         producer_task, consumer_task, return_exceptions=True
                     )
 
                     # Check if both succeeded
-                    if not isinstance(producer_result, Exception) and not isinstance(
-                        consumer_result, Exception
-                    ):
+                    if not isinstance(producer_result, Exception) and not isinstance(consumer_result, Exception):
                         successful_cycles += 1
                         logger.info(f"Cycle {cycle} successful")
                     else:
                         failed_cycles += 1
-                        logger.warning(
-                            f"Cycle {cycle} failed: P={producer_result}, C={consumer_result}"
-                        )
+                        logger.warning(f"Cycle {cycle} failed: P={producer_result}, C={consumer_result}")
 
                 except Exception as e:
                     failed_cycles += 1
@@ -410,9 +390,7 @@ class StartDuringReshardingTest:
         total = len(results)
 
         if passed == total:
-            logger.info(
-                f"🎉 ALL START-DURING-RESHARDING TESTS PASSED ({passed}/{total})"
-            )
+            logger.info(f"🎉 ALL START-DURING-RESHARDING TESTS PASSED ({passed}/{total})")
             logger.info("✅ Consumer/Producer handle start-during-resharding scenarios")
             logger.info("✅ Status transitions are handled gracefully")
             logger.info("✅ Rapid cycles work reliably")

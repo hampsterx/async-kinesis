@@ -112,8 +112,7 @@ class TestIntegration:
         checkpointer = MemoryCheckPointer(name="integration_test")
 
         test_messages = [
-            {"checkpoint_test": i, "data": f"message-{i}"}
-            for i in range(5)
+            {"checkpoint_test": i, "data": f"message-{i}"} for i in range(5)
         ]
 
         # Produce messages
@@ -165,15 +164,15 @@ class TestIntegration:
 
     @pytest.mark.asyncio
     @skip_if_no_redis
-    async def test_producer_consumer_redis_checkpointing(self, test_stream, endpoint_url):
+    async def test_producer_consumer_redis_checkpointing(
+        self, test_stream, endpoint_url
+    ):
         """Test producer -> consumer with Redis checkpointing."""
         import uuid
+
         checkpoint_name = f"integration_test_{str(uuid.uuid4())[0:8]}"
 
-        test_messages = [
-            {"redis_test": i, "data": f"message-{i}"}
-            for i in range(3)
-        ]
+        test_messages = [{"redis_test": i, "data": f"message-{i}"} for i in range(3)]
 
         # Produce messages
         async with Producer(
@@ -210,14 +209,13 @@ class TestIntegration:
             await checkpointer.close()
 
     @pytest.mark.asyncio
-    async def test_producer_consumer_large_messages(self, test_stream, endpoint_url, random_string):
+    async def test_producer_consumer_large_messages(
+        self, test_stream, endpoint_url, random_string
+    ):
         """Test producer -> consumer with large messages."""
         # Create messages with large payloads (but within limits)
         large_payload = random_string(1024 * 100)  # 100KB
-        test_messages = [
-            {"id": i, "large_data": large_payload}
-            for i in range(3)
-        ]
+        test_messages = [{"id": i, "large_data": large_payload} for i in range(3)]
 
         # Produce large messages
         async with Producer(
@@ -289,16 +287,17 @@ class TestIntegration:
                 pass
 
         # Should consume most or all messages (LocalStack may have limitations)
-        assert len(consumed_messages) >= message_count * 0.5  # Allow for LocalStack variance
+        assert (
+            len(consumed_messages) >= message_count * 0.5
+        )  # Allow for LocalStack variance
 
     @pytest.mark.asyncio
-    async def test_producer_consumer_multiple_shards(self, random_stream_name, endpoint_url):
+    async def test_producer_consumer_multiple_shards(
+        self, random_stream_name, endpoint_url
+    ):
         """Test producer -> consumer with multiple shards."""
         shard_count = 2
-        test_messages = [
-            {"shard_test": i, "data": f"message-{i}"}
-            for i in range(20)
-        ]
+        test_messages = [{"shard_test": i, "data": f"message-{i}"} for i in range(20)]
 
         # Create stream with multiple shards and produce messages
         async with Producer(
@@ -338,11 +337,11 @@ class TestIntegration:
             pytest.skip("AWS testing not enabled")
 
         import uuid
+
         stream_name = f"async-kinesis-test-{str(uuid.uuid4())[0:8]}"
 
         test_messages = [
-            {"aws_test": i, "message": f"aws-message-{i}"}
-            for i in range(5)
+            {"aws_test": i, "message": f"aws-message-{i}"} for i in range(5)
         ]
 
         try:
@@ -383,7 +382,9 @@ class TestIntegration:
     @pytest.mark.asyncio
     async def test_consumer_iterator_types_integration(self, test_stream, endpoint_url):
         # Skip test for LocalStack/kinesalite due to LATEST iterator timing issues
-        if any(host in endpoint_url for host in ["localhost", "kinesis:", "localstack"]):
+        if any(
+            host in endpoint_url for host in ["localhost", "kinesis:", "localstack"]
+        ):
             pytest.skip("LocalStack/kinesalite timing issues with LATEST iterator")
         """Test different iterator types in integration scenario."""
         # Produce some initial messages
@@ -427,3 +428,31 @@ class TestIntegration:
             # Should not contain initial message
             phases = [msg.get("phase") for msg in consumed_messages]
             assert "after_latest" in phases
+
+    @pytest.mark.asyncio
+    async def test_producer_session_cleanup_on_connection_failure(self):
+        """Test that producer cleans up properly when connection fails (Issue #35)."""
+        # This test verifies the fix for AttributeError on session cleanup
+        # when connection fails with non-existent streams or invalid endpoints
+        with pytest.raises(ConnectionError):
+            async with Producer(
+                "nonexistent-stream-issue-35-test",
+                processor=JsonProcessor(),
+                retry_limit=1,  # Fail quickly
+                endpoint_url="http://invalid-endpoint-for-test:9999",
+            ) as producer:
+                await producer.put({"test": "data"})
+
+    @pytest.mark.asyncio
+    async def test_consumer_session_cleanup_on_connection_failure(self):
+        """Test that consumer cleans up properly when connection fails (Issue #35)."""
+        # This test verifies the fix for AttributeError on session cleanup
+        # when connection fails with non-existent streams or invalid endpoints
+        with pytest.raises(ConnectionError):
+            async with Consumer(
+                "nonexistent-stream-issue-35-test",
+                retry_limit=1,  # Fail quickly
+                endpoint_url="http://invalid-endpoint-for-test:9999",
+            ) as consumer:
+                async for item in consumer:
+                    break

@@ -41,10 +41,10 @@ class Base:
         self.region_name: Optional[str] = region_name
 
         self.client: Optional[Any] = None  # aiobotocore client
+        self._client_cm: Optional[Any] = None  # client context manager
         self.shards: Optional[List[Dict[str, Any]]] = None
 
         self.stream_status: Optional[str] = None
-        self.client: Optional[Any] = None
 
         self.retry_limit: Optional[int] = retry_limit
         self.expo_backoff: Optional[float] = expo_backoff
@@ -83,8 +83,20 @@ class Base:
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         await self.close()
-        if self.client is not None:
-            await self.client.__aexit__(exc_type, exc, tb)
+        if self._client_cm is not None:
+            try:
+                await self._client_cm.__aexit__(exc_type, exc, tb)
+            except (AttributeError, TypeError) as e:
+                # Handle cases where client context manager doesn't have __aexit__ or session is malformed
+                log.debug(
+                    f"Client context manager exit failed: {e}, attempting direct close"
+                )
+                try:
+                    if self.client is not None:
+                        await self.client.close()
+                except Exception as close_error:
+                    log.debug(f"Client close also failed: {close_error}")
+                    # Continue cleanup even if client close fails
 
     @property
     def address(self) -> Dict[str, str]:
@@ -106,14 +118,15 @@ class Base:
         #  GENERAL_CONNECTION_ERROR => ConnectionError, ConnectionClosedError, ReadTimeoutError, EndpointConnectionError
         # Still have to handle ClientError anyway~
 
-        self.client = await self.session.create_client(
+        self._client_cm = self.session.create_client(
             "kinesis",
             endpoint_url=self.endpoint_url,
             region_name=self.region_name,
             config=Config(
                 connect_timeout=5, read_timeout=90, retries={"max_attempts": 0}
             ),
-        ).__aenter__()
+        )
+        self.client = await self._client_cm.__aenter__()
 
     async def get_stream_description(self):
 
@@ -215,6 +228,9 @@ class Base:
         backoff_delay = 5
         conn_attempts = 1
         await self.close()
+        # Reset client context manager after close
+        self._client_cm = None
+        self.client = None
         while True:
             self._reconnect_timeout = time.monotonic()
             try:
@@ -246,6 +262,9 @@ class Base:
                     if backoff_delay >= self.expo_backoff_limit:
                         backoff_delay = self.expo_backoff_limit
                 await self.close()
+                # Reset client context manager after close
+                self._client_cm = None
+                self.client = None
 
     async def _create_stream(self, ignore_exists=True):
 

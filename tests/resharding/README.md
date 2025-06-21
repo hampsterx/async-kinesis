@@ -9,7 +9,7 @@ Comprehensive test suite for Kinesis stream resharding scenarios.
 python tests/resharding/test_resharding_simple.py
 python tests/resharding/test_resharding_detection.py
 
-# Run with LocalStack  
+# Run with LocalStack
 docker-compose up kinesis
 python tests/resharding/test_resharding_integration.py
 
@@ -31,13 +31,13 @@ python tests/resharding/resharding_test.py --dry-run --scenario scale-up-small
 ## Key Scenarios Tested
 
 ✅ **Core Functionality**
-- Parent-child shard topology management  
+- Parent-child shard topology management
 - AWS best practice: consume parents before children
 - Dynamic shard discovery and closed shard handling
 
 ✅ **Edge Cases**
 - Consumer starting during active resharding
-- Producer resilience during topology changes  
+- Producer resilience during topology changes
 - Stream status transitions (UPDATING, CREATING, etc.)
 - Rapid start/stop cycles and concurrent operations
 

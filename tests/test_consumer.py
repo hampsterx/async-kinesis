@@ -413,9 +413,7 @@ class TestConsumer:
         assert status["closed_shards"] >= 1
 
     @pytest.mark.asyncio
-    async def test_consumer_shard_discovery_integration(
-        self, random_stream_name, endpoint_url
-    ):
+    async def test_consumer_shard_discovery_integration(self, random_stream_name, endpoint_url):
         """Test shard discovery during stream operations."""
         # Create a stream with multiple shards
         async with Producer(
@@ -491,9 +489,7 @@ class TestConsumer:
             pytest.fail("Should handle expired iterator gracefully")
 
     @pytest.mark.asyncio
-    async def test_consumer_shard_allocation_skips_closed(
-        self, test_stream, endpoint_url
-    ):
+    async def test_consumer_shard_allocation_skips_closed(self, test_stream, endpoint_url):
         """Test that shard allocation skips closed shards."""
         async with Consumer(
             stream_name=test_stream,
@@ -621,9 +617,7 @@ class TestConsumer:
         # Mock the stream description call
         from unittest.mock import AsyncMock
 
-        consumer.get_stream_description = AsyncMock(
-            return_value={"Shards": new_shards, "StreamStatus": "ACTIVE"}
-        )
+        consumer.get_stream_description = AsyncMock(return_value={"Shards": new_shards, "StreamStatus": "ACTIVE"})
 
         # Trigger refresh
         await consumer.refresh_shards()

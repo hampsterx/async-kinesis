@@ -19,7 +19,7 @@ Sadly I had issues with every other library I could find :(
         * threaded/seems kinda complicated~
     * con
         * consumer only
-         
+
 * https://github.com/bufferapp/kiner
     * pro:
         * Batching

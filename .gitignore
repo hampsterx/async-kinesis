@@ -1,4 +1,5 @@
 venv/
+test_pypi_env/
 dist
 *.egg-info
 .idea

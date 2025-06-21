@@ -93,13 +93,13 @@ jobs:
         pip install black isort flake8
 
     - name: Check code formatting with black
-      run: black --check --diff kinesis tests
+      run: black --check --diff --line-length=120 kinesis tests
 
     - name: Check import sorting with isort
-      run: isort --check-only --diff kinesis tests
+      run: isort --check-only --diff --line-length=120 kinesis tests
 
     - name: Lint with flake8
-      run: flake8 kinesis tests --max-line-length=88 --extend-ignore=E203,W503,E501
+      run: flake8 kinesis tests --max-line-length=120 --extend-ignore=E203,W503,E712,E402,F401,F841,F541
 
   publish:
     needs: [test, lint]

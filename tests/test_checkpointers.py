@@ -87,9 +87,7 @@ class TestCheckpointers:
         checkpointer_b = RedisCheckPointer(name=name, id="proc-2")
 
         # try to allocate the same shard
-        result = await asyncio.gather(
-            *[checkpointer_a.allocate("test"), checkpointer_b.allocate("test")]
-        )
+        result = await asyncio.gather(*[checkpointer_a.allocate("test"), checkpointer_b.allocate("test")])
 
         result = list(sorted([x[0] for x in result]))
 

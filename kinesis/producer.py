@@ -69,11 +69,7 @@ class Producer(Base):
 
         if put_bandwidth_limit_per_shard > 1024:
             log.warning(
-                (
-                    "Put bandwidth {}kb exceeds 1024kb. Expect throughput errors..".format(
-                        put_bandwidth_limit_per_shard
-                    )
-                )
+                ("Put bandwidth {}kb exceeds 1024kb. Expect throughput errors..".format(put_bandwidth_limit_per_shard))
             )
         self.set_put_rate_throttle()
 
@@ -93,14 +89,12 @@ class Producer(Base):
 
     def set_put_rate_throttle(self):
         self.put_rate_throttle = Throttler(
-            rate_limit=self.put_rate_limit_per_shard
-            * (len(self.shards) if self.shards else 1),
+            rate_limit=self.put_rate_limit_per_shard * (len(self.shards) if self.shards else 1),
             period=1,
         )
         self.put_bandwidth_throttle = Throttler(
             # kb per second. Go below a bit to avoid hitting the threshold
-            size_limit=self.put_bandwidth_limit_per_shard
-            * (len(self.shards) if self.shards else 1),
+            size_limit=self.put_bandwidth_limit_per_shard * (len(self.shards) if self.shards else 1),
             period=1,
         )
 
@@ -180,11 +174,7 @@ class Producer(Base):
             self.flush_total_size = 0
 
             if self.queue.qsize() > 0 or len(self.overflow) > 0:
-                log.debug(
-                    "flush queue={} overflow={}".format(
-                        self.queue.qsize(), len(self.overflow)
-                    )
-                )
+                log.debug("flush queue={} overflow={}".format(self.queue.qsize(), len(self.overflow)))
 
             items = await self.get_batch()
 
@@ -206,20 +196,10 @@ class Producer(Base):
 
         if result["FailedRecordCount"]:
 
-            errors = list(
-                set(
-                    [
-                        r.get("ErrorCode")
-                        for r in result["Records"]
-                        if r.get("ErrorCode")
-                    ]
-                )
-            )
+            errors = list(set([r.get("ErrorCode") for r in result["Records"] if r.get("ErrorCode")]))
 
             if not errors:
-                raise exceptions.UnknownException(
-                    "Failed to put records but no errorCodes return in results"
-                )
+                raise exceptions.UnknownException("Failed to put records but no errorCodes return in results")
 
             if "ProvisionedThroughputExceededException" in errors:
                 log.warning(
@@ -247,9 +227,7 @@ class Producer(Base):
                         self.overflow.append(items[i])
 
             else:
-                raise exceptions.UnknownException(
-                    "Failed to put records due to: {}".format(", ".join(errors))
-                )
+                raise exceptions.UnknownException("Failed to put records due to: {}".format(", ".join(errors)))
 
         else:
 
@@ -306,9 +284,7 @@ class Producer(Base):
                     Records=[
                         {
                             "Data": item.data,
-                            "PartitionKey": "{0}{1}".format(
-                                time.perf_counter(), time.time()
-                            ),
+                            "PartitionKey": "{0}{1}".format(time.perf_counter(), time.time()),
                         }
                         for item in items
                     ],
@@ -327,15 +303,8 @@ class Producer(Base):
                 code = err.response["Error"]["Code"]
 
                 if code == "ValidationException":
-                    if (
-                        "must have length less than or equal"
-                        in err.response["Error"]["Message"]
-                    ):
-                        log.warning(
-                            "Batch size {} exceeded the limit. retrying with less".format(
-                                len(items)
-                            )
-                        )
+                    if "must have length less than or equal" in err.response["Error"]["Message"]:
+                        log.warning("Batch size {} exceeded the limit. retrying with less".format(len(items)))
 
                         existing_batch_size = self.batch_size
                         self.batch_size -= round(self.batch_size / 10)
@@ -353,20 +322,14 @@ class Producer(Base):
                         items = await self.get_batch()
 
                     else:
-                        log.warning(
-                            f'Unknown ValidationException error code {err.response["Error"]["Code"]}'
-                        )
+                        log.warning(f'Unknown ValidationException error code {err.response["Error"]["Code"]}')
                         log.exception(err)
                         await self.get_conn()
                         # raise err
                 elif code == "ResourceNotFoundException":
-                    raise exceptions.StreamDoesNotExist(
-                        "Stream '{}' does not exist".format(self.stream_name)
-                    ) from None
+                    raise exceptions.StreamDoesNotExist("Stream '{}' does not exist".format(self.stream_name)) from None
                 else:
-                    log.warning(
-                        f'Unknown Client error code {err.response["Error"]["Code"]}'
-                    )
+                    log.warning(f'Unknown Client error code {err.response["Error"]["Code"]}')
                     log.exception(err)
                     await self.get_conn()
                     # raise err

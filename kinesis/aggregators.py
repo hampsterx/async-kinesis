@@ -25,22 +25,14 @@ class BaseAggregator:
         put_units = math.floor(max_size / 25)
 
         if put_units <= 0:
-            raise ValidationError(
-                "max_size is too low. Should be at least one PUT Payload Unit (25Kb)"
-            )
+            raise ValidationError("max_size is too low. Should be at least one PUT Payload Unit (25Kb)")
 
         if put_units > 40:
-            raise ValidationError(
-                "max_size is too high. Should be no higher than 40x PUT Payload Units (25Kb)"
-            )
+            raise ValidationError("max_size is too high. Should be no higher than 40x PUT Payload Units (25Kb)")
 
         self.max_bytes = put_units * 25 * 1024
 
-        log.debug(
-            "setting max_bytes to {} ({} PUT Payload Units (25kb))".format(
-                self.max_bytes, put_units
-            )
-        )
+        log.debug("setting max_bytes to {} ({} PUT Payload Units (25kb))".format(self.max_bytes, put_units))
 
         self.buffer = []
         self.size = 0

@@ -2,30 +2,53 @@
 
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/python/black) [![PyPI version](https://badge.fury.io/py/async-kinesis.svg)](https://badge.fury.io/py/async-kinesis) [![Python 3.10](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/downloads/release/python-3100/) [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/) [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
 
-```
+High-performance async Python library for AWS Kinesis with production-ready resharding support.
+
+```bash
 pip install async-kinesis
 ```
 
-## Features
+## Quick Start
 
-- uses queues for both producer and consumer
-  - producer flushes with put_records() if has enough to flush or after "buffer_time" reached
-  - consumer iterates over msg queue independent of shard readers
-- Configurable to handle Sharding limits but will throttle/retry if required
-  - ie multiple independent clients are saturating the Shards
-- **Dynamic shard handling and resharding support**
-  - automatically discovers new shards during Kinesis stream resharding
-  - graceful handling of closed shards when `NextShardIterator` is null
-  - robust error recovery for expired shard iterators
-  - shard status monitoring and operational visibility
-- Checkpointing with heartbeats
-  - deadlock + reallocation of shards if checkpoint fails to heartbeat within "session_timeout"
-- processors (aggregator + serializer)
-    - json line delimited, msgpack
-- Address Kinesis streams by name or [ARN]
+**Producer:**
+```python
+from kinesis import Producer
 
-See [docs/design](./docs/DESIGN.md) for more details.
-See [docs/yetanother](docs/YETANOTHER.md) as to why reinvent the wheel.
+async with Producer(stream_name="my-stream") as producer:
+    await producer.put({"message": "hello world"})
+```
+
+**Consumer:**
+```python
+from kinesis import Consumer
+
+async with Consumer(stream_name="my-stream") as consumer:
+    async for message in consumer:
+        print(message)
+```
+
+## Key Features
+
+✅ **Production-Ready Resharding**: Automatic shard discovery and topology management
+✅ **Async/Await Native**: Built for modern Python async patterns
+✅ **High Performance**: Queue-based architecture with configurable batching
+✅ **AWS Best Practices**: Parent-child shard ordering and proper error handling
+✅ **Stream Addressing**: Support for both stream names and ARNs
+✅ **Multi-Consumer Support**: Redis-based checkpointing with heartbeats
+✅ **Flexible Processing**: Pluggable serialization (JSON, MessagePack, KPL)
+✅ **Operational Visibility**: Rich monitoring APIs for production debugging
+
+### Resharding Support Highlights
+
+Unlike basic Kinesis libraries, async-kinesis provides enterprise-grade resharding capabilities:
+
+- **Automatic discovery** of new shards during resharding operations
+- **Parent-child ordering** enforcement following AWS best practices
+- **Graceful handling** of closed shards and iterator expiration
+- **Real-time monitoring** with detailed topology and status reporting
+- **Seamless coordination** between multiple consumer instances
+
+📖 **[Architecture Details](./docs/DESIGN.md)** | **[Why Another Library?](docs/YETANOTHER.md)**
 
 ## Environment Variables
 
@@ -241,7 +264,7 @@ Refer https://aws.amazon.com/blogs/big-data/implementing-efficient-and-reliable-
 | JsonListProcessor | ListAggregator | JsonSerializer | Multiple JSON record returned by list |
 | MsgpackProcessor | NetstringAggregator | MsgpackSerializer | Multiple Msgpack record framed with Netstring Protocol (https://en.wikipedia.org/wiki/Netstring) |
 | KPLJsonProcessor | KPLAggregator | JsonSerializer | Multiple JSON record in a KPL Aggregated Record (https://github.com/awslabs/amazon-kinesis-producer/blob/master/aggregation-format.md) |
-| KPLStringProcessor | KPLAggregator | StringSerializer | Multiple String record in a KPL Aggregated Record (https://github.com/awslabs/amazon-kinesis-producer/blob/master/aggregation-format.md) | 
+| KPLStringProcessor | KPLAggregator | StringSerializer | Multiple String record in a KPL Aggregated Record (https://github.com/awslabs/amazon-kinesis-producer/blob/master/aggregation-format.md) |
 
 Note you can define your own processor easily as it's simply a class inheriting the Aggregator + Serializer.
 
@@ -315,41 +338,62 @@ Choose the optimal processor based on your use case:
 **Performance Testing:** Use the benchmark tool with different `--record-size-kb` and `--processors` options to determine the best processor for your specific data patterns.
 
 
-## Unit Testing
+## Development & Testing
 
-Uses https://github.com/mhart/kinesalite for local testing.
+### Local Testing
 
-Run tests via docker
+Uses LocalStack for integration testing:
 
-```
+```bash
+# Run full test suite via Docker
 docker-compose up --abort-on-container-exit --exit-code-from test
-```
 
-For local testing use
-
-```
+# Local development setup
 docker-compose up kinesis redis
+pip install -r test-requirements.txt
+pytest
 ```
 
-then within your virtualenv
+### Code Quality
 
+This project uses automated code formatting and linting:
+
+```bash
+# Install development tools
+pip install -r test-requirements.txt
+
+# Run formatting and linting
+black .
+isort .
+flake8 .
+
+# Or use pre-commit hooks
+pre-commit install
+pre-commit run --all-files
 ```
-nosetests
 
-# or run individual test
-nosetests tests.py:KinesisTests.test_create_stream_shard_limit_exceeded
-```
+### AWS Integration Tests
 
-Note there are a few test cases using the *actual* AWS Kinesis (AWSKinesisTests)
-These require setting an env in order to run
-
-Create an ".env" file with
+Some tests require actual AWS Kinesis. Create `.env` file:
 
 ```
 TESTING_USE_AWS_KINESIS=1
 ```
 
-Note you can ignore these tests if submitting PR unless core batching/processing behaviour is being changed.
+### Resharding Tests
+
+Comprehensive resharding test suite available:
+
+```bash
+# Unit tests (no AWS required)
+python tests/resharding/test_resharding_simple.py
+
+# Integration tests (requires LocalStack)
+python tests/resharding/test_resharding_integration.py
+
+# Production testing (requires AWS)
+python tests/resharding/resharding_test.py --scenario scale-up-small
+```
 
 
 [ARN]: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference-arns.html

@@ -32,4 +32,3 @@ services:
      depends_on:
       - kinesis
       - redis
-

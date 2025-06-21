@@ -58,7 +58,11 @@ class Throttler:
 
         remaining = self.size_limit - math.ceil(size * period_used_ratio)
 
-        # log.debug("rate check: size={} requested={} period={} period_used_ratio={} remaining={}".format(size, self.size, round(period,3), round(period_used_ratio, 2), round(remaining,2)))
+        # log.debug(
+        #     "rate check: size={} requested={} period={} period_used_ratio={} remaining={}".format(
+        #         size, self.size, round(period, 3), round(period_used_ratio, 2), round(remaining, 2)
+        #     )
+        # )
 
         return self.size <= remaining
 

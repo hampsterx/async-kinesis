@@ -83,9 +83,7 @@ class MockReshardingTest:
         consumer._build_shard_topology(mock_shards)
 
         # Verify topology construction
-        assert (
-            "shard-parent-001" in consumer._parent_shards
-        ), "Parent shard not detected"
+        assert "shard-parent-001" in consumer._parent_shards, "Parent shard not detected"
         assert "shard-child-001" in consumer._child_shards, "Child shard 1 not detected"
         assert "shard-child-002" in consumer._child_shards, "Child shard 2 not detected"
 
@@ -94,19 +92,13 @@ class MockReshardingTest:
             "shard-child-001",
             "shard-child-002",
         }
-        assert (
-            consumer._shard_topology["shard-child-001"]["parent"] == "shard-parent-001"
-        )
-        assert (
-            consumer._shard_topology["shard-child-002"]["parent"] == "shard-parent-001"
-        )
+        assert consumer._shard_topology["shard-child-001"]["parent"] == "shard-parent-001"
+        assert consumer._shard_topology["shard-child-002"]["parent"] == "shard-parent-001"
 
         logger.info("✅ Basic topology construction working correctly")
 
         # Test allocation rules
-        assert (
-            consumer._should_allocate_shard("shard-parent-001") == True
-        ), "Parent should be allocatable"
+        assert consumer._should_allocate_shard("shard-parent-001") == True, "Parent should be allocatable"
         assert (
             consumer._should_allocate_shard("shard-child-001") == False
         ), "Child should not be allocatable while parent active"
@@ -170,9 +162,7 @@ class MockReshardingTest:
             {
                 "ShardId": "shard-gen1-002",
                 "ParentShardId": "shard-original-001",
-                "SequenceNumberRange": {
-                    "StartingSequenceNumber": "202"  # Still active
-                },
+                "SequenceNumberRange": {"StartingSequenceNumber": "202"},  # Still active
                 "HashKeyRange": {
                     "StartingHashKey": "170141183460469231731687303715884105728",
                     "EndingHashKey": "340282366920938463463374607431768211455",
@@ -209,12 +199,8 @@ class MockReshardingTest:
         consumer._exhausted_parents.add("shard-gen1-001")
 
         # Verify multi-generation topology
-        assert (
-            len(consumer._parent_shards) == 2
-        ), f"Expected 2 parent shards, got {len(consumer._parent_shards)}"
-        assert (
-            len(consumer._child_shards) == 4
-        ), f"Expected 4 child shards, got {len(consumer._child_shards)}"
+        assert len(consumer._parent_shards) == 2, f"Expected 2 parent shards, got {len(consumer._parent_shards)}"
+        assert len(consumer._child_shards) == 4, f"Expected 4 child shards, got {len(consumer._child_shards)}"
 
         # Test allocation logic for complex scenario
         assert (
@@ -283,21 +269,11 @@ class MockReshardingTest:
         status = consumer.get_shard_status()
 
         # Verify status reporting
-        assert (
-            status["total_shards"] == 4
-        ), f"Expected 4 total shards, got {status['total_shards']}"
-        assert (
-            status["parent_shards"] == 1
-        ), f"Expected 1 parent shard, got {status['parent_shards']}"
-        assert (
-            status["child_shards"] == 2
-        ), f"Expected 2 child shards, got {status['child_shards']}"
-        assert (
-            status["closed_shards"] == 1
-        ), f"Expected 1 closed shard, got {status['closed_shards']}"
-        assert (
-            status["exhausted_parents"] == 1
-        ), f"Expected 1 exhausted parent, got {status['exhausted_parents']}"
+        assert status["total_shards"] == 4, f"Expected 4 total shards, got {status['total_shards']}"
+        assert status["parent_shards"] == 1, f"Expected 1 parent shard, got {status['parent_shards']}"
+        assert status["child_shards"] == 2, f"Expected 2 child shards, got {status['child_shards']}"
+        assert status["closed_shards"] == 1, f"Expected 1 closed shard, got {status['closed_shards']}"
+        assert status["exhausted_parents"] == 1, f"Expected 1 exhausted parent, got {status['exhausted_parents']}"
 
         # Verify topology maps
         assert "parent_child_map" in status["topology"]
@@ -310,14 +286,10 @@ class MockReshardingTest:
         assert shard_details["shard-parent-A"]["is_parent"] == True
         assert shard_details["shard-parent-A"]["is_closed"] == True
         assert shard_details["shard-child-A1"]["is_child"] == True
-        assert (
-            shard_details["shard-child-A1"]["can_allocate"] == True
-        )  # Parent is exhausted
+        assert shard_details["shard-child-A1"]["can_allocate"] == True  # Parent is exhausted
         assert shard_details["shard-independent-B"]["is_parent"] == False
         assert shard_details["shard-independent-B"]["is_child"] == False
-        assert (
-            shard_details["shard-independent-B"]["can_allocate"] == True
-        )  # Independent shard
+        assert shard_details["shard-independent-B"]["can_allocate"] == True  # Independent shard
 
         logger.info("✅ Shard status reporting working correctly")
 
@@ -353,9 +325,7 @@ class MockReshardingTest:
             assert consumer._should_allocate_shard(shard["ShardId"]) == True
 
         # Test with orphaned child (parent not in current shard list)
-        orphaned_scenario = [
-            {"ShardId": "shard-child-orphan", "ParentShardId": "shard-parent-missing"}
-        ]
+        orphaned_scenario = [{"ShardId": "shard-child-orphan", "ParentShardId": "shard-parent-missing"}]
         consumer._build_shard_topology(orphaned_scenario)
         assert len(consumer._child_shards) == 1
         assert len(consumer._parent_shards) == 0  # Parent not in current list
@@ -395,9 +365,7 @@ class MockReshardingTest:
                 logger.info(f"✅ {result['test']}: {result['status']}")
             except Exception as e:
                 logger.error(f"❌ {test.__name__}: FAIL - {e}")
-                results.append(
-                    {"test": test.__name__, "status": "FAIL", "error": str(e)}
-                )
+                results.append({"test": test.__name__, "status": "FAIL", "error": str(e)})
 
         # Summary
         logger.info("=" * 60)

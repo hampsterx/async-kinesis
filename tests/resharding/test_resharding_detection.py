@@ -60,12 +60,8 @@ class ReshardingDetectionTest:
         resharding_detected = consumer.is_resharding_likely_in_progress()
         status = consumer.get_shard_status()
 
-        assert (
-            resharding_detected == False
-        ), "Should not detect resharding with no topology"
-        assert (
-            status["resharding_in_progress"] == False
-        ), "Status should indicate no resharding"
+        assert resharding_detected == False, "Should not detect resharding with no topology"
+        assert status["resharding_in_progress"] == False, "Status should indicate no resharding"
         assert status["parent_shards"] == 0, "Should have no parent shards"
         assert status["child_shards"] == 0, "Should have no child shards"
 
@@ -104,9 +100,7 @@ class ReshardingDetectionTest:
         status = consumer.get_shard_status()
 
         assert resharding_detected == True, "Should detect active resharding"
-        assert (
-            status["resharding_in_progress"] == True
-        ), "Status should indicate resharding in progress"
+        assert status["resharding_in_progress"] == True, "Status should indicate resharding in progress"
         assert status["parent_shards"] == 1, "Should have 1 parent shard"
         assert status["child_shards"] == 2, "Should have 2 child shards"
 
@@ -145,12 +139,8 @@ class ReshardingDetectionTest:
         status = consumer.get_shard_status()
 
         # Resharding is complete but topology exists
-        assert (
-            resharding_detected == False
-        ), "Should not detect active resharding when complete"
-        assert (
-            status["resharding_in_progress"] == False
-        ), "Status should indicate resharding complete"
+        assert resharding_detected == False, "Should not detect active resharding when complete"
+        assert status["resharding_in_progress"] == False, "Status should indicate resharding complete"
         assert status["parent_shards"] == 1, "Should still have 1 parent shard"
         assert status["child_shards"] == 2, "Should still have 2 child shards"
         assert status["closed_shards"] == 1, "Should have 1 closed shard"
@@ -184,12 +174,8 @@ class ReshardingDetectionTest:
         resharding_detected = consumer.is_resharding_likely_in_progress()
         status = consumer.get_shard_status()
 
-        assert (
-            resharding_detected == True
-        ), "Should detect resharding based on high closed ratio"
-        assert (
-            status["resharding_in_progress"] == True
-        ), "Status should indicate resharding detected"
+        assert resharding_detected == True, "Should detect resharding based on high closed ratio"
+        assert status["resharding_in_progress"] == True, "Status should indicate resharding detected"
         assert status["closed_shards"] == 2, "Should have 2 closed shards"
         assert status["total_shards"] == 4, "Should have 4 total shards"
 
@@ -331,9 +317,7 @@ class ReshardingDetectionTest:
                 logger.info(f"✅ {result['test']}: {result['status']}")
             except Exception as e:
                 logger.error(f"❌ {test.__name__}: FAIL - {e}")
-                results.append(
-                    {"test": test.__name__, "status": "FAIL", "error": str(e)}
-                )
+                results.append({"test": test.__name__, "status": "FAIL", "error": str(e)})
 
         # Summary
         logger.info("=" * 60)

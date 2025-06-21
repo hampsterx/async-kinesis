@@ -103,9 +103,7 @@ class TestProcessorAndAggregator:
 
         assert list(processor.parse(output[0].data)) == ["123", "test"]
 
-    @pytest.mark.skipif(
-        True, reason="KPL aggregator tests require specific aws-kinesis-agg version"
-    )
+    @pytest.mark.skipif(True, reason="KPL aggregator tests require specific aws-kinesis-agg version")
     def test_kpl_aggregator(self):
         class KPLTestProcessor(KPLAggregator, StringSerializer):
             pass
@@ -125,9 +123,7 @@ class TestProcessorAndAggregator:
 
         assert list(processor.parse(output[0].data)) == ["123", "test"]
 
-    @pytest.mark.skipif(
-        True, reason="KPL aggregator tests require specific aws-kinesis-agg version"
-    )
+    @pytest.mark.skipif(True, reason="KPL aggregator tests require specific aws-kinesis-agg version")
     def test_kpl_aggregator_max_size(self):
         class BytesSerializer:
             def serialize(self, item):

@@ -8,3 +8,10 @@ python-dotenv>=1.0.0
 tox>=4.0.0
 coverage>=7.0.0
 pytest-cov>=4.0.0
+
+# Code formatting and linting tools
+black>=24.0.0
+isort>=5.13.0
+autoflake>=2.0.0
+flake8>=7.0.0
+pre-commit>=3.0.0

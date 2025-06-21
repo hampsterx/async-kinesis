@@ -78,6 +78,7 @@ pip install async-kinesis
 # With optional dependencies
 pip install async-kinesis[prometheus]  # For Prometheus metrics
 pip install async-kinesis[redis]       # For Redis checkpointing
+pip install async-kinesis[dynamodb]    # For DynamoDB checkpointing
 ```
 
 ## Basic Usage
@@ -365,25 +366,59 @@ This provides detailed information about shard allocation, closure status, paren
 
 ## Checkpointers
 
-- memory (the default but kinda pointless)
+Checkpointers manage shard allocation and progress tracking across multiple consumer instances.
 
-```
-    MemoryCheckPointer()
-```
+### MemoryCheckPointer
 
-- redis
+The default checkpointer (but only useful for single-consumer testing):
 
-```
-    RedisCheckPointer(name, session_timeout=60, heartbeat_frequency=15, is_cluster=False)
+```python
+MemoryCheckPointer()
 ```
 
-Requires ENV:
+### RedisCheckPointer
 
-```
-    REDIS_HOST
+Redis-based checkpointer for distributed consumers:
+
+```python
+RedisCheckPointer(
+    name="consumer-group",
+    session_timeout=60,
+    heartbeat_frequency=15,
+    is_cluster=False
+)
 ```
 
-Requires `pip install aredis`
+**Requirements:**
+- Install: `pip install async-kinesis[redis]`
+- Environment: `REDIS_HOST` (and optionally `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_DB`)
+
+### DynamoDBCheckPointer
+
+DynamoDB-based checkpointer for serverless deployments:
+
+```python
+DynamoDBCheckPointer(
+    name="consumer-group",
+    table_name=None,  # Optional: defaults to kinesis-checkpoints-{name}
+    session_timeout=60,
+    heartbeat_frequency=15,
+    create_table=True,  # Auto-create table if needed
+    ttl_hours=24  # Automatic cleanup of old records
+)
+```
+
+**Requirements:**
+- Install: `pip install async-kinesis[dynamodb]`
+- AWS credentials with DynamoDB permissions
+
+**Benefits over Redis:**
+- No infrastructure to manage
+- Pay-per-request pricing (no idle costs)
+- Automatic scaling
+- Built-in backup and recovery
+
+📖 **[DynamoDB Checkpointing Guide](./docs/dynamodb-checkpointing.md)** - Detailed setup and configuration
 
 
 ## Processors (Aggregator + Serializer)
@@ -538,6 +573,7 @@ python tests/resharding/resharding_test.py --scenario scale-up-small
 - **[Getting Started Guide](./docs/getting-started.md)** - Step-by-step tutorials for beginners
 - **[Common Patterns](./docs/common-patterns.md)** - Real-world use cases and examples
 - **[Metrics & Observability](./docs/metrics.md)** - Prometheus integration and monitoring
+- **[DynamoDB Checkpointing](./docs/dynamodb-checkpointing.md)** - DynamoDB checkpointer setup and best practices
 - **[Troubleshooting Guide](./docs/troubleshooting.md)** - Solutions for common issues
 - **[Architecture Details](./docs/DESIGN.md)** - Technical deep dive into the implementation
 - **[Why Another Library?](./docs/YETANOTHER.md)** - Comparison with other Kinesis libraries

@@ -35,6 +35,7 @@ async with Consumer(stream_name="my-stream") as consumer:
 ✅ **Async/Await Native**: Built for modern Python async patterns
 ✅ **High Performance**: Queue-based architecture with configurable batching
 ✅ **AWS Best Practices**: Parent-child shard ordering and proper error handling
+✅ **Rate Limit Optimization**: Skip DescribeStream or use ListShards for better API limits
 ✅ **Stream Addressing**: Support for both stream names and ARNs
 ✅ **Custom Partition Keys**: Control record distribution and ordering across shards
 ✅ **Multi-Consumer Support**: Redis-based checkpointing with heartbeats
@@ -112,6 +113,55 @@ async with Producer(stream_name="my-stream") as producer:
 - **KPL Aggregators**: Custom partition keys not supported (raises `ValueError`)
 - **Other Aggregators**: Automatically group records by partition key within batches
 
+## Rate Limiting & API Optimization
+
+AWS Kinesis APIs have strict rate limits that can impact performance in high-throughput or multi-consumer scenarios. async-kinesis provides optimization options to work around these constraints:
+
+### API Rate Limits
+- **DescribeStream**: 10 operations/second **account-wide** (shared across all applications)
+- **ListShards**: 100 operations/second **per stream** (much higher limit)
+
+### Optimization Options
+
+**Skip DescribeStream entirely** (best for pre-provisioned streams):
+```python
+# Assumes stream exists and is active - no API calls during startup
+async with Consumer(stream_name="my-stream", skip_describe_stream=True) as consumer:
+    async for message in consumer:
+        print(message)
+```
+
+**Use ListShards API** for better rate limits:
+```python
+# Uses ListShards (100 ops/s) instead of DescribeStream (10 ops/s)
+async with Consumer(stream_name="my-stream", use_list_shards=True) as consumer:
+    async for message in consumer:
+        print(message)
+```
+
+**Combined approach** for maximum optimization:
+```python
+# Skip startup calls + use ListShards for any later shard discovery
+async with Consumer(
+    stream_name="my-stream",
+    skip_describe_stream=True,  # Skip startup API calls
+    use_list_shards=True       # Use ListShards if shard refresh needed
+) as consumer:
+    async for message in consumer:
+        print(message)
+```
+
+### When to Use
+
+| Scenario | Recommendation | Reason |
+| --- | --- | --- |
+| **Single consumer, known stream** | `skip_describe_stream=True` | Eliminates rate limit issues entirely |
+| **Multiple consumers** | `use_list_shards=True` | 10x better rate limits than DescribeStream |
+| **Short-lived consumers** | `skip_describe_stream=True` | Fastest startup, no API overhead |
+| **Stream discovery needed** | `use_list_shards=True` | Need shard info but want better limits |
+| **Production deployment** | Both options | Maximum resilience to rate limiting |
+
+**⚠️ Important**: `skip_describe_stream=True` assumes the stream exists and is active. Use only when you're certain the stream is available.
 
 Options:
 
@@ -131,6 +181,8 @@ Options:
 | retry_limit | None | How many connection attempts should be made before raising a exception |
 | expo_backoff | None | Exponential Backoff when connection attempt fails |
 | expo_backoff_limit | 120 | Max amount of seconds Exponential Backoff can grow |
+| skip_describe_stream | False | Skip DescribeStream API calls for better rate limits (assumes stream exists and is active) |
+| use_list_shards | False | Use ListShards API instead of DescribeStream for better rate limits (100 ops/s vs 10 ops/s) |
 | create_stream | False | Creates a Kinesis Stream based on the `stream_name` keyword argument. Note if stream already existing it will ignore |
 | create_stream_shards | 1 | Sets the amount of shard you want for your new stream. Note if stream already existing it will ignore  |
 
@@ -173,6 +225,8 @@ Options:
 | retry_limit | None | How many connection attempts should be made before raising a exception |
 | expo_backoff | None | Exponential Backoff when connection attempt fails |
 | expo_backoff_limit | 120 | Max amount of seconds Exponential Backoff can grow |
+| skip_describe_stream | False | Skip DescribeStream API calls for better rate limits (assumes stream exists and is active) |
+| use_list_shards | False | Use ListShards API instead of DescribeStream for better rate limits (100 ops/s vs 10 ops/s) |
 | create_stream | False | Creates a Kinesis Stream based on the `stream_name` keyword argument. Note if stream already existing it will ignore |
 | create_stream_shards | 1 | Sets the amount of shard you want for your new stream. Note if stream already existing it will ignore  |
 | timestamp | None | Timestamp to start reading stream from. Used with iterator type "AT_TIMESTAMP"

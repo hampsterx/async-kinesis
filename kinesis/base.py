@@ -25,6 +25,7 @@ class Base:
         expo_backoff: Optional[float] = None,
         expo_backoff_limit: int = 120,
         skip_describe_stream: bool = False,
+        use_list_shards: bool = False,
         create_stream: bool = False,
         create_stream_shards: int = 1,
     ) -> None:
@@ -61,6 +62,8 @@ class Base:
         self.stream_status = self.INITIALIZE
         # Short Lived producer might want to skip describing stream on startup
         self.skip_describe_stream = skip_describe_stream
+        # Use ListShards API instead of DescribeStream for better rate limits
+        self.use_list_shards = use_list_shards
         self._conn_lock = asyncio.Lock()
         self._reconnect_timeout = time.monotonic()
         self.create_stream = create_stream
@@ -133,6 +136,21 @@ class Base:
                 raise exceptions.StreamDoesNotExist("Stream '{}' does not exist".format(self.stream_name)) from None
             raise
 
+    async def list_shards(self, max_results: int = 1000):
+        """
+        Use ListShards API as alternative to DescribeStream for getting shard information.
+        ListShards has a higher rate limit (100 ops/s per stream vs 10 ops/s account-wide for DescribeStream).
+        """
+        try:
+            # Use ListShards API which has better rate limits
+            response = await self.client.list_shards(**self.address, MaxResults=max_results)
+            return response["Shards"]
+        except ClientError as err:
+            code = err.response["Error"]["Code"]
+            if code == "ResourceNotFoundException":
+                raise exceptions.StreamDoesNotExist("Stream '{}' does not exist".format(self.stream_name)) from None
+            raise
+
     async def start(self):
 
         await self.get_client()
@@ -142,36 +160,51 @@ class Base:
             self.create_stream = False
 
         if self.skip_describe_stream:
-            log.debug("Skipping Describe stream '{}'. Assuming it exists..".format(self.stream_name))
+            log.debug("Skipping Describe stream '{}'. Assuming it exists and is active.".format(self.stream_name))
             self.shards = []
+            self.stream_status = self.ACTIVE
+            return
 
         log.debug("Checking stream '{}' is active".format(self.stream_name))
 
-        async with timeout(60) as cm:
+        if self.use_list_shards:
+            # Use ListShards API for better rate limits (100 ops/s per stream vs 10 ops/s account-wide)
+            log.debug("Using ListShards API for better rate limits")
             try:
-                while True:
-                    stream_info = await self.get_stream_description()
-                    stream_status = stream_info["StreamStatus"]
+                self.shards = await self.list_shards()
+                self.stream_status = self.ACTIVE
+            except Exception as e:
+                # Fall back to DescribeStream if ListShards fails
+                log.warning(f"ListShards failed ({e}), falling back to DescribeStream")
+                self.use_list_shards = False
 
-                    if stream_status == self.ACTIVE:
-                        self.stream_status = stream_status
-                        break
+        if not self.use_list_shards:
+            # Use traditional DescribeStream API
+            async with timeout(60) as cm:
+                try:
+                    while True:
+                        stream_info = await self.get_stream_description()
+                        stream_status = stream_info["StreamStatus"]
 
-                    if stream_status in ["CREATING", "UPDATING"]:
-                        await asyncio.sleep(0.25)
+                        if stream_status == self.ACTIVE:
+                            self.stream_status = stream_status
+                            break
 
-                    else:
-                        raise exceptions.StreamStatusInvalid(
-                            "Stream '{}' is {}".format(self.stream_name, stream_status)
-                        )
-            except CancelledError:
-                pass
+                        if stream_status in ["CREATING", "UPDATING"]:
+                            await asyncio.sleep(0.25)
 
-            else:
-                self.shards = stream_info["Shards"]
+                        else:
+                            raise exceptions.StreamStatusInvalid(
+                                "Stream '{}' is {}".format(self.stream_name, stream_status)
+                            )
+                except CancelledError:
+                    pass
 
-        if cm.expired:
-            raise exceptions.StreamStatusInvalid("Stream '{}' is still {}".format(self.stream_name, stream_status))
+                else:
+                    self.shards = stream_info["Shards"]
+
+            if cm.expired:
+                raise exceptions.StreamStatusInvalid("Stream '{}' is still {}".format(self.stream_name, stream_status))
 
     async def close(self):
         raise NotImplementedError

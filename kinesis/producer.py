@@ -32,6 +32,7 @@ class Producer(Base):
         max_queue_size: int = 10000,
         processor: Optional[Processor] = None,
         skip_describe_stream: bool = False,
+        use_list_shards: bool = False,
         retry_limit: Optional[int] = None,
         expo_backoff: Optional[float] = None,
         expo_backoff_limit: int = 120,
@@ -48,6 +49,7 @@ class Producer(Base):
             expo_backoff=expo_backoff,
             expo_backoff_limit=expo_backoff_limit,
             skip_describe_stream=skip_describe_stream,
+            use_list_shards=use_list_shards,
             create_stream=create_stream,
             create_stream_shards=create_stream_shards,
         )

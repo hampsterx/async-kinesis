@@ -125,7 +125,7 @@ class Producer(Base):
         if not self.stream_status == self.RECONNECT:
             # Stop the flush task gracefully first
             self._stop_flush = True
-            
+
             # Cancel Flush Task if still running
             if self.flush_task and not self.flush_task.done():
                 self.flush_task.cancel()
@@ -150,14 +150,14 @@ class Producer(Base):
                 if self.stream_status == self.ACTIVE:
                     if not self.is_flushing:
                         await self.flush()
-                
+
                 # Sleep in small increments to check stop flag more frequently
                 sleep_remaining = self.buffer_time
                 while sleep_remaining > 0 and not self._stop_flush:
                     sleep_time = min(0.1, sleep_remaining)  # Check every 100ms
                     await asyncio.sleep(sleep_time)
                     sleep_remaining -= sleep_time
-                    
+
         except asyncio.CancelledError:
             log.debug("Auto-flush task cancelled")
             raise

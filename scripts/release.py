@@ -174,6 +174,9 @@ def main():
             new_version = increment_version(current_version, "minor")
         elif args.next_major:
             new_version = increment_version(current_version, "major")
+        else:
+            print("Error: Must specify either --version, --next-patch, --next-minor, or --next-major")
+            sys.exit(1)
 
         print(f"New version: {new_version}")
 

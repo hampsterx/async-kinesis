@@ -15,7 +15,7 @@ This guide helps you diagnose and fix common issues with async-kinesis.
 ## Connection Issues
 
 ### Problem: Cannot connect to Kinesis
-```
+```text
 botocore.exceptions.EndpointConnectionError: Could not connect to the endpoint URL
 ```
 
@@ -59,7 +59,7 @@ async with Producer(stream_name="test", session=session) as producer:
 ## Authentication Errors
 
 ### Problem: NoCredentialsError
-```
+```text
 botocore.exceptions.NoCredentialsError: Unable to locate credentials
 ```
 
@@ -89,7 +89,7 @@ async with Producer(stream_name="test") as producer:
 ```
 
 ### Problem: AccessDeniedException
-```
+```text
 botocore.exceptions.ClientError: An error occurred (AccessDeniedException)
 ```
 
@@ -119,7 +119,7 @@ botocore.exceptions.ClientError: An error occurred (AccessDeniedException)
 ## Rate Limiting & Throttling
 
 ### Problem: ProvisionedThroughputExceededException
-```
+```text
 botocore.exceptions.ClientError: An error occurred (ProvisionedThroughputExceededException)
 ```
 

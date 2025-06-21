@@ -104,7 +104,7 @@ def run_linting():
             "flake8",
             "kinesis",
             "tests",
-            "--max-line-length=88",
+            "--max-line-length=120",
             "--extend-ignore=E203,W503,E501",
         ],
         capture_output=True,

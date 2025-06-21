@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from kinesis import Consumer, MemoryCheckPointer, Producer
+from kinesis import Consumer, MemoryCheckPointer, Producer, exceptions
 from kinesis.processors import JsonProcessor, StringProcessor
 from kinesis.timeout_compat import timeout
 
@@ -190,7 +190,7 @@ class TestConsumer:
     async def test_consumer_error_recovery(self, endpoint_url):
         """Test consumer error recovery."""
         # Test with non-existent stream
-        with pytest.raises(Exception):
+        with pytest.raises(exceptions.StreamDoesNotExist):
             async with Consumer(
                 stream_name="nonexistent-stream",
                 endpoint_url=endpoint_url,

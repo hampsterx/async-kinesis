@@ -442,7 +442,8 @@ class ReshardingTestSuite:
             # Phase 4: Complex scenario handling
             if scenario_name == "complex" and resharding_result["success"]:
                 logger.info(
-                    f"\n--- Phase 4: Second resharding {scenario['target_shards']} → {scenario.get('final_shards', 8)} ---"
+                    f"\n--- Phase 4: Second resharding {scenario['target_shards']} → "
+                    f"{scenario.get('final_shards', 8)} ---"
                 )
 
                 # Brief pause between resharding operations
@@ -525,7 +526,8 @@ class ReshardingTestSuite:
             if "resharding" in result["phases"]:
                 res = result["phases"]["resharding"]
                 print(
-                    f"Resharding: {res['previous_shard_count']} → {res['new_shard_count']} shards in {res['resharding_time']:.1f}s"
+                    f"Resharding: {res['previous_shard_count']} → {res['new_shard_count']} shards "
+                    f"in {res['resharding_time']:.1f}s"
                 )
                 print(f"Parent-child relationships created: {res['topology_changes']}")
 

@@ -215,7 +215,8 @@ class Base:
             self._reconnect_timeout = time.monotonic()
             try:
                 log.warning(
-                    f"Connection Error. Rebuilding connection. Sleeping for {backoff_delay} seconds. Reconnection Attempt: {conn_attempts}"
+                    f"Connection Error. Rebuilding connection. Sleeping for {backoff_delay} seconds. "
+                    f"Reconnection Attempt: {conn_attempts}"
                 )
                 await asyncio.sleep(backoff_delay)
                 await self.start()

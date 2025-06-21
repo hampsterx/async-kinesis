@@ -370,7 +370,7 @@ if __name__ == "__main__":
 
         urllib.request.urlopen("http://localhost:4566/_localstack/health", timeout=2)
         print("✅ LocalStack detected, running integration tests...")
-    except:
+    except Exception:
         print("⚠️ LocalStack not available. Start with: docker-compose up kinesis")
         print("   Running tests anyway (may fail)...")
 

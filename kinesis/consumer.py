@@ -51,6 +51,7 @@ class Consumer(Base):
         expo_backoff: Optional[float] = None,
         expo_backoff_limit: int = 120,
         skip_describe_stream: bool = False,
+        use_list_shards: bool = False,
         create_stream: bool = False,
         create_stream_shards: int = 1,
         timestamp: Optional[datetime] = None,
@@ -65,6 +66,7 @@ class Consumer(Base):
             expo_backoff=expo_backoff,
             expo_backoff_limit=expo_backoff_limit,
             skip_describe_stream=skip_describe_stream,
+            use_list_shards=use_list_shards,
             create_stream=create_stream,
             create_stream_shards=create_stream_shards,
         )
@@ -404,21 +406,40 @@ class Consumer(Base):
         if current_time - self._last_shard_refresh < self._shard_refresh_interval:
             return  # Too soon to refresh
 
+        # Skip shard refresh if skip_describe_stream is enabled
+        if self.skip_describe_stream:
+            log.debug("Skipping shard refresh due to skip_describe_stream setting")
+            self._last_shard_refresh = current_time
+            return
+
         try:
             log.debug("Refreshing shard list to check for new/closed shards")
-            stream_info = await self.get_stream_description()
-            stream_status = stream_info.get("StreamStatus", "UNKNOWN")
 
-            # Handle stream that might be updating due to resharding
-            if stream_status == self.UPDATING:
-                log.info("Stream is currently UPDATING (possibly due to resharding)")
-                # Don't refresh shards during updating status to avoid inconsistent state
-                return
-            elif stream_status != self.ACTIVE:
-                log.warning(f"Stream is in unexpected status: {stream_status}")
-                return
+            if self.use_list_shards:
+                # Use ListShards API for better rate limits
+                log.debug("Using ListShards API for shard refresh")
+                try:
+                    new_shards = await self.list_shards()
+                    stream_status = self.ACTIVE  # Assume active if ListShards succeeds
+                except Exception as e:
+                    log.warning(f"ListShards failed ({e}), falling back to DescribeStream for refresh")
+                    self.use_list_shards = False
 
-            new_shards = stream_info["Shards"]
+            if not self.use_list_shards:
+                # Use DescribeStream API
+                stream_info = await self.get_stream_description()
+                stream_status = stream_info.get("StreamStatus", "UNKNOWN")
+
+                # Handle stream that might be updating due to resharding
+                if stream_status == self.UPDATING:
+                    log.info("Stream is currently UPDATING (possibly due to resharding)")
+                    # Don't refresh shards during updating status to avoid inconsistent state
+                    return
+                elif stream_status != self.ACTIVE:
+                    log.warning(f"Stream is in unexpected status: {stream_status}")
+                    return
+
+                new_shards = stream_info["Shards"]
 
             # Get current shard IDs
             current_shard_ids = {s["ShardId"] for s in self.shards} if self.shards else set()

@@ -698,9 +698,7 @@ class Consumer(Base):
                 "is_parent": shard["ShardId"] in self._parent_shards,
                 "is_child": shard["ShardId"] in self._child_shards,
                 "can_allocate": self._should_allocate_shard(shard["ShardId"]),
-                "stats": (
-                    shard.get("stats").to_data() if shard.get("stats") else None
-                ),
+                "stats": (shard.get("stats").to_data() if shard.get("stats") else None),
             }
             for shard in self.shards
         ]

@@ -116,13 +116,13 @@ class TestProducer:
             # Add several items
             for i in range(3):
                 await producer.put({"message": f"test-{i}"})
-            
+
             # Queue should have items
             assert producer.queue.qsize() > 0
-            
+
             # Force a flush to clear the queue
             await producer.flush()
-            
+
             # After flush, queue should be cleared or reduced
             await asyncio.sleep(0.1)  # Allow time for flush to complete
 

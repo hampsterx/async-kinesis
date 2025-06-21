@@ -5,7 +5,7 @@ import uuid
 from unittest import TestCase, skipUnless
 
 import coloredlogs
-from aiobotocore import AioSession
+from aiobotocore.session import AioSession
 from asynctest import TestCase as AsynTestCase
 from asynctest import fail_on
 from dotenv import load_dotenv

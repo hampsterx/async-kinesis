@@ -13,7 +13,7 @@ except ModuleNotFoundError:
 
 log = logging.getLogger(__name__)
 
-OutputItem = namedtuple("OutputItem", ["size", "n", "data"])
+OutputItem = namedtuple("OutputItem", ["size", "n", "data", "partition_key"])
 
 
 class BaseAggregator:
@@ -54,13 +54,13 @@ class SimpleAggregator(BaseAggregator):
     def has_items(self):
         return False
 
-    def add_item(self, item):
+    def add_item(self, item, partition_key=None):
         output = self.serialize(item)
         size = len(output)
 
         self.validate_size(size)
 
-        yield OutputItem(size=size, n=1, data=output)
+        yield OutputItem(size=size, n=1, data=output, partition_key=partition_key)
 
 
 class Aggregator(BaseAggregator):
@@ -75,13 +75,30 @@ class Aggregator(BaseAggregator):
     def get_header_size(self, data):
         raise NotImplementedError()
 
-    def add_item(self, item):
+    def add_item(self, item, partition_key=None):
         output = self.serialize(item)
         size = len(output)
 
         self.validate_size(size)
 
         header_size = self.get_header_size(output)
+
+        # For aggregated records, all items in a batch must share the same partition key
+        if hasattr(self, "_current_partition_key"):
+            if self._current_partition_key != partition_key:
+                # Different partition key, yield current batch first
+                if self.buffer:
+                    yield OutputItem(
+                        size=self.size,
+                        n=len(self.buffer),
+                        data=self.output(),
+                        partition_key=self._current_partition_key,
+                    )
+                    self.buffer = []
+                    self.size = 0
+                self._current_partition_key = partition_key
+        else:
+            self._current_partition_key = partition_key
 
         if size + self.size + header_size < self.max_bytes:
 
@@ -94,21 +111,26 @@ class Aggregator(BaseAggregator):
                     len(self.buffer), round(self.size / 1024)
                 )
             )
-            yield OutputItem(size=self.size, n=len(self.buffer), data=self.output())
+            yield OutputItem(
+                size=self.size, n=len(self.buffer), data=self.output(), partition_key=self._current_partition_key
+            )
             self.buffer = [(size, output)]
             self.size = size
 
         log.debug("Adding item to queue with size of {} kb".format(round(size / 1024)))
 
     def get_items(self):
-        log.debug(
-            "Yielding (final) item to queue with {} individual records with size of {} kb".format(
-                len(self.buffer), round(self.size / 1024)
+        if self.buffer:
+            log.debug(
+                "Yielding (final) item to queue with {} individual records with size of {} kb".format(
+                    len(self.buffer), round(self.size / 1024)
+                )
             )
-        )
-        yield OutputItem(size=self.size, n=len(self.buffer), data=self.output())
-        self.buffer = []
-        self.size = 0
+            partition_key = getattr(self, "_current_partition_key", None)
+            yield OutputItem(size=self.size, n=len(self.buffer), data=self.output(), partition_key=partition_key)
+            self.buffer = []
+            self.size = 0
+            self._current_partition_key = None
 
 
 class NewlineAggregator(Aggregator):
@@ -187,23 +209,28 @@ class KPLAggregator(Aggregator):
     def has_items(self):
         return self.agg.get_num_user_records() > 0
 
-    def add_item(self, item):
+    def add_item(self, item, partition_key=None):
+        if partition_key is not None:
+            raise ValueError(
+                "Custom partition keys are not supported with KPL aggregation. Use SimpleAggregator instead."
+            )
+
         output = self.serialize(item)
         record = self.agg.add_user_record("a", output)
         self.size = self.agg.get_num_user_records()
         if record:
             size = record.get_size_bytes()
             n = record.get_num_user_records()
-            partition_key, explicit_hash_key, data = record.get_contents()
-            yield OutputItem(size=size, n=n, data=data)
+            kpl_partition_key, explicit_hash_key, data = record.get_contents()
+            yield OutputItem(size=size, n=n, data=data, partition_key=None)
 
     def get_items(self):
         record = self.agg.clear_and_get()
         if record:
             size = record.get_size_bytes()
             n = record.get_num_user_records()
-            partition_key, explicit_hash_key, data = record.get_contents()
-            yield OutputItem(size=size, n=n, data=data)
+            kpl_partition_key, explicit_hash_key, data = record.get_contents()
+            yield OutputItem(size=size, n=n, data=data, partition_key=None)
 
     def parse(self, data):
         message_data = data[len(aws_kinesis_agg.MAGIC) : -aws_kinesis_agg.DIGEST_SIZE]

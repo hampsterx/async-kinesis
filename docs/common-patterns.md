@@ -18,8 +18,12 @@ Aggregate logs from multiple services and process them centrally:
 ```python
 import asyncio
 import json
+import logging
 from datetime import datetime
 from kinesis import Producer, Consumer, JsonLineProcessor
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Producer: Collect logs from multiple sources
 async def log_producer():
@@ -66,12 +70,12 @@ async def log_processor():
 
                 # Alert on high error rates
                 if error_count[service] > 10:
-                    print(f"⚠️ High error rate for {service}: {error_count[service]} errors")
+                    logger.warning(f"High error rate for {service}: {error_count[service]} errors")
 
             # Route logs based on level
             if level in ["ERROR", "WARN"]:
                 # Send to alerting system
-                print(f"Alert: {service} - {level} - {log_entry['message']}")
+                logger.error(f"Alert: {service} - {level} - {log_entry['message']}")
 
             # Could also write to S3, ElasticSearch, etc.
 ```
@@ -81,9 +85,15 @@ async def log_processor():
 Build event-driven architectures with multiple event types:
 
 ```python
+import logging
+import uuid
 from enum import Enum
 from typing import Dict, Any
+from datetime import datetime
 from kinesis import Producer, Consumer, MsgpackProcessor
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class EventType(Enum):
     USER_CREATED = "user.created"
@@ -150,17 +160,17 @@ async def event_processor():
                 try:
                     await handler(event["data"])
                 except Exception as e:
-                    print(f"Error handling {event_type}: {e}")
+                    logger.error(f"Error handling {event_type}: {e}")
                     # Could implement retry logic or dead letter queue
 
 async def handle_user_created(data):
-    print(f"Sending welcome email to {data['email']}")
+    logger.info(f"Sending welcome email to {data['email']}")
 
 async def handle_order_placed(data):
-    print(f"Reserving inventory for order {data['order_id']}")
+    logger.info(f"Reserving inventory for order {data['order_id']}")
 
 async def handle_payment_processed(data):
-    print(f"Updating order status for {data['order_id']}")
+    logger.info(f"Updating order status for {data['order_id']}")
 ```
 
 ## IoT Data Collection
@@ -168,8 +178,14 @@ async def handle_payment_processed(data):
 Collect and process high-volume IoT sensor data:
 
 ```python
+import asyncio
+import logging
 import random
+from datetime import datetime
 from kinesis import Producer, Consumer, KPLJsonProcessor
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Producer: Simulate IoT sensors
 async def iot_sensors():
@@ -236,12 +252,12 @@ async def iot_processor():
             for metric, thresholds in alert_thresholds.items():
                 value = reading[metric]
                 if value < thresholds["min"] or value > thresholds["max"]:
-                    print(f"⚠️ Alert: {sensor_id} {metric}={value} outside range")
+                    logger.warning(f"Alert: {sensor_id} {metric}={value} outside range")
 
             # Periodic aggregation (every 100 readings)
             if stats["readings"] % 100 == 0:
                 avg_temp = stats["temperature_sum"] / stats["readings"]
-                print(f"📊 {sensor_id}: {stats['readings']} readings, avg temp: {avg_temp:.2f}°C")
+                logger.info(f"{sensor_id}: {stats['readings']} readings, avg temp: {avg_temp:.2f}°C")
 ```
 
 ## Error Handling
@@ -250,8 +266,14 @@ Robust error handling patterns for production:
 
 ```python
 import asyncio
+import logging
+import random
 from typing import Optional
+from datetime import datetime
 from kinesis import Producer, Consumer, JsonProcessor
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class RetryableError(Exception):
     """Errors that should be retried"""
@@ -273,7 +295,7 @@ async def reliable_producer():
                 if "ProvisionedThroughputExceededException" in str(e):
                     # Exponential backoff for rate limiting
                     wait_time = (2 ** attempt) + random.uniform(0, 1)
-                    print(f"Rate limited, waiting {wait_time:.2f}s...")
+                    logger.warning(f"Rate limited, waiting {wait_time:.2f}s...")
                     await asyncio.sleep(wait_time)
                 else:
                     # Non-retryable error
@@ -301,11 +323,11 @@ async def resilient_consumer():
             if random.random() < 0.1:  # 10% failure rate
                 raise Exception("Processing failed")
 
-            print(f"Processed: {record}")
+            logger.info(f"Processed: {record}")
             return True
 
         except Exception as e:
-            print(f"Error processing record: {e}")
+            logger.error(f"Error processing record: {e}")
             return False
 
     # Dead letter queue for failed records
@@ -330,18 +352,18 @@ async def resilient_consumer():
 
                 # Periodic retry of failed records
                 if len(failed_records) >= 10:
-                    print(f"Retrying {len(failed_records)} failed records...")
+                    logger.info(f"Retrying {len(failed_records)} failed records...")
 
                     still_failed = []
                     for failed in failed_records:
                         if await process_record(failed["record"]):
-                            print(f"Retry successful for record")
+                            logger.info(f"Retry successful for record")
                         else:
                             failed["attempts"] += 1
                             if failed["attempts"] < 3:
                                 still_failed.append(failed)
                             else:
-                                print(f"Record failed permanently: {failed['record']}")
+                                logger.error(f"Record failed permanently: {failed['record']}")
 
                     failed_records = still_failed
 ```
@@ -351,8 +373,13 @@ async def resilient_consumer():
 Coordinate multiple consumers for parallel processing:
 
 ```python
-from kinesis import Consumer, RedisCheckPointer
 import asyncio
+import json
+import logging
+from kinesis import Consumer, RedisCheckPointer
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Different consumer groups for different processing needs
 async def analytics_consumer():
@@ -375,7 +402,7 @@ async def analytics_consumer():
 
             # Emit metrics every 100 events
             if metrics["events"] % 100 == 0:
-                print(f"Analytics: {metrics}")
+                logger.info(f"Analytics: {metrics}")
 
 async def archival_consumer():
     """Batch archival consumer"""
@@ -396,7 +423,7 @@ async def archival_consumer():
             # Archive when batch is full
             if len(batch) >= 100:
                 # Simulate S3 upload
-                print(f"Archiving batch of {len(batch)} events to S3")
+                logger.info(f"Archiving batch of {len(batch)} events to S3")
                 batch = []
 
 async def alerting_consumer():
@@ -413,7 +440,7 @@ async def alerting_consumer():
 
         async for event in consumer:
             if event.get("severity") == "critical":
-                print(f"🚨 CRITICAL ALERT: {event}")
+                logger.error(f"CRITICAL ALERT: {event}")
 
 # Run all consumer groups concurrently
 async def run_consumer_groups():
@@ -431,7 +458,11 @@ Handle shutdown gracefully to avoid data loss:
 ```python
 import signal
 import asyncio
+import logging
 from kinesis import Producer, Consumer
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class GracefulShutdown:
     def __init__(self):
@@ -442,7 +473,7 @@ class GracefulShutdown:
             signal.signal(sig, self._signal_handler)
 
     def _signal_handler(self, signum, frame):
-        print(f"\nReceived signal {signum}, initiating graceful shutdown...")
+        logger.info(f"Received signal {signum}, initiating graceful shutdown...")
         self.shutdown_event.set()
 
     async def run_producer(self):
@@ -466,7 +497,7 @@ class GracefulShutdown:
                 except asyncio.TimeoutError:
                     continue
 
-            print("Producer shutting down, flushing remaining records...")
+            logger.info("Producer shutting down, flushing remaining records...")
             # Producer automatically flushes on exit
 
     async def run_consumer(self):
@@ -476,11 +507,11 @@ class GracefulShutdown:
 
             async for message in consumer:
                 if self.shutdown_event.is_set():
-                    print("Consumer shutting down after current batch...")
+                    logger.info("Consumer shutting down after current batch...")
                     break
 
                 # Process message
-                print(f"Processed: {message}")
+                logger.info(f"Processed: {message}")
 
     async def run(self):
         try:
@@ -489,9 +520,9 @@ class GracefulShutdown:
                 self.run_consumer()
             )
         except Exception as e:
-            print(f"Error during shutdown: {e}")
+            logger.error(f"Error during shutdown: {e}")
         finally:
-            print("Shutdown complete")
+            logger.info("Shutdown complete")
 
 # Usage
 async def main():
@@ -507,9 +538,14 @@ if __name__ == "__main__":
 Monitor your Kinesis streams in production:
 
 ```python
+import asyncio
+import logging
 import time
 from datetime import datetime, timedelta
 from kinesis import Consumer, Producer
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class StreamMonitor:
     def __init__(self, stream_name: str):
@@ -535,35 +571,35 @@ class StreamMonitor:
                 status = consumer.get_shard_status()
 
                 # Log shard health
-                print(f"\n📊 Stream Status Report - {datetime.now()}")
-                print(f"Total shards: {status['total_shards']}")
-                print(f"Active shards: {status['active_shards']}")
-                print(f"Closed shards: {status['closed_shards']}")
-                print(f"Behind shards: {status.get('behind_shards', 0)}")
+                logger.info(f"Stream Status Report - {datetime.now()}")
+                logger.info(f"Total shards: {status['total_shards']}")
+                logger.info(f"Active shards: {status['active_shards']}")
+                logger.info(f"Closed shards: {status['closed_shards']}")
+                logger.info(f"Behind shards: {status.get('behind_shards', 0)}")
 
                 # Check for resharding
                 if status['parent_shards'] > 0:
-                    print(f"⚠️ Resharding detected! Parent shards: {status['parent_shards']}")
+                    logger.warning(f"Resharding detected! Parent shards: {status['parent_shards']}")
 
                 # Monitor consumer lag
                 for shard in status['shard_details']:
                     if shard.get('behind_latest'):
                         lag = shard.get('records_behind', 'unknown')
-                        print(f"⚠️ Shard {shard['shard_id']} is behind by {lag} records")
+                        logger.warning(f"Shard {shard['shard_id']} is behind by {lag} records")
 
                 # Performance metrics
                 elapsed = time.time() - self.metrics["start_time"]
                 if elapsed > 0:
                     rps = self.metrics["records_processed"] / elapsed
                     bps = self.metrics["bytes_processed"] / elapsed
-                    print(f"\nPerformance Metrics:")
-                    print(f"Records/sec: {rps:.2f}")
-                    print(f"Bytes/sec: {bps:.2f}")
-                    print(f"Total errors: {self.metrics['errors']}")
+                    logger.info(f"Performance Metrics:")
+                    logger.info(f"Records/sec: {rps:.2f}")
+                    logger.info(f"Bytes/sec: {bps:.2f}")
+                    logger.info(f"Total errors: {self.metrics['errors']}")
 
                 # Check error rate
                 if self.metrics["errors"] > 100:
-                    print(f"❌ High error rate detected: {self.metrics['errors']} errors")
+                    logger.error(f"High error rate detected: {self.metrics['errors']} errors")
 
                 # Wait before next check
                 await asyncio.sleep(30)
@@ -585,9 +621,9 @@ class StreamMonitor:
 
                 try:
                     await producer.put(health_record, partition_key="health")
-                    print(f"✓ Health check sent at {datetime.now()}")
+                    logger.info(f"Health check sent at {datetime.now()}")
                 except Exception as e:
-                    print(f"❌ Health check failed: {e}")
+                    logger.error(f"Health check failed: {e}")
 
                 await asyncio.sleep(60)  # Every minute
 

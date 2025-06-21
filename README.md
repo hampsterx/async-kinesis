@@ -519,11 +519,11 @@ python tests/resharding/resharding_test.py --scenario scale-up-small
 
 ## Documentation
 
-- 📚 **[Getting Started Guide](./docs/getting-started.md)** - Step-by-step tutorials for beginners
-- 🔧 **[Common Patterns](./docs/common-patterns.md)** - Real-world use cases and examples
-- 🩹 **[Troubleshooting Guide](./docs/troubleshooting.md)** - Solutions for common issues
-- 🏗️ **[Architecture Details](./docs/DESIGN.md)** - Technical deep dive into the implementation
-- ❓ **[Why Another Library?](./docs/YETANOTHER.md)** - Comparison with other Kinesis libraries
+- **[Getting Started Guide](./docs/getting-started.md)** - Step-by-step tutorials for beginners
+- **[Common Patterns](./docs/common-patterns.md)** - Real-world use cases and examples
+- **[Troubleshooting Guide](./docs/troubleshooting.md)** - Solutions for common issues
+- **[Architecture Details](./docs/DESIGN.md)** - Technical deep dive into the implementation
+- **[Why Another Library?](./docs/YETANOTHER.md)** - Comparison with other Kinesis libraries
 
 [ARN]: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference-arns.html
 [StreamARN]: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_StreamDescription.html#Streams-Type-StreamDescription-StreamARN

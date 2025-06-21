@@ -16,6 +16,8 @@ from kinesis import Producer
 
 async with Producer(stream_name="my-stream") as producer:
     await producer.put({"message": "hello world"})
+    # Optional: specify partition key for ordering and distribution
+    await producer.put({"user_id": "123", "action": "login"}, partition_key="user-123")
 ```
 
 **Consumer:**
@@ -34,6 +36,7 @@ async with Consumer(stream_name="my-stream") as consumer:
 ✅ **High Performance**: Queue-based architecture with configurable batching
 ✅ **AWS Best Practices**: Parent-child shard ordering and proper error handling
 ✅ **Stream Addressing**: Support for both stream names and ARNs
+✅ **Custom Partition Keys**: Control record distribution and ordering across shards
 ✅ **Multi-Consumer Support**: Redis-based checkpointing with heartbeats
 ✅ **Flexible Processing**: Pluggable serialization (JSON, MessagePack, KPL)
 ✅ **Operational Visibility**: Rich monitoring APIs for production debugging
@@ -71,6 +74,43 @@ like `test`, or a full [StreamARN] like `arn:aws:kinesis:eu-central-1:8424044758
     async with Producer(stream_name="test") as producer:
         # Put item onto queue to be flushed via put_records()
         await producer.put({'my': 'data'})
+
+        # Use custom partition key for record distribution control
+        await producer.put({'user_id': '123', 'action': 'login'}, partition_key='user-123')
+
+### Custom Partition Keys
+
+Control shard distribution and maintain record ordering by specifying custom partition keys:
+
+```python
+async with Producer(stream_name="my-stream") as producer:
+    # Group related records with same partition key
+    await producer.put({'user_id': '123', 'action': 'login'}, partition_key='user-123')
+    await producer.put({'user_id': '123', 'action': 'view_page'}, partition_key='user-123')
+
+    # Different partition key for different user
+    await producer.put({'user_id': '456', 'action': 'login'}, partition_key='user-456')
+
+    # Use default generated partition key
+    await producer.put({'system': 'health_check'})  # Auto-generated key
+```
+
+**Key Benefits:**
+- **Ordered processing**: Records with same partition key go to same shard, maintaining order
+- **Load distribution**: Spread records across shards using different partition keys
+- **Grouping**: Keep related records together (e.g., all events for a user)
+- **Backward compatible**: Existing code without partition keys continues to work
+
+**Validation:**
+- Maximum 256 bytes when UTF-8 encoded
+- Supports Unicode characters
+- Cannot be empty string
+- Must be string type
+
+**Aggregation Behavior:**
+- **SimpleAggregator**: Records with different partition keys are batched separately
+- **KPL Aggregators**: Custom partition keys not supported (raises `ValueError`)
+- **Other Aggregators**: Automatically group records by partition key within batches
 
 
 Options:

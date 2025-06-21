@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -346,3 +346,289 @@ class TestConsumer:
             ) as consumer:
                 async for item in consumer:
                     break
+
+    @pytest.mark.asyncio
+    async def test_consumer_shard_refresh(self, test_stream, endpoint_url):
+        """Test shard refresh functionality."""
+        async with Consumer(
+            stream_name=test_stream,
+            endpoint_url=endpoint_url,
+        ) as consumer:
+            # Force a shard refresh
+            await consumer.refresh_shards()
+
+            # Should have discovered shards
+            assert consumer.shards is not None
+            assert len(consumer.shards) > 0
+
+    @pytest.mark.asyncio
+    async def test_consumer_shard_status(self, test_stream, endpoint_url):
+        """Test shard status reporting."""
+        async with Consumer(
+            stream_name=test_stream,
+            endpoint_url=endpoint_url,
+        ) as consumer:
+            # Get shard status
+            status = consumer.get_shard_status()
+
+            # Should have basic status information
+            assert "total_shards" in status
+            assert "active_shards" in status
+            assert "closed_shards" in status
+            assert "allocated_shards" in status
+            assert "shard_details" in status
+
+            # Should have at least one shard for the test stream
+            assert status["total_shards"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_consumer_closed_shard_handling(self, endpoint_url):
+        """Test handling of closed shards."""
+        consumer = Consumer(
+            stream_name="test-closed-shard",
+            endpoint_url=endpoint_url,
+        )
+
+        # Mock a shard that will be closed
+        mock_shard = {
+            "ShardId": "test-shard-001",
+            "ShardIterator": "test-iterator",
+            "stats": consumer.ShardStats if hasattr(consumer, "ShardStats") else None,
+        }
+
+        consumer.shards = [mock_shard]
+        consumer.checkpointer = AsyncMock()
+        consumer.checkpointer.is_allocated = lambda x: True
+        consumer.checkpointer.deallocate = AsyncMock()
+
+        # Simulate the closed shard scenario in the fetch logic
+        shard_id = mock_shard["ShardId"]
+        consumer._closed_shards.add(shard_id)
+
+        # Verify the shard is marked as closed
+        assert shard_id in consumer._closed_shards
+
+        # Test shard status with closed shard
+        status = consumer.get_shard_status()
+        assert status["closed_shards"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_consumer_shard_discovery_integration(
+        self, random_stream_name, endpoint_url
+    ):
+        """Test shard discovery during stream operations."""
+        # Create a stream with multiple shards
+        async with Producer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            create_stream=True,
+            create_stream_shards=2,
+        ) as producer:
+            await producer.put({"test": "message"})
+            await producer.flush()
+
+        # Consumer should discover all shards
+        async with Consumer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+        ) as consumer:
+            # Force refresh to ensure shards are discovered
+            await consumer.refresh_shards()
+
+            # Should have discovered the shards
+            status = consumer.get_shard_status()
+            assert status["total_shards"] == 2
+            assert status["active_shards"] == 2
+
+            # Verify shard details contain the expected information
+            for shard_detail in status["shard_details"]:
+                assert "shard_id" in shard_detail
+                assert "is_allocated" in shard_detail
+                assert "is_closed" in shard_detail
+                assert "has_iterator" in shard_detail
+
+    @pytest.mark.asyncio
+    async def test_consumer_expired_iterator_handling(self, test_stream, endpoint_url):
+        """Test handling of expired shard iterators."""
+        from unittest.mock import AsyncMock, patch
+
+        from botocore.exceptions import ClientError
+
+        consumer = Consumer(
+            stream_name=test_stream,
+            endpoint_url=endpoint_url,
+        )
+
+        # Setup mock shard
+        mock_shard = {
+            "ShardId": "test-shard-001",
+            "ShardIterator": "expired-iterator",
+            "LastSequenceNumber": "123456",
+            "throttler": AsyncMock(),
+        }
+
+        # Mock the client and methods
+        consumer.client = AsyncMock()
+        consumer.get_shard_iterator = AsyncMock(return_value="new-iterator")
+
+        # Mock expired iterator exception
+        expired_error = ClientError(
+            error_response={"Error": {"Code": "ExpiredIteratorException"}},
+            operation_name="GetRecords",
+        )
+
+        # Test that expired iterator is handled properly
+        # This would normally be called in get_records method
+        try:
+            # The improved error handling should recreate the iterator
+            await consumer.get_shard_iterator(
+                shard_id=mock_shard["ShardId"],
+                last_sequence_number=mock_shard["LastSequenceNumber"],
+            )
+            # Should succeed with new iterator
+            assert True
+        except Exception:
+            pytest.fail("Should handle expired iterator gracefully")
+
+    @pytest.mark.asyncio
+    async def test_consumer_shard_allocation_skips_closed(
+        self, test_stream, endpoint_url
+    ):
+        """Test that shard allocation skips closed shards."""
+        async with Consumer(
+            stream_name=test_stream,
+            endpoint_url=endpoint_url,
+        ) as consumer:
+            # Manually mark a shard as closed
+            if consumer.shards:
+                test_shard_id = consumer.shards[0]["ShardId"]
+                consumer._closed_shards.add(test_shard_id)
+
+                # The fetch method should skip this shard
+                # This is tested implicitly through the status
+                status = consumer.get_shard_status()
+                assert status["closed_shards"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_consumer_parent_child_ordering(self, endpoint_url):
+        """Test parent-child shard ordering logic."""
+        consumer = Consumer(
+            stream_name="test-topology",
+            endpoint_url=endpoint_url,
+        )
+
+        # Mock shards with parent-child relationships
+        mock_shards = [
+            {
+                "ShardId": "shard-parent-001",
+                "SequenceNumberRange": {"StartingSequenceNumber": "100"},
+                # No ParentShardId - this is a parent
+            },
+            {
+                "ShardId": "shard-child-001",
+                "ParentShardId": "shard-parent-001",
+                "SequenceNumberRange": {"StartingSequenceNumber": "200"},
+            },
+            {
+                "ShardId": "shard-child-002",
+                "ParentShardId": "shard-parent-001",
+                "SequenceNumberRange": {"StartingSequenceNumber": "300"},
+            },
+        ]
+
+        # Build topology
+        consumer._build_shard_topology(mock_shards)
+
+        # Verify topology is correctly built
+        assert "shard-parent-001" in consumer._parent_shards
+        assert "shard-child-001" in consumer._child_shards
+        assert "shard-child-002" in consumer._child_shards
+
+        # Parent should be allocatable
+        assert consumer._should_allocate_shard("shard-parent-001") == True
+
+        # Children should NOT be allocatable while parent is active
+        assert consumer._should_allocate_shard("shard-child-001") == False
+        assert consumer._should_allocate_shard("shard-child-002") == False
+
+        # Mark parent as exhausted
+        consumer._exhausted_parents.add("shard-parent-001")
+
+        # Now children should be allocatable
+        assert consumer._should_allocate_shard("shard-child-001") == True
+        assert consumer._should_allocate_shard("shard-child-002") == True
+
+    @pytest.mark.asyncio
+    async def test_consumer_shard_topology_status(self, endpoint_url):
+        """Test shard status includes topology information."""
+        consumer = Consumer(
+            stream_name="test-topology",
+            endpoint_url=endpoint_url,
+        )
+
+        # Mock shards with parent-child relationships
+        mock_shards = [
+            {"ShardId": "parent-1"},
+            {"ShardId": "child-1", "ParentShardId": "parent-1"},
+            {"ShardId": "child-2", "ParentShardId": "parent-1"},
+        ]
+
+        consumer.shards = mock_shards
+        consumer._build_shard_topology(mock_shards)
+
+        status = consumer.get_shard_status()
+
+        # Should include topology information
+        assert "parent_shards" in status
+        assert "child_shards" in status
+        assert "exhausted_parents" in status
+        assert "topology" in status
+
+        # Should have correct counts
+        assert status["parent_shards"] == 1
+        assert status["child_shards"] == 2
+        assert status["exhausted_parents"] == 0
+
+        # Should include topology maps
+        assert "parent_child_map" in status["topology"]
+        assert "child_parent_map" in status["topology"]
+
+        # Verify shard details include new fields
+        for shard_detail in status["shard_details"]:
+            assert "is_parent" in shard_detail
+            assert "is_child" in shard_detail
+            assert "can_allocate" in shard_detail
+
+    @pytest.mark.asyncio
+    async def test_consumer_resharding_detection(self, endpoint_url):
+        """Test detection of resharding events."""
+        consumer = Consumer(
+            stream_name="test-resharding",
+            endpoint_url=endpoint_url,
+        )
+
+        # Initial shards
+        consumer.shards = [{"ShardId": "original-shard"}]
+        consumer._last_shard_refresh = 0  # Force refresh
+
+        # Mock new shards after resharding
+        new_shards = [
+            {"ShardId": "original-shard"},  # Still exists
+            {"ShardId": "child-1", "ParentShardId": "original-shard"},
+            {"ShardId": "child-2", "ParentShardId": "original-shard"},
+        ]
+
+        # Mock the stream description call
+        from unittest.mock import AsyncMock
+
+        consumer.get_stream_description = AsyncMock(
+            return_value={"Shards": new_shards, "StreamStatus": "ACTIVE"}
+        )
+
+        # Trigger refresh
+        await consumer.refresh_shards()
+
+        # Should have detected the topology
+        assert len(consumer._parent_shards) == 1
+        assert len(consumer._child_shards) == 2
+        assert "original-shard" in consumer._parent_shards

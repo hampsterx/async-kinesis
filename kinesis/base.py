@@ -54,6 +54,9 @@ class Base:
         self.RECONNECT = "RECONNECT"
         self.ACTIVE = "ACTIVE"
         self.INITIALIZE = "INITIALIZE"
+        self.UPDATING = "UPDATING"
+        self.CREATING = "CREATING"
+        self.DELETING = "DELETING"
 
         self.stream_status = self.INITIALIZE
         # Short Lived producer might want to skip describing stream on startup

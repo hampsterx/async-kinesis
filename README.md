@@ -56,6 +56,7 @@ async with Consumer(stream_name="my-stream") as consumer:
 - **Multi-Consumer Support**: Redis-based checkpointing with heartbeats
 - **Flexible Processing**: Pluggable serialization (JSON, MessagePack, KPL)
 - **Operational Visibility**: Rich monitoring APIs for production debugging
+- **Metrics & Observability**: Optional Prometheus/CloudWatch metrics with zero overhead when disabled
 
 ### Resharding Support Highlights
 
@@ -73,6 +74,10 @@ Unlike basic Kinesis libraries, async-kinesis provides enterprise-grade reshardi
 
 ```bash
 pip install async-kinesis
+
+# With optional dependencies
+pip install async-kinesis[prometheus]  # For Prometheus metrics
+pip install async-kinesis[redis]       # For Redis checkpointing
 ```
 
 ## Basic Usage
@@ -102,6 +107,18 @@ async with Producer(stream_name="test") as producer:
 
     # Use custom partition key for record distribution control
     await producer.put({'user_id': '123', 'action': 'login'}, partition_key='user-123')
+```
+
+**With Metrics:**
+```python
+from kinesis import Producer, PrometheusMetricsCollector
+
+# Enable Prometheus metrics (optional)
+metrics = PrometheusMetricsCollector(namespace="my_app")
+
+async with Producer(stream_name="test", metrics_collector=metrics) as producer:
+    await producer.put({'my': 'data'})
+    # Metrics are automatically collected: throughput, errors, batch sizes, etc.
 ```
 
 ## Configuration
@@ -520,6 +537,7 @@ python tests/resharding/resharding_test.py --scenario scale-up-small
 
 - **[Getting Started Guide](./docs/getting-started.md)** - Step-by-step tutorials for beginners
 - **[Common Patterns](./docs/common-patterns.md)** - Real-world use cases and examples
+- **[Metrics & Observability](./docs/metrics.md)** - Prometheus integration and monitoring
 - **[Troubleshooting Guide](./docs/troubleshooting.md)** - Solutions for common issues
 - **[Architecture Details](./docs/DESIGN.md)** - Technical deep dive into the implementation
 - **[Why Another Library?](./docs/YETANOTHER.md)** - Comparison with other Kinesis libraries

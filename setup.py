@@ -35,5 +35,6 @@ setup(
         "kpl": ["aws-kinesis-agg>=1.1.6"],
         "redis": ["redis>=4.0.0"],
         "msgpack": ["msgpack>=0.6.1"],
+        "prometheus": ["prometheus-client>=0.15.0"],
     },
 )

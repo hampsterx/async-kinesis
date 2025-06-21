@@ -11,6 +11,7 @@ from botocore.exceptions import ClientError
 
 from . import exceptions
 from .base import Base
+from .metrics import MetricsCollector, MetricType, get_metrics_collector
 from .processors import JsonProcessor, Processor
 from .utils import Throttler
 
@@ -38,6 +39,7 @@ class Producer(Base):
         expo_backoff_limit: int = 120,
         create_stream: bool = False,
         create_stream_shards: int = 1,
+        metrics_collector: Optional[MetricsCollector] = None,
     ) -> None:
 
         super(Producer, self).__init__(
@@ -89,6 +91,9 @@ class Producer(Base):
         self.flush_total_records = 0
         self.flush_total_size = 0
 
+        # Metrics collector
+        self.metrics = metrics_collector if metrics_collector else get_metrics_collector()
+
     def set_put_rate_throttle(self):
         self.put_rate_throttle = Throttler(
             rate_limit=self.put_rate_limit_per_shard * (len(self.shards) if self.shards else 1),
@@ -138,6 +143,9 @@ class Producer(Base):
 
         for output in self.processor.add_item(data, partition_key):
             await self.queue.put(output)
+
+        # Update queue size metric
+        self.metrics.gauge(MetricType.PRODUCER_QUEUE_SIZE, self.queue.qsize(), {"stream_name": self.stream_name})
 
     async def close(self):
         log.debug(f"Closing Connection.. (stream status:{self.stream_status})")
@@ -207,8 +215,13 @@ class Producer(Base):
                 break
 
             else:
-                result = await self._push_kinesis(items)
-                await self.process_result(result, items)
+                # Measure flush duration
+                with self.metrics.timer(MetricType.PRODUCER_FLUSH_DURATION, {"stream_name": self.stream_name}):
+                    result = await self._push_kinesis(items)
+                    await self.process_result(result, items)
+
+                # Record batch size
+                self.metrics.histogram(MetricType.PRODUCER_BATCH_SIZE, len(items), {"stream_name": self.stream_name})
 
         self.is_flushing = False
 
@@ -235,6 +248,16 @@ class Producer(Base):
 
                 self.throughput_exceeded_count += 1
 
+                # Track throttling metrics
+                self.metrics.increment(
+                    MetricType.PRODUCER_THROTTLES, result["FailedRecordCount"], {"stream_name": self.stream_name}
+                )
+                self.metrics.increment(
+                    MetricType.PRODUCER_ERRORS,
+                    result["FailedRecordCount"],
+                    {"stream_name": self.stream_name, "error_type": "ProvisionedThroughputExceededException"},
+                )
+
                 for i, record in enumerate(result["Records"]):
                     if "ErrorCode" in record:
                         self.overflow.append(items[i])
@@ -247,6 +270,13 @@ class Producer(Base):
                 log.warning("Received InternalFailure from Kinesis")
                 await self.get_conn()
 
+                # Track internal failure metrics
+                self.metrics.increment(
+                    MetricType.PRODUCER_ERRORS,
+                    result["FailedRecordCount"],
+                    {"stream_name": self.stream_name, "error_type": "InternalFailure"},
+                )
+
                 for i, record in enumerate(result["Records"]):
                     if "ErrorCode" in record:
                         self.overflow.append(items[i])
@@ -255,6 +285,16 @@ class Producer(Base):
                 raise exceptions.UnknownException("Failed to put records due to: {}".format(", ".join(errors)))
 
         else:
+            # Track successful records
+            successful_count = len(items) - result.get("FailedRecordCount", 0)
+            if successful_count > 0:
+                # Calculate total bytes sent (approximate)
+                total_bytes = sum(len(item["Data"]) for item in items[:successful_count])
+
+                self.metrics.increment(
+                    MetricType.PRODUCER_RECORDS_SENT, successful_count, {"stream_name": self.stream_name}
+                )
+                self.metrics.increment(MetricType.PRODUCER_BYTES_SENT, total_bytes, {"stream_name": self.stream_name})
 
             if self.after_flush_fun:
                 await self.after_flush_fun(items)

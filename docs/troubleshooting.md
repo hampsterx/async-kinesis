@@ -439,12 +439,3 @@ async def test_kinesis_connection():
         print(f"✗ Connection failed: {e}")
         raise
 ```
-
-## Getting Help
-
-If you're still experiencing issues:
-
-1. Check the [GitHub Issues](https://github.com/yourrepo/async-kinesis/issues)
-2. Enable debug logging and collect logs
-3. Provide a minimal reproducible example
-4. Include your configuration and environment details

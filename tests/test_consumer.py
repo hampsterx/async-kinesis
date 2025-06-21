@@ -282,20 +282,56 @@ class TestConsumer:
 
     @pytest.mark.asyncio
     async def test_consumer_stream_arn_support(self, endpoint_url):
-        """Test consumer with stream ARN (if supported)."""
-        # This would test the new ARN functionality from the recent PR
-        stream_arn = "arn:aws:kinesis:us-east-1:123456789012:stream/test-stream"
+        """Test consumer with stream ARN (PR #39)."""
+        # Create a mock ARN
+        stream_arn = "arn:aws:kinesis:us-east-1:123456789012:stream/test-consumer-arn"
 
-        # This might fail if ARN support isn't fully implemented yet
-        try:
-            async with Consumer(
-                stream_name=stream_arn,
+        consumer = Consumer(
+            stream_name=stream_arn,
+            endpoint_url=endpoint_url,
+        )
+
+        # Verify that the address property returns StreamARN
+        address = consumer.address
+        assert "StreamARN" in address
+        assert address["StreamARN"] == stream_arn
+        assert "StreamName" not in address
+        assert consumer.stream_name == stream_arn
+
+    @pytest.mark.asyncio
+    async def test_consumer_arn_format_validation(self, endpoint_url):
+        """Test consumer correctly handles various ARN formats (PR #39)."""
+        test_cases = [
+            # (stream_name, should_be_arn)
+            ("arn:aws:kinesis:us-east-1:123456789012:stream/test", True),
+            ("arn:aws:kinesis:eu-west-1:999999999999:stream/my-stream", True),
+            ("arn:aws-cn:kinesis:cn-north-1:123456789012:stream/test", True),
+            ("arn:aws-us-gov:kinesis:us-gov-west-1:123456789012:stream/test", True),
+            ("test-stream", False),
+            ("my_stream", False),
+            ("stream-123", False),
+            (
+                "arnot:aws:kinesis:us-east-1:123456789012:stream/test",
+                False,
+            ),  # Invalid prefix
+            ("arn-test-stream", False),  # Starts with arn but not a valid ARN
+        ]
+
+        for stream_name, should_be_arn in test_cases:
+            consumer = Consumer(
+                stream_name=stream_name,
                 endpoint_url=endpoint_url,
-            ) as consumer:
-                assert consumer.stream_name == stream_arn
-        except Exception:
-            # ARN support might not be fully implemented yet
-            pytest.skip("ARN support not fully implemented")
+            )
+            address = consumer.address
+
+            if should_be_arn:
+                assert "StreamARN" in address
+                assert address["StreamARN"] == stream_name
+                assert "StreamName" not in address
+            else:
+                assert "StreamName" in address
+                assert address["StreamName"] == stream_name
+                assert "StreamARN" not in address
 
     @pytest.mark.asyncio
     async def test_consumer_session_cleanup_on_connection_failure(self):

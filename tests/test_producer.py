@@ -273,3 +273,57 @@ class TestProducer:
                 "auth-fail-test-stream", processor=JsonProcessor(), retry_limit=1
             ) as producer:
                 await producer.put({"test": "data"})
+
+    @pytest.mark.asyncio
+    async def test_producer_with_stream_arn(self, endpoint_url):
+        """Test producer with stream ARN instead of name (PR #39)."""
+        # Create a mock ARN
+        stream_arn = "arn:aws:kinesis:us-east-1:123456789012:stream/test-producer-arn"
+
+        producer = Producer(
+            stream_name=stream_arn,
+            endpoint_url=endpoint_url,
+            create_stream=False,
+        )
+
+        # Verify that the address property returns StreamARN
+        address = producer.address
+        assert "StreamARN" in address
+        assert address["StreamARN"] == stream_arn
+        assert "StreamName" not in address
+
+    @pytest.mark.asyncio
+    async def test_producer_arn_format_validation(self, endpoint_url):
+        """Test producer correctly handles various ARN formats (PR #39)."""
+        test_cases = [
+            # (stream_name, should_be_arn)
+            ("arn:aws:kinesis:us-east-1:123456789012:stream/test", True),
+            ("arn:aws:kinesis:eu-west-1:999999999999:stream/my-stream", True),
+            ("arn:aws-cn:kinesis:cn-north-1:123456789012:stream/test", True),
+            ("arn:aws-us-gov:kinesis:us-gov-west-1:123456789012:stream/test", True),
+            ("test-stream", False),
+            ("my_stream", False),
+            ("stream-123", False),
+            (
+                "arnot:aws:kinesis:us-east-1:123456789012:stream/test",
+                False,
+            ),  # Invalid prefix
+            ("arn-test-stream", False),  # Starts with arn but not a valid ARN
+        ]
+
+        for stream_name, should_be_arn in test_cases:
+            producer = Producer(
+                stream_name=stream_name,
+                endpoint_url=endpoint_url,
+                create_stream=False,
+            )
+            address = producer.address
+
+            if should_be_arn:
+                assert "StreamARN" in address
+                assert address["StreamARN"] == stream_name
+                assert "StreamName" not in address
+            else:
+                assert "StreamName" in address
+                assert address["StreamName"] == stream_name
+                assert "StreamARN" not in address

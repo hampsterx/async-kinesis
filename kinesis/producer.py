@@ -80,6 +80,7 @@ class Producer(Base):
         self.flush_task = asyncio.create_task(self._flush())
         self.is_flushing = False
         self.after_flush_fun = after_flush_fun
+        self._stop_flush = False
 
         # keep track of these (used by unit test only)
         self.throughput_exceeded_count = 0
@@ -122,12 +123,21 @@ class Producer(Base):
     async def close(self):
         log.debug(f"Closing Connection.. (stream status:{self.stream_status})")
         if not self.stream_status == self.RECONNECT:
-            # Cancel Flush Task
-            self.flush_task.cancel()
-            try:
-                await self.flush_task
-            except asyncio.CancelledError:
-                pass
+            # Stop the flush task gracefully first
+            self._stop_flush = True
+            
+            # Cancel Flush Task if still running
+            if self.flush_task and not self.flush_task.done():
+                self.flush_task.cancel()
+                try:
+                    # Give the task a moment to handle cancellation properly
+                    await asyncio.wait_for(self.flush_task, timeout=1.0)
+                except asyncio.CancelledError:
+                    pass
+                except asyncio.TimeoutError:
+                    log.debug("Flush task cancellation timed out")
+                except Exception as e:
+                    log.debug(f"Error during flush task cleanup: {e}")
             # final flush (probably not required but no harm)
             await self.flush()
 
@@ -135,11 +145,22 @@ class Producer(Base):
             await self.client.close()
 
     async def _flush(self):
-        while True:
-            if self.stream_status == self.ACTIVE:
-                if not self.is_flushing:
-                    await self.flush()
-            await asyncio.sleep(self.buffer_time)
+        try:
+            while not self._stop_flush:
+                if self.stream_status == self.ACTIVE:
+                    if not self.is_flushing:
+                        await self.flush()
+                
+                # Sleep in small increments to check stop flag more frequently
+                sleep_remaining = self.buffer_time
+                while sleep_remaining > 0 and not self._stop_flush:
+                    sleep_time = min(0.1, sleep_remaining)  # Check every 100ms
+                    await asyncio.sleep(sleep_time)
+                    sleep_remaining -= sleep_time
+                    
+        except asyncio.CancelledError:
+            log.debug("Auto-flush task cancelled")
+            raise
 
     async def flush(self):
 

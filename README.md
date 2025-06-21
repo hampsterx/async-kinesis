@@ -13,6 +13,11 @@ pip install async-kinesis
   - consumer iterates over msg queue independent of shard readers
 - Configurable to handle Sharding limits but will throttle/retry if required
   - ie multiple independent clients are saturating the Shards
+- **Dynamic shard handling and resharding support**
+  - automatically discovers new shards during Kinesis stream resharding
+  - graceful handling of closed shards when `NextShardIterator` is null
+  - robust error recovery for expired shard iterators
+  - shard status monitoring and operational visibility
 - Checkpointing with heartbeats
   - deadlock + reallocation of shards if checkpoint fails to heartbeat within "session_timeout"
 - processors (aggregator + serializer)
@@ -108,6 +113,94 @@ Options:
 | create_stream | False | Creates a Kinesis Stream based on the `stream_name` keyword argument. Note if stream already existing it will ignore |
 | create_stream_shards | 1 | Sets the amount of shard you want for your new stream. Note if stream already existing it will ignore  |
 | timestamp | None | Timestamp to start reading stream from. Used with iterator type "AT_TIMESTAMP"
+
+## Shard Management
+
+The consumer includes sophisticated shard management capabilities for handling Kinesis stream resharding. Our approach combines automatic topology management with lightweight coordination, providing production-ready resharding support without the overhead of external databases or complex lease management systems.
+
+### Automatic Shard Discovery
+- **Dynamic detection**: Automatically discovers new shards during resharding operations
+- **Configurable refresh**: Checks for new shards every 60 seconds (configurable via `_shard_refresh_interval`)
+- **State preservation**: Maintains existing shard iterators and statistics when discovering new shards
+- **Resharding events**: Proactively detects and logs resharding events when child shards appear
+
+### Parent-Child Shard Ordering (AWS Best Practice)
+- **Topology mapping**: Automatically builds parent-child relationship maps from shard metadata
+- **Sequential consumption**: Enforces reading parent shards before child shards to maintain data order
+- **Exhaustion tracking**: Tracks when parent shards are fully consumed to enable child consumption
+- **Smart allocation**: Only allocates child shards after their parents are exhausted or closed
+
+### Closed Shard Handling
+- **Graceful closure**: Properly handles shards that reach end-of-life (`NextShardIterator` returns `null`)
+- **Resource cleanup**: Automatically deallocates closed shards from checkpointers
+- **Parent transitioning**: Marks exhausted parent shards to enable their children for consumption
+- **Coordination**: Enables other consumers to take over child shards immediately
+
+### Error Recovery
+- **Iterator expiration**: Automatically recreates expired shard iterators from last known position
+- **Missing shards**: Handles cases where shards are deleted or become unavailable
+- **Connection recovery**: Robust retry logic with exponential backoff
+- **Topology resilience**: Maintains parent-child relationships even during connection failures
+
+### Monitoring & Operational Visibility
+Use `consumer.get_shard_status()` to get comprehensive operational visibility:
+
+```python
+status = consumer.get_shard_status()
+
+# Overall shard metrics
+print(f"Total shards: {status['total_shards']}")
+print(f"Active shards: {status['active_shards']}")
+print(f"Closed shards: {status['closed_shards']}")
+print(f"Allocated shards: {status['allocated_shards']}")
+
+# Topology information (resharding awareness)
+print(f"Parent shards: {status['parent_shards']}")
+print(f"Child shards: {status['child_shards']}")
+print(f"Exhausted parents: {status['exhausted_parents']}")
+
+# Parent-child relationships
+for parent, children in status['topology']['parent_child_map'].items():
+    print(f"Parent {parent} → Children {children}")
+
+# Per-shard details with topology info
+for shard in status['shard_details']:
+    print(f"Shard {shard['shard_id']}: "
+          f"allocated={shard['is_allocated']}, "
+          f"parent={shard['is_parent']}, "
+          f"child={shard['is_child']}, "
+          f"can_allocate={shard['can_allocate']}")
+```
+
+This provides detailed information about shard allocation, closure status, parent-child relationships, and iterator health for production monitoring and debugging resharding scenarios.
+
+## Architecture Comparison
+
+### Traditional Approaches
+
+**External Database Coordination**: Some enterprise solutions rely on external databases (like DynamoDB) for lease management and shard coordination. While sophisticated, this approach requires additional infrastructure, increases operational complexity, and adds latency to shard allocation decisions.
+
+**Manual Thread-per-Shard**: Basic implementations use simple iterator-based loops with one thread per shard. These require manual resharding detection, lack parent-child ordering enforcement, and provide limited coordination between multiple consumers.
+
+**Reactive Closed Shard Detection**: Most basic approaches only detect closed shards when `NextShardIterator` returns null, without proactive resharding awareness or topology management.
+
+### Our Approach
+
+**Lightweight Async Coordination**: Uses Redis-based checkpointing with heartbeat mechanisms for multi-consumer coordination without requiring external database infrastructure.
+
+**Proactive Topology Management**: Automatically builds and maintains parent-child shard relationships from AWS metadata, enforcing proper consumption ordering according to AWS best practices.
+
+**Intelligent Allocation**: Only allocates child shards after their parents are exhausted, preventing data ordering issues during resharding events.
+
+**Production-Ready Error Recovery**: Comprehensive handling of iterator expiration, connection failures, and shard state transitions with exponential backoff and automatic recovery.
+
+### Benefits
+
+- **Operational Simplicity**: No additional database infrastructure required beyond optional Redis for multi-consumer scenarios
+- **AWS Best Practices**: Automatic compliance with parent-child consumption ordering
+- **Async Performance**: Built for modern async/await patterns with non-blocking operations
+- **Resource Efficiency**: Intelligent shard allocation reduces unnecessary resource consumption
+- **Production Monitoring**: Rich operational visibility for debugging and monitoring resharding scenarios
 
 
 ## Checkpointers

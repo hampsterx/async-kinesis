@@ -289,7 +289,7 @@ class Producer(Base):
             successful_count = len(items) - result.get("FailedRecordCount", 0)
             if successful_count > 0:
                 # Calculate total bytes sent (approximate)
-                total_bytes = sum(len(item["Data"]) for item in items[:successful_count])
+                total_bytes = sum(len(item.data) for item in items[:successful_count])
 
                 self.metrics.increment(
                     MetricType.PRODUCER_RECORDS_SENT, successful_count, {"stream_name": self.stream_name}

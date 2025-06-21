@@ -109,8 +109,8 @@ class Producer(Base):
         # Check byte length (UTF-8 encoded)
         try:
             encoded_key = partition_key.encode("utf-8")
-        except UnicodeEncodeError:
-            raise exceptions.ValidationError("Partition key must be valid UTF-8")
+        except UnicodeEncodeError as e:
+            raise exceptions.ValidationError("Partition key must be valid UTF-8") from e
 
         if len(encoded_key) > 256:
             raise exceptions.ValidationError(

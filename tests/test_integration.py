@@ -469,7 +469,9 @@ class TestIntegration:
             pytest.skip("LocalStack may not fully support ARN addressing")
 
         # Create a mock ARN for the stream
-        stream_arn = f"arn:aws:kinesis:us-east-1:123456789012:stream/{random_stream_name}"
+        stream_arn = (
+            f"arn:aws:kinesis:us-east-1:123456789012:stream/{random_stream_name}"
+        )
 
         test_messages = [
             {"arn_test": i, "message": f"arn-message-{i}"} for i in range(3)

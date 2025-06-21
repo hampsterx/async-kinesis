@@ -310,7 +310,10 @@ class TestConsumer:
             ("test-stream", False),
             ("my_stream", False),
             ("stream-123", False),
-            ("arnot:aws:kinesis:us-east-1:123456789012:stream/test", False),  # Invalid prefix
+            (
+                "arnot:aws:kinesis:us-east-1:123456789012:stream/test",
+                False,
+            ),  # Invalid prefix
             ("arn-test-stream", False),  # Starts with arn but not a valid ARN
         ]
 

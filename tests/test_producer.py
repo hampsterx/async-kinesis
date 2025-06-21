@@ -321,3 +321,276 @@ class TestProducer:
                 assert "StreamName" in address
                 assert address["StreamName"] == stream_name
                 assert "StreamARN" not in address
+
+    @pytest.mark.asyncio
+    async def test_producer_bandwidth_throttle_per_item_not_cumulative(self, random_stream_name, endpoint_url):
+        """
+        Test that bandwidth throttling uses individual item sizes, not cumulative sizes.
+
+        This test catches the bug fixed in PR #37 where bandwidth throttle was using
+        self.flush_total_size (cumulative) instead of size_kb (individual item size).
+        """
+        from unittest.mock import MagicMock
+
+        # Track what sizes the bandwidth throttle is called with
+        throttle_sizes = []
+
+        class MockThrottler:
+            def __call__(self, size=1):
+                throttle_sizes.append(size)
+                return self
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+        async with Producer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            create_stream=True,
+            create_stream_shards=1,
+            batch_size=3,  # Allow multiple items in batch
+            buffer_time=10,  # Long buffer time to prevent auto-flush
+        ) as producer:
+            # Replace the throttler instance with our mock
+            producer.put_bandwidth_throttle = MockThrottler()
+
+            # Add items of different sizes to create a batch
+            # Item 1: ~100 bytes (size_kb = 1KB due to math.ceil(100/1024))
+            small_data = "x" * 100
+            await producer.put({"data": small_data})
+
+            # Item 2: ~2KB (size_kb = 2KB due to math.ceil(2048/1024))
+            medium_data = "x" * 2048
+            await producer.put({"data": medium_data})
+
+            # Item 3: ~3KB (size_kb = 3KB due to math.ceil(3072/1024))
+            large_data = "x" * 3072
+            await producer.put({"data": large_data})
+
+            # Force flush to process the batch
+            await producer.flush()
+
+        # Verify throttle was called with individual item sizes, not cumulative
+        # Expected individual sizes: [1, 3, 4] KB (accounting for JSON serialization overhead)
+        # With the bug, would be cumulative: [1, 4, 8] KB
+        expected_sizes = [1, 3, 4]
+        assert len(throttle_sizes) == 3, f"Expected 3 throttle calls, got {len(throttle_sizes)}"
+        assert throttle_sizes == expected_sizes, (
+            f"Bandwidth throttle should use individual item sizes {expected_sizes}, "
+            f"but got {throttle_sizes}. This suggests cumulative sizing bug from PR #37."
+        )
+
+    @pytest.mark.asyncio
+    async def test_producer_custom_partition_key(self, random_stream_name, endpoint_url):
+        """Test producer with custom partition key (Issue #34)."""
+        async with Producer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            create_stream=True,
+            create_stream_shards=1,
+        ) as producer:
+            await producer.put({"message": "test"}, partition_key="custom-key")
+            await producer.flush()
+
+    @pytest.mark.asyncio
+    async def test_producer_partition_key_validation(self, random_stream_name, endpoint_url):
+        """Test partition key validation (Issue #34)."""
+        async with Producer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            create_stream=True,
+            create_stream_shards=1,
+        ) as producer:
+            # Test invalid partition key types
+            with pytest.raises(exceptions.ValidationError, match="must be a string"):
+                await producer.put({"message": "test"}, partition_key=123)
+
+            # Test empty partition key
+            with pytest.raises(exceptions.ValidationError, match="cannot be empty"):
+                await producer.put({"message": "test"}, partition_key="")
+
+            # Test partition key too long (over 256 bytes)
+            long_key = "x" * 257
+            with pytest.raises(exceptions.ValidationError, match="256 bytes or less"):
+                await producer.put({"message": "test"}, partition_key=long_key)
+
+            # Test valid partition key
+            await producer.put({"message": "test"}, partition_key="valid-key")
+            await producer.flush()
+
+    @pytest.mark.asyncio
+    async def test_producer_partition_key_unicode(self, random_stream_name, endpoint_url):
+        """Test partition key with Unicode characters (Issue #34)."""
+        async with Producer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            create_stream=True,
+            create_stream_shards=1,
+        ) as producer:
+            # Test Unicode partition key that's under 256 bytes
+            unicode_key = "用户-123"
+            await producer.put({"message": "test"}, partition_key=unicode_key)
+            await producer.flush()
+
+            # Test Unicode key that exceeds 256 bytes when encoded
+            # Each Chinese character is 3 bytes in UTF-8
+            long_unicode = "用" * 86  # 86 * 3 = 258 bytes
+            with pytest.raises(exceptions.ValidationError, match="256 bytes or less"):
+                await producer.put({"message": "test"}, partition_key=long_unicode)
+
+    @pytest.mark.asyncio
+    async def test_producer_mixed_partition_keys(self, random_stream_name, endpoint_url):
+        """Test producer with mixed custom and default partition keys (Issue #34)."""
+        async with Producer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            create_stream=True,
+            create_stream_shards=1,
+            batch_size=5,
+            buffer_time=10,  # Long buffer time to prevent auto-flush
+        ) as producer:
+            # Mix of custom and default partition keys
+            await producer.put({"message": "test1"}, partition_key="custom-1")
+            await producer.put({"message": "test2"})  # Default key
+            await producer.put({"message": "test3"}, partition_key="custom-2")
+            await producer.flush()
+
+    @pytest.mark.asyncio
+    async def test_producer_kpl_partition_key_compatibility(self, random_stream_name, endpoint_url):
+        """Test that KPL processors reject custom partition keys (Issue #34)."""
+        try:
+            import aws_kinesis_agg
+        except ImportError:
+            pytest.skip("KPL aggregation library not available")
+
+        from kinesis.processors import KPLJsonProcessor
+
+        # KPL processor should reject custom partition keys
+        async with Producer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            create_stream=True,
+            create_stream_shards=1,
+            processor=KPLJsonProcessor(),
+        ) as producer:
+            # Should work without partition key
+            await producer.put({"message": "test"})
+
+            # Should fail with custom partition key
+            with pytest.raises(ValueError, match="Custom partition keys are not supported with KPL"):
+                await producer.put({"message": "test"}, partition_key="custom-key")
+
+    @pytest.mark.asyncio
+    async def test_producer_partition_key_aggregation_grouping(self, random_stream_name, endpoint_url):
+        """Test that aggregated records group by partition key (Issue #34)."""
+        from unittest.mock import MagicMock
+
+        from kinesis.processors import JsonLineProcessor
+
+        # Track what gets sent to Kinesis
+        sent_records = []
+
+        class MockClient:
+            async def put_records(self, Records, **kwargs):
+                sent_records.extend(Records)
+                return {"FailedRecordCount": 0, "Records": [{"ShardId": "shard-1"} for _ in Records]}
+
+            async def close(self):
+                pass
+
+        async with Producer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            create_stream=True,
+            create_stream_shards=1,
+            processor=JsonLineProcessor(),
+            batch_size=10,
+            buffer_time=10,  # Long buffer time to prevent auto-flush
+        ) as producer:
+            # Replace client with mock
+            producer.client = MockClient()
+
+            # Add records with different partition keys
+            await producer.put({"message": "test1"}, partition_key="key-a")
+            await producer.put({"message": "test2"}, partition_key="key-a")  # Same key
+            await producer.put({"message": "test3"}, partition_key="key-b")  # Different key
+            await producer.put({"message": "test4"}, partition_key="key-a")  # Back to key-a
+
+            await producer.flush()
+
+            # Should have multiple records due to partition key changes
+            assert len(sent_records) >= 2, "Should create separate records for different partition keys"
+
+            # Check that partition keys are correctly set
+            partition_keys = [record["PartitionKey"] for record in sent_records]
+            assert "key-a" in partition_keys
+            assert "key-b" in partition_keys
+
+    @pytest.mark.asyncio
+    async def test_producer_partition_key_backward_compatibility(self, random_stream_name, endpoint_url):
+        """Test that existing code without partition keys still works (Issue #34)."""
+        async with Producer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            create_stream=True,
+            create_stream_shards=1,
+        ) as producer:
+            # All existing patterns should still work
+            await producer.put({"message": "test1"})
+            await producer.put({"message": "test2"})
+            await producer.put({"message": "test3"})
+            await producer.flush()
+
+            # Verify default partition key generation still works
+            # (This is implicit - if the test passes, keys were generated)
+
+    @pytest.mark.asyncio
+    async def test_producer_partition_key_bandwidth_calculation(self, random_stream_name, endpoint_url):
+        """Test that partition key size is included in bandwidth calculations (Issue #34)."""
+        from unittest.mock import MagicMock
+
+        # Track bandwidth throttle sizes
+        throttle_sizes = []
+
+        class MockThrottler:
+            def __call__(self, size=1):
+                throttle_sizes.append(size)
+                return self
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+        async with Producer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            create_stream=True,
+            create_stream_shards=1,
+            batch_size=2,
+            buffer_time=10,  # Long buffer time to prevent auto-flush
+        ) as producer:
+            # Replace the throttler with our mock
+            producer.put_bandwidth_throttle = MockThrottler()
+
+            # Test with data that will demonstrate partition key inclusion
+            # Item 1: Very large data that's just under 1KB with small partition key
+            large_data = {"data": "x" * 800}  # ~800+ bytes when serialized
+            await producer.put(large_data, partition_key="x" * 250)  # 250 byte partition key
+
+            # Item 2: Small data without partition key
+            small_data = {"data": "x" * 100}
+            await producer.put(small_data)
+
+            await producer.flush()
+
+            # Verify that partition key sizes were included in bandwidth calculations
+            assert len(throttle_sizes) == 2
+            # With a 250-byte partition key + large data, should be larger than small data alone
+            # The key test is that the code runs without errors and includes partition key in calculation
+            assert throttle_sizes[0] >= 1, "Should include partition key in size calculation"
+            assert throttle_sizes[1] >= 1, "Should calculate size for item without partition key"

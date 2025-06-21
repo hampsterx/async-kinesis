@@ -98,7 +98,30 @@ class Producer(Base):
             period=1,
         )
 
-    async def put(self, data: Any) -> None:
+    def _validate_partition_key(self, partition_key: str) -> None:
+        """Validate partition key according to AWS Kinesis requirements."""
+        if not isinstance(partition_key, str):
+            raise exceptions.ValidationError("Partition key must be a string")
+
+        if not partition_key:
+            raise exceptions.ValidationError("Partition key cannot be empty")
+
+        # Check byte length (UTF-8 encoded)
+        try:
+            encoded_key = partition_key.encode("utf-8")
+        except UnicodeEncodeError:
+            raise exceptions.ValidationError("Partition key must be valid UTF-8")
+
+        if len(encoded_key) > 256:
+            raise exceptions.ValidationError(
+                f"Partition key must be 256 bytes or less when UTF-8 encoded, got {len(encoded_key)} bytes"
+            )
+
+    async def put(self, data: Any, partition_key: Optional[str] = None) -> None:
+
+        # Validate partition key if provided
+        if partition_key is not None:
+            self._validate_partition_key(partition_key)
 
         # Raise exception from Flush Task to main task otherwise raise exception inside
         # Flush Task will fail silently
@@ -111,7 +134,7 @@ class Producer(Base):
         elif self.queue.qsize() >= self.batch_size:
             await self.flush()
 
-        for output in self.processor.add_item(data):
+        for output in self.processor.add_item(data, partition_key):
             await self.queue.put(output)
 
     async def close(self):
@@ -250,7 +273,11 @@ class Producer(Base):
                     except QueueEmpty:
                         break
 
-                size_kb = math.ceil(item[0] / 1024)
+                # Calculate total size including partition key
+                data_size = item[0]  # OutputItem.size (data payload)
+                partition_key_size = len(item.partition_key.encode("utf-8")) if item.partition_key else 0
+                total_size = data_size + partition_key_size
+                size_kb = math.ceil(total_size / 1024)
 
                 flush_max_size += size_kb
 
@@ -279,12 +306,16 @@ class Producer(Base):
 
             try:
 
-                # todo: custom partition key
+                # Use custom partition key if provided, otherwise generate one
                 results = await self.client.put_records(
                     Records=[
                         {
                             "Data": item.data,
-                            "PartitionKey": "{0}{1}".format(time.perf_counter(), time.time()),
+                            "PartitionKey": (
+                                item.partition_key
+                                if item.partition_key is not None
+                                else "{0}{1}".format(time.perf_counter(), time.time())
+                            ),
                         }
                         for item in items
                     ],

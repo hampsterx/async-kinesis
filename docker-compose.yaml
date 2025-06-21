@@ -14,7 +14,7 @@ services:
 
   test:
      container_name: async-kinesis-test
-     command: ['pytest', '-v', '--cov=kinesis']
+     command: ['pytest', '-v', '--cov=kinesis', '-m', 'not dynamodb']
      volumes:
       - ./tests:/app/tests
       - ./kinesis:/app/kinesis

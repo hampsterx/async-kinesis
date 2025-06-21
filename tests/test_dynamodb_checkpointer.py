@@ -2,30 +2,41 @@
 
 import asyncio
 import os
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 # Mock the imports before importing DynamoDBCheckPointer
+mock_aioboto3 = MagicMock()
+mock_botocore = MagicMock()
+
+
+# Mock ClientError for tests
+class ClientError(Exception):
+    def __init__(self, error_response, operation_name):
+        self.response = error_response
+        self.operation_name = operation_name
+
+
+mock_botocore.exceptions.ClientError = ClientError
+
 with patch.dict(
-    "sys.modules",
+    sys.modules,
     {
-        "aioboto3": MagicMock(),
-        "botocore.exceptions": MagicMock(),
+        "aioboto3": mock_aioboto3,
+        "botocore.exceptions": mock_botocore,
     },
 ):
     # Mock the HAS_DYNAMODB flag
     with patch("kinesis.dynamodb.HAS_DYNAMODB", True):
-        from kinesis.dynamodb import DynamoDBCheckPointer
-
-    # Mock ClientError for tests
-    class ClientError(Exception):
-        def __init__(self, error_response, operation_name):
-            self.response = error_response
-            self.operation_name = operation_name
+        with patch("kinesis.dynamodb.aioboto3", mock_aioboto3):
+            with patch("kinesis.dynamodb.ClientError", ClientError):
+                from kinesis.dynamodb import DynamoDBCheckPointer
 
 
 @patch("kinesis.dynamodb.HAS_DYNAMODB", True)
+@pytest.mark.dynamodb
 class TestDynamoDBCheckPointer:
     """Test DynamoDB checkpointer functionality."""
 

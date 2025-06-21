@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -384,8 +384,6 @@ class TestConsumer:
     @pytest.mark.asyncio
     async def test_consumer_closed_shard_handling(self, endpoint_url):
         """Test handling of closed shards."""
-        from unittest.mock import AsyncMock, patch
-
         consumer = Consumer(
             stream_name="test-closed-shard",
             endpoint_url=endpoint_url,
@@ -402,12 +400,6 @@ class TestConsumer:
         consumer.checkpointer = AsyncMock()
         consumer.checkpointer.is_allocated = lambda x: True
         consumer.checkpointer.deallocate = AsyncMock()
-
-        # Mock get_records to return a result without NextShardIterator (closed shard)
-        mock_result = {
-            "Records": [],
-            "NextShardIterator": None,  # This indicates a closed shard
-        }
 
         # Simulate the closed shard scenario in the fetch logic
         shard_id = mock_shard["ShardId"]
@@ -459,6 +451,7 @@ class TestConsumer:
     async def test_consumer_expired_iterator_handling(self, test_stream, endpoint_url):
         """Test handling of expired shard iterators."""
         from unittest.mock import AsyncMock, patch
+
         from botocore.exceptions import ClientError
 
         consumer = Consumer(

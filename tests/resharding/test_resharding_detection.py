@@ -11,10 +11,10 @@ Tests specifically for:
 
 import asyncio
 import logging
+import os
 
 # Add the parent directory to Python path for imports
 import sys
-import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 

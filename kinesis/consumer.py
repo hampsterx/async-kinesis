@@ -685,40 +685,35 @@ class Consumer(Base):
                 "shard_details": [],
             }
 
-        active_shards = []
-        allocated_count = 0
-
-        for shard in self.shards:
-            shard_id = shard["ShardId"]
-            is_allocated = self.checkpointer.is_allocated(shard_id)
-            is_closed = shard_id in self._closed_shards
-            has_iterator = (
-                "ShardIterator" in shard and shard["ShardIterator"] is not None
-            )
-
-            if is_allocated:
-                allocated_count += 1
-
-            shard_detail = {
-                "shard_id": shard_id,
-                "is_allocated": is_allocated,
-                "is_closed": is_closed,
-                "has_iterator": has_iterator,
+        # Generate comprehensive shard details list
+        shard_details = [
+            {
+                "shard_id": shard["ShardId"],
+                "is_allocated": self.checkpointer.is_allocated(shard["ShardId"]),
+                "is_closed": shard["ShardId"] in self._closed_shards,
+                "has_iterator": "ShardIterator" in shard
+                and shard["ShardIterator"] is not None,
                 "sequence_range": shard.get("SequenceNumberRange", {}),
                 "parent_shard_id": shard.get("ParentShardId"),
+                "is_parent": shard["ShardId"] in self._parent_shards,
+                "is_child": shard["ShardId"] in self._child_shards,
+                "can_allocate": self._should_allocate_shard(shard["ShardId"]),
                 "stats": (
-                    shard.get("stats", {}).to_data() if shard.get("stats") else None
+                    shard.get("stats").to_data() if shard.get("stats") else None
                 ),
             }
+            for shard in self.shards
+        ]
 
-            if not is_closed:
-                active_shards.append(shard_detail)
+        # Calculate counts from shard_details
+        active_shards_count = len([s for s in shard_details if not s["is_closed"]])
+        allocated_shards_count = len([s for s in shard_details if s["is_allocated"]])
 
         return {
             "total_shards": len(self.shards),
-            "active_shards": len(active_shards),
+            "active_shards": active_shards_count,
             "closed_shards": len(self._closed_shards),
-            "allocated_shards": allocated_count,
+            "allocated_shards": allocated_shards_count,
             "parent_shards": len(self._parent_shards),
             "child_shards": len(self._child_shards),
             "exhausted_parents": len(self._exhausted_parents),
@@ -735,24 +730,7 @@ class Consumer(Base):
                     if v["parent"]
                 },
             },
-            "shard_details": [
-                {
-                    "shard_id": shard["ShardId"],
-                    "is_allocated": self.checkpointer.is_allocated(shard["ShardId"]),
-                    "is_closed": shard["ShardId"] in self._closed_shards,
-                    "has_iterator": "ShardIterator" in shard
-                    and shard["ShardIterator"] is not None,
-                    "sequence_range": shard.get("SequenceNumberRange", {}),
-                    "parent_shard_id": shard.get("ParentShardId"),
-                    "is_parent": shard["ShardId"] in self._parent_shards,
-                    "is_child": shard["ShardId"] in self._child_shards,
-                    "can_allocate": self._should_allocate_shard(shard["ShardId"]),
-                    "stats": (
-                        shard.get("stats").to_data() if shard.get("stats") else None
-                    ),
-                }
-                for shard in self.shards
-            ],
+            "shard_details": shard_details,
         }
 
     async def start_consumer(self, wait_iterations=10, wait_sleep=0.25):

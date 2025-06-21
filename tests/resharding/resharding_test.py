@@ -28,16 +28,16 @@ Examples:
     python resharding_test.py --dry-run --scenario scale-up-small
 """
 
-import asyncio
 import argparse
-import logging
-import json
-import time
-import signal
+import asyncio
 import atexit
+import json
+import logging
+import signal
+import time
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import coloredlogs
@@ -55,13 +55,14 @@ except ImportError:
     # Use the aiobotocore session that kinesis library already uses
     HAS_BOTO3 = False
 
+import os
+
 # Add the parent directory to Python path for imports
 import sys
-import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from kinesis import Producer, Consumer, JsonProcessor
+from kinesis import Consumer, JsonProcessor, Producer
 
 # Configure logging
 logger = logging.getLogger(__name__)

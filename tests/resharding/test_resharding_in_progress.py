@@ -11,17 +11,17 @@ This covers edge cases like:
 
 import asyncio
 import logging
+import os
+
+# Add the parent directory to Python path for imports
+import sys
 import time
 import uuid
 from datetime import datetime, timezone
 
-# Add the parent directory to Python path for imports
-import sys
-import os
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from kinesis import Producer, Consumer, JsonProcessor
+from kinesis import Consumer, JsonProcessor, Producer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

@@ -112,7 +112,7 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
                         if self.create_table:
                             await self._create_table(dynamodb)
                         else:
-                            raise Exception(f"DynamoDB table {self.table_name} does not exist")
+                            raise Exception(f"DynamoDB table {self.table_name} does not exist") from e
                     else:
                         raise
 
@@ -255,7 +255,7 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
 
             except ClientError as e:
                 if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                    raise Exception(f"{self.get_ref()} tried to checkpoint {shard_id} but does not own it")
+                    raise Exception(f"{self.get_ref()} tried to checkpoint {shard_id} but does not own it") from e
                 else:
                     raise
 
@@ -296,83 +296,98 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
             await self._initialize()
 
         key = self.get_key(shard_id)
-        ts = self.get_ts()
+        max_retries = 3
 
-        async with self._session.resource("dynamodb", region_name=self.region_name) as dynamodb:
-            table = await dynamodb.Table(self.table_name)
+        for retry in range(max_retries):
+            ts = self.get_ts()
 
-            # First, try to create a new record
-            try:
-                await table.put_item(
-                    Item={
-                        "shard_id": key,
-                        "ref": self.get_ref(),
-                        "ts": ts,
-                        "sequence": None,
-                        "ttl": self.get_ttl(),
-                    },
-                    ConditionExpression="attribute_not_exists(shard_id)",
-                )
+            async with self._session.resource("dynamodb", region_name=self.region_name) as dynamodb:
+                table = await dynamodb.Table(self.table_name)
 
-                log.info(f"{self.get_ref()} allocated {shard_id} (new checkpoint)")
-                self._items[shard_id] = None
-                return True, None
+                # First, try to create a new record
+                try:
+                    await table.put_item(
+                        Item={
+                            "shard_id": key,
+                            "ref": self.get_ref(),
+                            "ts": ts,
+                            "sequence": None,
+                            "ttl": self.get_ttl(),
+                        },
+                        ConditionExpression="attribute_not_exists(shard_id)",
+                    )
 
-            except ClientError as e:
-                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    raise
+                    log.info(f"{self.get_ref()} allocated {shard_id} (new checkpoint)")
+                    self._items[shard_id] = None
+                    return True, None
 
-            # Record exists, check if we can take it
-            response = await table.get_item(Key={"shard_id": key})
+                except ClientError as e:
+                    if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                        raise
 
-            if "Item" not in response:
-                # Race condition - someone deleted it, try again
-                return await self.allocate(shard_id)
+                # Record exists, check if we can take it
+                response = await table.get_item(Key={"shard_id": key})
 
-            item = response["Item"]
+                if "Item" not in response:
+                    # Race condition - someone deleted it, retry
+                    if retry < max_retries - 1:
+                        log.debug(f"Race condition detected for {shard_id}, retrying...")
+                        await asyncio.sleep(0.1)  # Small delay before retry
+                        continue
+                    else:
+                        log.warning(f"Failed to allocate {shard_id} after {max_retries} retries due to race conditions")
+                        return False, None
 
-            if item.get("ts") and item.get("ref"):
-                # Check if current owner is still alive
-                age = ts - item["ts"]
+                item = response["Item"]
 
-                if age < self.session_timeout:
-                    log.info(f"{self.get_ref()} could not allocate {shard_id}, still in use by {item['ref']}")
-                    await asyncio.sleep(1)  # Avoid spamming
-                    return False, None
+                if item.get("ts") and item.get("ref"):
+                    # Check if current owner is still alive
+                    age = ts - item["ts"]
 
-                log.info(f"Attempting to take lock as {item['ref']} is {age - self.session_timeout} seconds overdue")
+                    if age < self.session_timeout:
+                        log.info(f"{self.get_ref()} could not allocate {shard_id}, still in use by {item['ref']}")
+                        await asyncio.sleep(1)  # Avoid spamming
+                        return False, None
 
-            # Try to take ownership
-            try:
-                await table.update_item(
-                    Key={"shard_id": key},
-                    UpdateExpression="SET #ref = :ref, #ts = :ts, #ttl = :ttl",
-                    ExpressionAttributeNames={
-                        "#ref": "ref",
-                        "#ts": "ts",
-                        "#ttl": "ttl",
-                    },
-                    ExpressionAttributeValues={
-                        ":ref": self.get_ref(),
-                        ":ts": ts,
-                        ":ttl": self.get_ttl(),
-                        ":old_ts": item.get("ts"),
-                    },
-                    ConditionExpression="#ts = :old_ts OR attribute_not_exists(#ts)",
-                    ReturnValues="ALL_NEW",
-                )
+                    log.info(
+                        f"Attempting to take lock as {item['ref']} is {age - self.session_timeout} seconds overdue"
+                    )
 
-                sequence = item.get("sequence")
-                log.info(f"{self.get_ref()} allocated {shard_id}@{sequence}")
-                self._items[shard_id] = sequence
-                return True, sequence
+                # Try to take ownership
+                try:
+                    await table.update_item(
+                        Key={"shard_id": key},
+                        UpdateExpression="SET #ref = :ref, #ts = :ts, #ttl = :ttl",
+                        ExpressionAttributeNames={
+                            "#ref": "ref",
+                            "#ts": "ts",
+                            "#ttl": "ttl",
+                        },
+                        ExpressionAttributeValues={
+                            ":ref": self.get_ref(),
+                            ":ts": ts,
+                            ":ttl": self.get_ttl(),
+                            ":old_ts": item.get("ts"),
+                        },
+                        ConditionExpression="#ts = :old_ts OR attribute_not_exists(#ts)",
+                        ReturnValues="ALL_NEW",
+                    )
 
-            except ClientError as e:
-                if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                    log.info(f"Someone else beat us to allocating {shard_id}")
-                    return False, None
-                else:
-                    raise
+                    sequence = item.get("sequence")
+                    log.info(f"{self.get_ref()} allocated {shard_id}@{sequence}")
+                    self._items[shard_id] = sequence
+                    return True, sequence
+
+                except ClientError as e:
+                    if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                        log.info(f"Someone else beat us to allocating {shard_id}")
+                        return False, None
+                    else:
+                        raise
+
+        # Should not reach here, but just in case
+        log.warning(f"Failed to allocate {shard_id} after {max_retries} retries")
+        return False, None
 
     async def close(self) -> None:
         """Clean up resources."""

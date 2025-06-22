@@ -338,3 +338,54 @@ class TestDynamoDBCheckPointer:
 
         with pytest.raises(Exception, match="does not exist"):
             await checkpointer._initialize()
+
+    @pytest.mark.asyncio
+    async def test_allocate_race_condition_retry(self, mock_dynamodb):
+        """Test allocation retries on race condition."""
+        checkpointer = DynamoDBCheckPointer("test-app")
+        await checkpointer._initialize()
+
+        # Mock shard already exists
+        mock_dynamodb["table"].put_item.side_effect = ClientError(
+            {"Error": {"Code": "ConditionalCheckFailedException"}}, "PutItem"
+        )
+
+        # Mock get_item returns empty on first two calls (race condition), then returns item
+        mock_dynamodb["table"].get_item.side_effect = [
+            {},  # First call - no item (race condition)
+            {},  # Second call - no item (race condition)
+            {  # Third call - item exists
+                "Item": {"shard_id": "shard-001", "ref": None, "ts": None, "sequence": "seq-123"}
+            },
+        ]
+
+        # Mock successful update
+        mock_dynamodb["table"].update_item.return_value = {}
+
+        success, sequence = await checkpointer.allocate("shard-001")
+
+        assert success is True
+        assert sequence == "seq-123"
+        # Verify get_item was called 3 times
+        assert mock_dynamodb["table"].get_item.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_allocate_race_condition_max_retries(self, mock_dynamodb):
+        """Test allocation fails after max retries on persistent race condition."""
+        checkpointer = DynamoDBCheckPointer("test-app")
+        await checkpointer._initialize()
+
+        # Mock shard already exists
+        mock_dynamodb["table"].put_item.side_effect = ClientError(
+            {"Error": {"Code": "ConditionalCheckFailedException"}}, "PutItem"
+        )
+
+        # Mock get_item always returns empty (persistent race condition)
+        mock_dynamodb["table"].get_item.return_value = {}
+
+        success, sequence = await checkpointer.allocate("shard-001")
+
+        assert success is False
+        assert sequence is None
+        # Verify get_item was called 3 times (max retries)
+        assert mock_dynamodb["table"].get_item.call_count == 3

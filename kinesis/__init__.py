@@ -19,3 +19,9 @@ try:
     from .prometheus import PrometheusMetricsCollector
 except ImportError:
     PrometheusMetricsCollector = None
+
+# Optional DynamoDB support
+try:
+    from .dynamodb import DynamoDBCheckPointer
+except ImportError:
+    DynamoDBCheckPointer = None

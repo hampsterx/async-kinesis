@@ -17,6 +17,7 @@ class ClientError(Exception):
     def __init__(self, error_response, operation_name):
         self.response = error_response
         self.operation_name = operation_name
+        super().__init__(f"{operation_name}: {error_response}")
 
 
 mock_botocore.exceptions.ClientError = ClientError
@@ -25,7 +26,7 @@ with patch.dict(
     sys.modules,
     {
         "aioboto3": mock_aioboto3,
-        "botocore.exceptions": mock_botocore,
+        "botocore.exceptions": mock_botocore.exceptions,
     },
 ):
     # Mock the HAS_DYNAMODB flag
@@ -43,37 +44,44 @@ class TestDynamoDBCheckPointer:
     @pytest.fixture
     def mock_dynamodb(self):
         """Mock DynamoDB resource."""
-        with patch("kinesis.dynamodb.aioboto3") as mock_aioboto3:
-            # Mock session
-            mock_session = AsyncMock()
-            mock_aioboto3.Session.return_value = mock_session
+        with patch("kinesis.dynamodb.ClientError", ClientError):
+            with patch("kinesis.dynamodb.aioboto3") as mock_aioboto3:
+                # Mock session
+                mock_session = MagicMock()
+                mock_session.close = AsyncMock()
+                mock_aioboto3.Session.return_value = mock_session
 
-            # Mock DynamoDB resource
-            mock_dynamodb = AsyncMock()
-            mock_table = AsyncMock()
+                # Mock DynamoDB resource
+                mock_dynamodb = AsyncMock()
+                mock_table = AsyncMock()
 
-            # Configure async context managers
-            mock_session.resource.return_value.__aenter__.return_value = mock_dynamodb
-            mock_session.resource.return_value.__aexit__.return_value = None
-            mock_session.client.return_value.__aenter__.return_value = AsyncMock()
-            mock_session.client.return_value.__aexit__.return_value = None
+                # Configure async context managers
+                mock_resource_cm = AsyncMock()
+                mock_resource_cm.__aenter__.return_value = mock_dynamodb
+                mock_resource_cm.__aexit__.return_value = None
+                mock_session.resource.return_value = mock_resource_cm
 
-            mock_dynamodb.Table.return_value = mock_table
-            mock_dynamodb.create_table = AsyncMock(return_value=mock_table)
+                mock_client_cm = AsyncMock()
+                mock_client_cm.__aenter__.return_value = AsyncMock()
+                mock_client_cm.__aexit__.return_value = None
+                mock_session.client.return_value = mock_client_cm
 
-            # Mock table methods
-            mock_table.load = AsyncMock()
-            mock_table.wait_until_exists = AsyncMock()
-            mock_table.put_item = AsyncMock()
-            mock_table.get_item = AsyncMock()
-            mock_table.update_item = AsyncMock()
+                mock_dynamodb.Table.return_value = mock_table
+                mock_dynamodb.create_table = AsyncMock(return_value=mock_table)
 
-            yield {
-                "session": mock_session,
-                "dynamodb": mock_dynamodb,
-                "table": mock_table,
-                "aioboto3": mock_aioboto3,
-            }
+                # Mock table methods
+                mock_table.load = AsyncMock()
+                mock_table.wait_until_exists = AsyncMock()
+                mock_table.put_item = AsyncMock()
+                mock_table.get_item = AsyncMock()
+                mock_table.update_item = AsyncMock()
+
+                yield {
+                    "session": mock_session,
+                    "dynamodb": mock_dynamodb,
+                    "table": mock_table,
+                    "aioboto3": mock_aioboto3,
+                }
 
     @pytest.mark.asyncio
     async def test_initialize_existing_table(self, mock_dynamodb):

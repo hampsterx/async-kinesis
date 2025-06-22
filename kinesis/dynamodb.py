@@ -5,7 +5,6 @@ and checkpointing in distributed Kinesis consumer applications.
 """
 
 import asyncio
-import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -211,6 +210,15 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
 
         await self._checkpoint(shard_id, sequence)
 
+    async def manual_checkpoint(self) -> None:
+        """Flush all manual checkpoints to DynamoDB."""
+        items = [(k, v) for k, v in self._manual_checkpoints.items()]
+
+        self._manual_checkpoints = {}
+
+        for shard_id, sequence in items:
+            await self._checkpoint(shard_id, sequence)
+
     async def _checkpoint(self, shard_id: str, sequence: str) -> None:
         """Internal checkpoint implementation."""
         if not self._initialized:
@@ -223,7 +231,7 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
 
             try:
                 # Update sequence number only if we own the shard
-                response = await table.update_item(
+                await table.update_item(
                     Key={"shard_id": key},
                     UpdateExpression="SET #seq = :seq, #ts = :ts, #ttl = :ttl",
                     ExpressionAttributeNames={

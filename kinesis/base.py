@@ -88,8 +88,9 @@ class Base:
         if self._client_cm is not None:
             try:
                 await self._client_cm.__aexit__(exc_type, exc, tb)
-            except (AttributeError, TypeError) as e:
-                # Handle cases where client context manager doesn't have __aexit__ or session is malformed
+            except (AttributeError, TypeError, AssertionError) as e:
+                # Handle cases where client context manager doesn't have __aexit__,
+                # session is malformed, or HTTP session was never entered (aiobotocore >= 3.x)
                 log.debug(f"Client context manager exit failed: {e}, attempting direct close")
                 try:
                     if self.client is not None:

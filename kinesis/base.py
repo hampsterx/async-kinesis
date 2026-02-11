@@ -89,15 +89,17 @@ class Base:
             try:
                 await self._client_cm.__aexit__(exc_type, exc, tb)
             except (AttributeError, TypeError, AssertionError) as e:
-                # Handle cases where client context manager doesn't have __aexit__,
-                # session is malformed, or HTTP session was never entered (aiobotocore >= 3.x)
-                log.debug(f"Client context manager exit failed: {e}, attempting direct close")
+                # AttributeError/TypeError: client context manager doesn't have __aexit__ or session is malformed
+                # AssertionError: aiobotocore >= 3.x raises "Session was never entered" during teardown
+                if isinstance(e, AssertionError) and "never entered" not in str(e):
+                    log.warning(f"Unexpected assertion during client exit: {e}")
+                else:
+                    log.debug(f"Client context manager exit failed: {e}")
                 try:
                     if self.client is not None:
                         await self.client.close()
                 except Exception as close_error:
                     log.debug(f"Client close also failed: {close_error}")
-                    # Continue cleanup even if client close fails
 
     @property
     def address(self) -> Dict[str, str]:

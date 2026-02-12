@@ -158,9 +158,11 @@ class Base:
 
         await self.get_client()
 
+        just_created = False
         if self.create_stream:
             await self._create_stream()
             self.create_stream = False
+            just_created = True
 
         if self.skip_describe_stream:
             log.debug("Skipping Describe stream '{}'. Assuming it exists and is active.".format(self.stream_name))
@@ -186,7 +188,17 @@ class Base:
             async with timeout(60) as cm:
                 try:
                     while True:
-                        stream_info = await self.get_stream_description()
+                        try:
+                            stream_info = await self.get_stream_description()
+                        except exceptions.StreamDoesNotExist:
+                            if just_created:
+                                # Stream was just created but may not be visible yet (eventual consistency)
+                                log.debug(
+                                    "Stream '{}' not yet visible after creation, retrying...".format(self.stream_name)
+                                )
+                                await asyncio.sleep(0.25)
+                                continue
+                            raise
                         stream_status = stream_info["StreamStatus"]
 
                         if stream_status == self.ACTIVE:

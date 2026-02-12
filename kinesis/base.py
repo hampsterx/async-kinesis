@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import time
-
 from typing import Any, Dict, List, Optional
 
 from aiobotocore.session import AioSession
@@ -28,6 +27,7 @@ class Base:
         use_list_shards: bool = False,
         create_stream: bool = False,
         create_stream_shards: int = 1,
+        describe_timeout: int = 60,
     ) -> None:
 
         self.stream_name: str = stream_name
@@ -68,6 +68,7 @@ class Base:
         self._reconnect_timeout = time.monotonic()
         self.create_stream = create_stream
         self.create_stream_shards = create_stream_shards
+        self.describe_timeout = describe_timeout
         self._just_created = False
 
     async def __aenter__(self) -> "Base":
@@ -189,7 +190,7 @@ class Base:
             # Use traditional DescribeStream API
             stream_info = None
             try:
-                async with timeout(60):
+                async with timeout(self.describe_timeout):
                     while True:
                         try:
                             stream_info = await self.get_stream_description()
@@ -220,7 +221,7 @@ class Base:
                 self._just_created = False
                 if stream_info is None:
                     raise exceptions.StreamDoesNotExist(
-                        "Stream '{}' not available within 60s".format(self.stream_name)
+                        "Stream '{}' not available within {}s".format(self.stream_name, self.describe_timeout)
                     ) from None
                 raise exceptions.StreamStatusInvalid(
                     "Stream '{}' is still {}".format(self.stream_name, stream_info["StreamStatus"])

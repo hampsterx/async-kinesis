@@ -389,6 +389,32 @@ async def process_large_record(record):
 | No shards allocated | Consumer idle | Check `max_shard_consumers` setting |
 | Checkpointer conflict | Missing messages | Use unique checkpointer names |
 | High latency | Slow message delivery | Reduce `buffer_time`, optimize processor |
+| Stream creation timeout | `StreamDoesNotExist: ... not available within 60s` | Increase `describe_timeout` (see below) |
+
+### Problem: Stream creation timeout with `create_stream=True`
+```text
+kinesis.exceptions.StreamDoesNotExist: Stream 'my-stream' not available within 60s
+```
+
+This happens when `create_stream=True` but the stream doesn't become visible via DescribeStream within the timeout. Common with LocalStack or slow backends, especially on Python 3.14.
+
+**Solutions:**
+
+1. **Increase the describe timeout:**
+```python
+async with Producer(
+    stream_name="my-stream",
+    create_stream=True,
+    describe_timeout=120  # Wait up to 120s instead of default 60s
+) as producer:
+    # ...
+```
+
+2. **Pre-create the stream** before starting the producer:
+```bash
+aws kinesis create-stream --stream-name my-stream --shard-count 1
+aws kinesis wait stream-exists --stream-name my-stream
+```
 
 ## Debug Techniques
 

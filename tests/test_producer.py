@@ -659,11 +659,18 @@ class TestProducer:
 
         # Mock get_stream_description to always raise StreamDoesNotExist
         # (simulates stream never becoming visible) and use a short timeout
-        with patch.object(
-            producer, "get_stream_description",
-            new_callable=AsyncMock,
-            side_effect=exceptions.StreamDoesNotExist("Stream not found"),
-        ), patch("kinesis.base.timeout", lambda _: __import__("kinesis.timeout_compat", fromlist=["timeout"]).timeout(0.5)):
+        with (
+            patch.object(
+                producer,
+                "get_stream_description",
+                new_callable=AsyncMock,
+                side_effect=exceptions.StreamDoesNotExist("Stream not found"),
+            ),
+            patch(
+                "kinesis.base.timeout",
+                lambda _: __import__("kinesis.timeout_compat", fromlist=["timeout"]).timeout(0.5),
+            ),
+        ):
             with pytest.raises(exceptions.StreamDoesNotExist, match="not available within"):
                 await producer.start()
 

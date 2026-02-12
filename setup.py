@@ -26,7 +26,7 @@ setup(
         "License :: OSI Approved :: Apache Software License",
     ],
     python_requires=">=3.10",
-    packages=["kinesis"],
+    packages=["kinesis", "kinesis.cli"],
     install_requires=[
         "aiobotocore>=1.3.3",
         "async-timeout>=4.0.0",
@@ -39,10 +39,12 @@ setup(
         "prometheus": ["prometheus-client>=0.15.0"],
         "dynamodb": ["aioboto3>=11.0.0"],
         "testing": ["pytest>=7.0", "pytest-asyncio>=0.21"],
+        "cli": ["click>=8.0.0"],
     },
     entry_points={
         # Registers kinesis.testing fixtures as a pytest plugin for all projects
         # with async-kinesis installed. Fixtures are no-ops if pytest is absent.
         "pytest11": ["kinesis = kinesis.testing"],
+        "console_scripts": ["async-kinesis = kinesis.cli:main"],
     },
 )

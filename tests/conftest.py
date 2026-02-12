@@ -1,14 +1,20 @@
 import asyncio
 import logging
 import os
+import socket
 import uuid
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
 
 from kinesis import Consumer, Producer
+
+# Import mock fixtures so they're available even without pip install -e .
+# (When installed, the pytest11 entry point handles this automatically.)
+from kinesis.testing import kinesis_backend, kinesis_consumer, kinesis_producer, kinesis_stream  # noqa: F401
 
 # Load environment variables
 load_dotenv()
@@ -29,6 +35,38 @@ if "AWS_DEFAULT_REGION" not in os.environ:
 logging.basicConfig(level=logging.DEBUG)
 logging.getLogger("botocore").setLevel(logging.WARNING)
 logging.getLogger("aiobotocore").setLevel(logging.INFO)
+
+# --- Docker endpoint detection (cached) ---
+
+_docker_available_cache = None
+
+
+def _is_endpoint_reachable(url):
+    """Check if the Docker test endpoint (kinesalite/localstack) is reachable."""
+    try:
+        parsed = urlparse(url)
+        if not parsed.hostname or not parsed.port:
+            return False
+        sock = socket.create_connection((parsed.hostname, parsed.port), timeout=1)
+        sock.close()
+        return True
+    except (socket.error, OSError):
+        return False
+
+
+def _check_docker_available():
+    global _docker_available_cache
+    if _docker_available_cache is None:
+        _docker_available_cache = _is_endpoint_reachable(ENDPOINT_URL)
+    return _docker_available_cache
+
+
+@pytest.fixture(autouse=True)
+def _skip_integration_if_no_docker(request):
+    """Auto-skip integration-marked tests when Docker services aren't running."""
+    if request.node.get_closest_marker("integration"):
+        if not _check_docker_available():
+            pytest.skip(f"Docker endpoint not available at {ENDPOINT_URL}")
 
 
 @pytest.fixture

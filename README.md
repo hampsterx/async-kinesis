@@ -42,6 +42,7 @@ async with Consumer(stream_name="my-stream") as consumer:
 - [Processors](#processors-aggregator--serializer)
 - [Benchmark/Example](#benchmarkexample)
 - [Development & Testing](#development--testing)
+- [Testing](#testing)
 - [Documentation](#documentation)
 
 ## Key Features
@@ -512,6 +513,48 @@ Choose the optimal processor based on your use case:
 **Performance Testing:** Use the benchmark tool with different `--record-size-kb` and `--processors` options to determine the best processor for your specific data patterns.
 
 
+## Testing
+
+### In-Memory Mocks (No Docker Required)
+
+Test your Kinesis producers and consumers without Docker, LocalStack, or AWS credentials:
+
+```python
+from kinesis.testing import MockProducer, MockConsumer, MockKinesisBackend, collect_records
+
+MockKinesisBackend.create_stream("my-stream")
+
+async with MockProducer(stream_name="my-stream") as producer:
+    await producer.put({"msg": "hello"})
+
+MockKinesisBackend.get_stream("my-stream").seal()
+
+async with MockConsumer(stream_name="my-stream") as consumer:
+    records = await collect_records(consumer)
+    assert records == [{"msg": "hello"}]
+```
+
+Pytest fixtures are auto-discovered — no imports needed:
+
+```python
+@pytest.mark.asyncio
+async def test_roundtrip(kinesis_stream, kinesis_producer, kinesis_consumer):
+    await kinesis_producer.put({"hello": "world"})
+    await kinesis_producer.flush()
+    kinesis_stream.seal()
+    records = await collect_records(kinesis_consumer)
+    assert records == [{"hello": "world"}]
+```
+
+Works as a drop-in replacement via `unittest.mock.patch`:
+
+```python
+with patch("myapp.Producer", MockProducer):
+    await my_function()  # Uses MockProducer instead of real Producer
+```
+
+📖 **[Full Testing Guide](./docs/testing.md)** — fixtures, helpers, `patch()` examples, migration from Docker
+
 ## Development & Testing
 
 ### Local Testing
@@ -573,6 +616,7 @@ python tests/resharding/resharding_test.py --scenario scale-up-small
 ## Documentation
 
 - **[Getting Started Guide](./docs/getting-started.md)** - Step-by-step tutorials for beginners
+- **[Testing Guide](./docs/testing.md)** - In-memory mocks, pytest fixtures, and test helpers
 - **[Common Patterns](./docs/common-patterns.md)** - Real-world use cases and examples
 - **[Metrics & Observability](./docs/metrics.md)** - Prometheus integration and monitoring
 - **[DynamoDB Checkpointing](./docs/dynamodb-checkpointing.md)** - DynamoDB checkpointer setup and best practices

@@ -23,12 +23,23 @@ async with Consumer(stream_name="my-stream") as consumer:
         print(message)
 ```
 
+**CLI:**
+```bash
+pip install async-kinesis[cli]
+
+async-kinesis put my-stream '{"hello": "world"}'
+async-kinesis tail my-stream -n 10
+async-kinesis list
+async-kinesis describe my-stream
+```
+
 📚 **New to async-kinesis?** Check out our [comprehensive Getting Started guide](./docs/getting-started.md) for step-by-step tutorials and examples.
 
 ## Table of Contents
 
 - [Key Features](#key-features)
 - [Installation](#installation)
+- [CLI](#cli)
 - [Basic Usage](#basic-usage)
   - [Producer](#producer)
   - [Consumer](#consumer)
@@ -77,10 +88,60 @@ Unlike basic Kinesis libraries, async-kinesis provides enterprise-grade reshardi
 pip install async-kinesis
 
 # With optional dependencies
+pip install async-kinesis[cli]         # CLI tool (async-kinesis command)
 pip install async-kinesis[prometheus]  # For Prometheus metrics
 pip install async-kinesis[redis]       # For Redis checkpointing
 pip install async-kinesis[dynamodb]    # For DynamoDB checkpointing
 ```
+
+## CLI
+
+The optional CLI provides commands for interacting with Kinesis streams directly from the terminal. It uses the same Consumer/Producer classes under the hood, so you get the same deaggregation, rate limiting, and reconnection logic.
+
+```bash
+pip install async-kinesis[cli]
+```
+
+### Commands
+
+```bash
+# List streams
+async-kinesis list
+
+# Describe a stream (metadata + shard table)
+async-kinesis describe my-stream
+
+# Put a JSON record
+async-kinesis put my-stream '{"event": "click", "user": 123}'
+
+# Put from stdin (JSONL)
+cat events.jsonl | async-kinesis put my-stream
+
+# Put with explicit partition key
+async-kinesis put my-stream '{"user": 123}' -k user-123
+
+# Create stream on first put
+async-kinesis put --create my-stream '{"first": "record"}'
+
+# Tail (live, latest records)
+async-kinesis tail my-stream
+
+# Tail from beginning, stop after 10 records
+async-kinesis tail my-stream -i TRIM_HORIZON -n 10
+
+# Tail with compact JSON output
+async-kinesis tail my-stream -i TRIM_HORIZON -f json -n 5
+```
+
+### Global Options
+
+| Option | Env Var | Description |
+| --- | --- | --- |
+| `--endpoint-url` | `ENDPOINT_URL` | Kinesis endpoint (for LocalStack/kinesalite) |
+| `--region` | `AWS_DEFAULT_REGION` | AWS region |
+| `-v, --verbose` | | Enable debug logging |
+
+📖 **[Full CLI Reference](./docs/cli.md)**
 
 ## Basic Usage
 
@@ -616,6 +677,7 @@ python tests/resharding/resharding_test.py --scenario scale-up-small
 ## Documentation
 
 - **[Getting Started Guide](./docs/getting-started.md)** - Step-by-step tutorials for beginners
+- **[CLI Reference](./docs/cli.md)** - Command-line tool for stream operations
 - **[Testing Guide](./docs/testing.md)** - In-memory mocks, pytest fixtures, and test helpers
 - **[Common Patterns](./docs/common-patterns.md)** - Real-world use cases and examples
 - **[Metrics & Observability](./docs/metrics.md)** - Prometheus integration and monitoring

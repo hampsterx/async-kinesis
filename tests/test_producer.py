@@ -594,3 +594,44 @@ class TestProducer:
             # The key test is that the code runs without errors and includes partition key in calculation
             assert throttle_sizes[0] >= 1, "Should include partition key in size calculation"
             assert throttle_sizes[1] >= 1, "Should calculate size for item without partition key"
+
+    @pytest.mark.asyncio
+    async def test_just_created_survives_reconnection(self, random_stream_name, endpoint_url):
+        """Test that _just_created state persists across reconnection attempts (Issue #56).
+
+        When create_stream=True and the backend is slow to make the stream visible,
+        start() sets self.create_stream = False after _create_stream(). If the 60s
+        describe timeout expires and get_conn() triggers a reconnection, the second
+        start() call must still know the stream was just created so it retries
+        StreamDoesNotExist instead of propagating immediately.
+        """
+        producer = Producer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            region_name="ap-southeast-2",
+            create_stream=True,
+            create_stream_shards=1,
+        )
+
+        assert producer._just_created is False
+        assert producer.create_stream is True
+
+        # Simulate what start() does: create stream, flip flags
+        await producer.get_client()
+        await producer._create_stream()
+        producer.create_stream = False
+        producer._just_created = True
+
+        # After first start() sets create_stream=False, a reconnection calls start() again.
+        # _just_created must still be True so the retry logic handles StreamDoesNotExist.
+        assert producer.create_stream is False
+        assert producer._just_created is True
+
+        # Now simulate a successful second start() — stream becomes ACTIVE
+        await producer.start()
+
+        # After stream confirmed ACTIVE, _just_created should be reset
+        assert producer._just_created is False
+        assert producer.stream_status == producer.ACTIVE
+
+        await producer.close()

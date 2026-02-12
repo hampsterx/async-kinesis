@@ -14,5 +14,8 @@ RUN pip install -r /app/test-requirements.txt
 
 COPY kinesis /app/kinesis/
 COPY tests /app/tests/
+COPY setup.py README.md /app/
+
+RUN pip install -e /app/
 
 WORKDIR /app/

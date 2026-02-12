@@ -35,7 +35,7 @@ import hashlib
 import logging
 from collections import defaultdict, deque
 from contextlib import contextmanager
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, ClassVar, Dict, List, Optional
 
 from .checkpointers import MemoryCheckPointer
 from .processors import JsonProcessor, Processor
@@ -137,7 +137,7 @@ class MockKinesisBackend:
     application code.
     """
 
-    _streams: Dict[str, MemoryStream] = {}
+    _streams: ClassVar[Dict[str, MemoryStream]] = {}
 
     @classmethod
     def create_stream(cls, name: str, shard_count: int = 1) -> MemoryStream:
@@ -315,6 +315,11 @@ class MockConsumer:
         for i, shard in enumerate(stream.shards):
             # Allocate shard on checkpointer (returns last checkpointed sequence)
             success, last_seq = await self.checkpointer.allocate(shard.shard_id)
+            if not success:
+                log.debug("Shard %s allocation failed; skipping (mock limitation)", shard.shard_id)
+                self._positions[i] = len(shard.records)
+                self._exhausted.add(i)
+                continue
             if self.iterator_type == "LATEST":
                 self._positions[i] = len(shard.records)
             elif last_seq is not None:
@@ -323,7 +328,7 @@ class MockConsumer:
                 for j, record in enumerate(shard.records):
                     if record is _SENTINEL:
                         continue
-                    seq, data, pk = record
+                    seq, _data, _pk = record
                     if seq == last_seq:
                         pos = j + 1
                         break
@@ -435,6 +440,11 @@ async def assert_records_delivered(
 
     Both *producer* and *consumer* must already be entered as context managers.
 
+    .. note::
+        This helper calls ``stream.seal()`` internally. The producer's stream
+        will be sealed after this function returns and no further records can
+        be written to it.
+
     Returns the received records list.
 
     Raises:
@@ -451,9 +461,9 @@ async def assert_records_delivered(
 
     assert len(received) == len(records), f"Expected {len(records)} records, got {len(received)}"
 
-    assert sorted(received, key=repr) == sorted(records, key=repr), (
-        f"Record mismatch.\nExpected: {sorted(records, key=repr)}\nReceived: {sorted(received, key=repr)}"
-    )
+    assert sorted(received, key=repr) == sorted(
+        records, key=repr
+    ), f"Record mismatch.\nExpected: {sorted(records, key=repr)}\nReceived: {sorted(received, key=repr)}"
 
     return received
 

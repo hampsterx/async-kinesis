@@ -44,5 +44,8 @@ class TestMockConsumer:
         kinesis_stream.seal()
 
         consumer = MockConsumer(stream_name=kinesis_stream.name)
-        await consumer.__aenter__()
-        await consumer.close()
+        try:
+            await consumer.__aenter__()
+            await consumer.close()
+        finally:
+            await consumer.__aexit__(None, None, None)

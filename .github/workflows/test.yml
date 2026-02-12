@@ -54,6 +54,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install -r test-requirements.txt
+        pip install -e .
         sudo apt-get update && sudo apt-get install -y netcat-openbsd redis-tools curl
 
     - name: Wait for services

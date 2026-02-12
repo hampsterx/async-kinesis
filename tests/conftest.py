@@ -12,6 +12,10 @@ from dotenv import load_dotenv
 
 from kinesis import Consumer, Producer
 
+# Import mock fixtures so they're available even without pip install -e .
+# (When installed, the pytest11 entry point handles this automatically.)
+from kinesis.testing import kinesis_backend, kinesis_consumer, kinesis_producer, kinesis_stream  # noqa: F401
+
 # Load environment variables
 load_dotenv()
 
@@ -41,6 +45,8 @@ def _is_endpoint_reachable(url):
     """Check if the Docker test endpoint (kinesalite/localstack) is reachable."""
     try:
         parsed = urlparse(url)
+        if not parsed.hostname or not parsed.port:
+            return False
         sock = socket.create_connection((parsed.hostname, parsed.port), timeout=1)
         sock.close()
         return True

@@ -270,7 +270,7 @@ class TestMockConsumer:
 
         # Should have checkpointed the shard
         assert len(checkpoints) == 1
-        shard_id = list(checkpoints.keys())[0]
+        shard_id = next(iter(checkpoints))
         assert shard_id.startswith("shardId-")
 
     @pytest.mark.asyncio
@@ -302,7 +302,7 @@ class TestMockConsumer:
 
     @pytest.mark.asyncio
     async def test_create_stream_on_enter(self):
-        async with MockConsumer(stream_name="auto", create_stream=True) as consumer:
+        async with MockConsumer(stream_name="auto", create_stream=True) as _consumer:
             assert MockKinesisBackend.stream_exists("auto")
 
     @pytest.mark.asyncio
@@ -363,9 +363,7 @@ class TestAssertRecordsDelivered:
         MockKinesisBackend.create_stream("test")
         async with MockProducer(stream_name="test") as producer:
             async with MockConsumer(stream_name="test") as consumer:
-                received = await assert_records_delivered(
-                    producer, consumer, [{"a": 1}, {"b": 2}, {"c": 3}]
-                )
+                received = await assert_records_delivered(producer, consumer, [{"a": 1}, {"b": 2}, {"c": 3}])
         assert len(received) == 3
 
     @pytest.mark.asyncio
@@ -374,7 +372,8 @@ class TestAssertRecordsDelivered:
         async with MockProducer(stream_name="test") as producer:
             async with MockConsumer(stream_name="test") as consumer:
                 await assert_records_delivered(
-                    producer, consumer,
+                    producer,
+                    consumer,
                     [{"seq": i} for i in range(10)],
                     partition_key="same-shard",
                 )

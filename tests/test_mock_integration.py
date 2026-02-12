@@ -69,9 +69,7 @@ class TestMockIntegration:
 
         # First consumer: read 3 records then stop
         first_batch = []
-        async with MockConsumer(
-            stream_name="checkpoint-test", checkpointer=checkpointer
-        ) as consumer:
+        async with MockConsumer(stream_name="checkpoint-test", checkpointer=checkpointer) as consumer:
             async for record in consumer:
                 first_batch.append(record)
                 if len(first_batch) >= 3:
@@ -80,9 +78,7 @@ class TestMockIntegration:
         assert len(first_batch) == 3
 
         # Second consumer with same checkpointer: should resume after checkpoint
-        async with MockConsumer(
-            stream_name="checkpoint-test", checkpointer=checkpointer
-        ) as consumer:
+        async with MockConsumer(stream_name="checkpoint-test", checkpointer=checkpointer) as consumer:
             second_batch = await collect_records(consumer)
 
         assert len(second_batch) == 2

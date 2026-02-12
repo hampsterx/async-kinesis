@@ -10,8 +10,9 @@ from kinesis.processors import JsonLineProcessor, JsonProcessor, StringProcessor
 log = logging.getLogger(__name__)
 
 
+@pytest.mark.integration
 class TestProducer:
-    """Test producer functionality."""
+    """Test producer functionality (requires Docker)."""
 
     @pytest.mark.asyncio
     async def test_producer_context_manager(self, random_stream_name, endpoint_url):

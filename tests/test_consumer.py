@@ -11,8 +11,9 @@ from kinesis.timeout_compat import timeout
 log = logging.getLogger(__name__)
 
 
+@pytest.mark.integration
 class TestConsumer:
-    """Test consumer functionality."""
+    """Test consumer functionality (requires Docker)."""
 
     @pytest.mark.asyncio
     async def test_consumer_context_manager(self, random_stream_name, endpoint_url):

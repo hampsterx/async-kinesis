@@ -13,8 +13,9 @@ from tests.conftest import skip_if_no_aws, skip_if_no_redis
 log = logging.getLogger(__name__)
 
 
+@pytest.mark.integration
 class TestIntegration:
-    """Integration tests for producer and consumer working together."""
+    """Integration tests for producer and consumer working together (requires Docker)."""
 
     @pytest.mark.asyncio
     async def test_producer_consumer_basic_flow(self, test_stream, endpoint_url):

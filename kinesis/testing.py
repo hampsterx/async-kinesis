@@ -313,10 +313,21 @@ class MockConsumer:
 
         stream = self.stream
         for i, shard in enumerate(stream.shards):
-            # Allocate shard on checkpointer
-            await self.checkpointer.allocate(shard.shard_id)
+            # Allocate shard on checkpointer (returns last checkpointed sequence)
+            success, last_seq = await self.checkpointer.allocate(shard.shard_id)
             if self.iterator_type == "LATEST":
                 self._positions[i] = len(shard.records)
+            elif last_seq is not None:
+                # Resume from checkpoint: skip past the last checkpointed sequence
+                pos = 0
+                for j, record in enumerate(shard.records):
+                    if record is _SENTINEL:
+                        continue
+                    seq, data, pk = record
+                    if seq == last_seq:
+                        pos = j + 1
+                        break
+                self._positions[i] = pos
             else:
                 self._positions[i] = 0
         return self

@@ -32,8 +32,9 @@ class TestCheckpointers:
         consumer.is_fetching = True
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_memory_checkpoint(self, endpoint_url):
-        """Test memory checkpointer with multiple consumers."""
+        """Test memory checkpointer with multiple consumers (requires Docker)."""
         # first consumer
         checkpointer = MemoryCheckPointer(name="test")
 

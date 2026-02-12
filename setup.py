@@ -39,4 +39,7 @@ setup(
         "prometheus": ["prometheus-client>=0.15.0"],
         "dynamodb": ["aioboto3>=11.0.0"],
     },
+    entry_points={
+        "pytest11": ["kinesis = kinesis.testing"],
+    },
 )

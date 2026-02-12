@@ -68,6 +68,7 @@ class Base:
         self._reconnect_timeout = time.monotonic()
         self.create_stream = create_stream
         self.create_stream_shards = create_stream_shards
+        self._just_created = False
 
     async def __aenter__(self) -> "Base":
 
@@ -158,16 +159,16 @@ class Base:
 
         await self.get_client()
 
-        just_created = False
         if self.create_stream:
             await self._create_stream()
             self.create_stream = False
-            just_created = True
+            self._just_created = True
 
         if self.skip_describe_stream:
             log.debug("Skipping Describe stream '{}'. Assuming it exists and is active.".format(self.stream_name))
             self.shards = []
             self.stream_status = self.ACTIVE
+            self._just_created = False
             return
 
         log.debug("Checking stream '{}' is active".format(self.stream_name))
@@ -178,6 +179,7 @@ class Base:
             try:
                 self.shards = await self.list_shards()
                 self.stream_status = self.ACTIVE
+                self._just_created = False
             except Exception as e:
                 # Fall back to DescribeStream if ListShards fails
                 log.warning(f"ListShards failed ({e}), falling back to DescribeStream")
@@ -191,7 +193,7 @@ class Base:
                         try:
                             stream_info = await self.get_stream_description()
                         except exceptions.StreamDoesNotExist:
-                            if just_created:
+                            if self._just_created:
                                 # Stream was just created but may not be visible yet (eventual consistency)
                                 log.debug(
                                     "Stream '{}' not yet visible after creation, retrying...".format(self.stream_name)
@@ -203,6 +205,7 @@ class Base:
 
                         if stream_status == self.ACTIVE:
                             self.stream_status = stream_status
+                            self._just_created = False
                             break
 
                         if stream_status in ["CREATING", "UPDATING"]:

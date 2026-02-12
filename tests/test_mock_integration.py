@@ -5,8 +5,6 @@ validating the same produce → consume workflows without infrastructure.
 Tests for mock primitives (MemoryShard, MemoryStream, etc.) live in test_testing.py.
 """
 
-import pytest
-
 from kinesis.checkpointers import MemoryCheckPointer
 from kinesis.processors import JsonListProcessor
 from kinesis.testing import (
@@ -17,7 +15,6 @@ from kinesis.testing import (
 )
 
 
-@pytest.mark.asyncio
 class TestMockIntegration:
     """Produce → consume roundtrip tests using in-memory mocks."""
 

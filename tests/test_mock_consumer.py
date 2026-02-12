@@ -4,8 +4,6 @@ Tests for MockConsumer behaviour not already covered in test_testing.py.
 Focuses on direct iteration, timeout handling, and explicit close().
 """
 
-import pytest
-
 from kinesis.testing import (
     MockConsumer,
     MockProducer,
@@ -13,7 +11,6 @@ from kinesis.testing import (
 )
 
 
-@pytest.mark.asyncio
 class TestMockConsumer:
     """MockConsumer behaviour tests."""
 

@@ -7,10 +7,9 @@ Focuses on aggregating processor lifecycle, multi-record patterns, and error cas
 import pytest
 
 from kinesis.processors import JsonLineProcessor
-from kinesis.testing import MockKinesisBackend, MockProducer
+from kinesis.testing import MockProducer
 
 
-@pytest.mark.asyncio
 class TestMockProducer:
     """MockProducer behaviour tests."""
 

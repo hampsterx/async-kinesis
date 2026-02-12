@@ -635,3 +635,39 @@ class TestProducer:
         assert producer.stream_status == producer.ACTIVE
 
         await producer.close()
+
+    @pytest.mark.asyncio
+    async def test_just_created_timeout_raises_stream_does_not_exist(self, random_stream_name, endpoint_url):
+        """Test that timeout during _just_created retry raises StreamDoesNotExist (Issue #56).
+
+        When a stream is created but never becomes visible within the timeout period,
+        the error should be StreamDoesNotExist (which stops reconnection attempts)
+        rather than UnboundLocalError or a generic error that triggers infinite retries.
+        """
+        producer = Producer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            region_name="ap-southeast-2",
+            create_stream=True,
+            create_stream_shards=1,
+        )
+
+        await producer.get_client()
+        await producer._create_stream()
+        producer.create_stream = False
+        producer._just_created = True
+
+        # Mock get_stream_description to always raise StreamDoesNotExist
+        # (simulates stream never becoming visible) and use a short timeout
+        with patch.object(
+            producer, "get_stream_description",
+            new_callable=AsyncMock,
+            side_effect=exceptions.StreamDoesNotExist("Stream not found"),
+        ), patch("kinesis.base.timeout", lambda _: __import__("kinesis.timeout_compat", fromlist=["timeout"]).timeout(0.5)):
+            with pytest.raises(exceptions.StreamDoesNotExist, match="not available within"):
+                await producer.start()
+
+        # _just_created should be reset so reconnection doesn't loop
+        assert producer._just_created is False
+
+        await producer.close()

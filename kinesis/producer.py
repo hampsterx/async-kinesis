@@ -39,6 +39,7 @@ class Producer(Base):
         expo_backoff_limit: int = 120,
         create_stream: bool = False,
         create_stream_shards: int = 1,
+        describe_timeout: int = 60,
         metrics_collector: Optional[MetricsCollector] = None,
     ) -> None:
 
@@ -54,6 +55,7 @@ class Producer(Base):
             use_list_shards=use_list_shards,
             create_stream=create_stream,
             create_stream_shards=create_stream_shards,
+            describe_timeout=describe_timeout,
         )
 
         self.buffer_time = buffer_time

@@ -54,6 +54,7 @@ class Consumer(Base):
         use_list_shards: bool = False,
         create_stream: bool = False,
         create_stream_shards: int = 1,
+        describe_timeout: int = 60,
         timestamp: Optional[datetime] = None,
     ) -> None:
 
@@ -69,6 +70,7 @@ class Consumer(Base):
             use_list_shards=use_list_shards,
             create_stream=create_stream,
             create_stream_shards=create_stream_shards,
+            describe_timeout=describe_timeout,
         )
 
         self.queue = asyncio.Queue(maxsize=max_queue_size)

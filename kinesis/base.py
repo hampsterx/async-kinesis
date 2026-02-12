@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import time
-from asyncio import CancelledError
 from typing import Any, Dict, List, Optional
 
 from aiobotocore.session import AioSession
@@ -28,6 +27,7 @@ class Base:
         use_list_shards: bool = False,
         create_stream: bool = False,
         create_stream_shards: int = 1,
+        describe_timeout: int = 60,
     ) -> None:
 
         self.stream_name: str = stream_name
@@ -68,6 +68,7 @@ class Base:
         self._reconnect_timeout = time.monotonic()
         self.create_stream = create_stream
         self.create_stream_shards = create_stream_shards
+        self.describe_timeout = describe_timeout
         self._just_created = False
 
     async def __aenter__(self) -> "Base":
@@ -187,8 +188,9 @@ class Base:
 
         if not self.use_list_shards:
             # Use traditional DescribeStream API
-            async with timeout(60) as cm:
-                try:
+            stream_info = None
+            try:
+                async with timeout(self.describe_timeout):
                     while True:
                         try:
                             stream_info = await self.get_stream_description()
@@ -215,14 +217,17 @@ class Base:
                             raise exceptions.StreamStatusInvalid(
                                 "Stream '{}' is {}".format(self.stream_name, stream_status)
                             )
-                except CancelledError:
-                    pass
+            except (TimeoutError, asyncio.TimeoutError):
+                self._just_created = False
+                if stream_info is None:
+                    raise exceptions.StreamDoesNotExist(
+                        "Stream '{}' not available within {}s".format(self.stream_name, self.describe_timeout)
+                    ) from None
+                raise exceptions.StreamStatusInvalid(
+                    "Stream '{}' is still {}".format(self.stream_name, stream_info["StreamStatus"])
+                ) from None
 
-                else:
-                    self.shards = stream_info["Shards"]
-
-            if cm.expired:
-                raise exceptions.StreamStatusInvalid("Stream '{}' is still {}".format(self.stream_name, stream_status))
+            self.shards = stream_info["Shards"]
 
     async def close(self):
         raise NotImplementedError

@@ -228,6 +228,7 @@ async with Consumer(
 | **use_list_shards** | False | Use ListShards API instead of DescribeStream for better rate limits (100 ops/s vs 10 ops/s) |
 | **create_stream** | False | Creates a Kinesis Stream based on the `stream_name` keyword argument. Note if stream already existing it will ignore |
 | **create_stream_shards** | 1 | Sets the amount of shard you want for your new stream. Note if stream already existing it will ignore  |
+| **describe_timeout** | 60 | Timeout in seconds for waiting for stream to become ACTIVE during startup. Increase for slow backends (e.g. LocalStack) |
 
 * Throughput exceeded. The docs (for Java/KPL see: https://docs.aws.amazon.com/streams/latest/dev/kinesis-producer-adv-retries-rate-limiting.html) state:
 
@@ -273,6 +274,7 @@ Options:
 | use_list_shards | False | Use ListShards API instead of DescribeStream for better rate limits (100 ops/s vs 10 ops/s) |
 | create_stream | False | Creates a Kinesis Stream based on the `stream_name` keyword argument. Note if stream already existing it will ignore |
 | create_stream_shards | 1 | Sets the amount of shard you want for your new stream. Note if stream already existing it will ignore  |
+| describe_timeout | 60 | Timeout in seconds for waiting for stream to become ACTIVE during startup. Increase for slow backends (e.g. LocalStack) |
 | timestamp | None | Timestamp to start reading stream from. Used with iterator type "AT_TIMESTAMP"
 
 ## Shard Management

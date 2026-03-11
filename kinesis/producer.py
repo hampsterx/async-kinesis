@@ -225,7 +225,9 @@ class Producer(Base):
                         await self.process_result(result, items)
 
                     # Record batch size
-                    self.metrics.histogram(MetricType.PRODUCER_BATCH_SIZE, len(items), {"stream_name": self.stream_name})
+                    self.metrics.histogram(
+                        MetricType.PRODUCER_BATCH_SIZE, len(items), {"stream_name": self.stream_name}
+                    )
 
     async def process_result(self, result, items):
         if not result:
@@ -351,20 +353,22 @@ class Producer(Base):
             try:
 
                 # Use custom partition key if provided, otherwise generate one
-                results = await asyncio.shield(self.client.put_records(
-                    Records=[
-                        {
-                            "Data": item.data,
-                            "PartitionKey": (
-                                item.partition_key
-                                if item.partition_key is not None
-                                else "{0}{1}".format(time.perf_counter(), time.time())
-                            ),
-                        }
-                        for item in items
-                    ],
-                    **self.address,
-                ))
+                results = await asyncio.shield(
+                    self.client.put_records(
+                        Records=[
+                            {
+                                "Data": item.data,
+                                "PartitionKey": (
+                                    item.partition_key
+                                    if item.partition_key is not None
+                                    else "{0}{1}".format(time.perf_counter(), time.time())
+                                ),
+                            }
+                            for item in items
+                        ],
+                        **self.address,
+                    )
+                )
 
                 log.info(
                     "flush complete with {} record ({} items) @ {} kb".format(

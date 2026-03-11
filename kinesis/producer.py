@@ -79,10 +79,10 @@ class Producer(Base):
             )
         self.set_put_rate_throttle()
 
+        self._flush_lock = asyncio.Lock()
+        self._stop_event = asyncio.Event()
         self.flush_task = asyncio.create_task(self._flush())
-        self.is_flushing = False
         self.after_flush_fun = after_flush_fun
-        self._stop_flush = False
 
         # keep track of these (used by unit test only)
         self.throughput_exceeded_count = 0
@@ -152,22 +152,25 @@ class Producer(Base):
     async def close(self):
         log.debug(f"Closing Connection.. (stream status:{self.stream_status})")
         if not self.stream_status == self.RECONNECT:
-            # Stop the flush task gracefully first
-            self._stop_flush = True
+            # Signal flush task to stop gracefully (don't cancel — let in-progress flush complete)
+            self._stop_event.set()
 
-            # Cancel Flush Task if still running
             if self.flush_task and not self.flush_task.done():
-                self.flush_task.cancel()
                 try:
-                    # Give the task a moment to handle cancellation properly
-                    await asyncio.wait_for(self.flush_task, timeout=1.0)
-                except asyncio.CancelledError:
-                    pass
-                except asyncio.TimeoutError:
-                    log.debug("Flush task cancellation timed out")
+                    done, _ = await asyncio.wait([self.flush_task], timeout=2.0)
+                    if not done:
+                        log.debug("Flush task did not finish in time, cancelling")
+                        self.flush_task.cancel()
+                        try:
+                            await self.flush_task
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as e:
+                            log.debug(f"Error awaiting cancelled flush task: {e}")
                 except Exception as e:
                     log.debug(f"Error during flush task cleanup: {e}")
-            # final flush (probably not required but no harm)
+
+            # Final flush to send any remaining queued items
             await self.flush()
 
         if self.client is not None:
@@ -175,57 +178,54 @@ class Producer(Base):
 
     async def _flush(self):
         try:
-            while not self._stop_flush:
+            while not self._stop_event.is_set():
                 if self.stream_status == self.ACTIVE:
-                    if not self.is_flushing:
-                        await self.flush()
+                    await self.flush(_skip_if_locked=True)
 
-                # Sleep in small increments to check stop flag more frequently
-                sleep_remaining = self.buffer_time
-                while sleep_remaining > 0 and not self._stop_flush:
-                    sleep_time = min(0.1, sleep_remaining)  # Check every 100ms
-                    await asyncio.sleep(sleep_time)
-                    sleep_remaining -= sleep_time
+                # Wait for stop signal or buffer_time, whichever comes first
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=self.buffer_time)
+                    break  # Stop event was set
+                except asyncio.TimeoutError:
+                    pass  # Buffer time elapsed, continue loop
 
         except asyncio.CancelledError:
             log.debug("Auto-flush task cancelled")
             raise
 
-    async def flush(self):
+    async def flush(self, _skip_if_locked=False):
 
-        if self.is_flushing:
-            log.debug("Flush already in progress, ignoring..")
+        if _skip_if_locked and self._flush_lock.locked():
+            log.debug("Flush already in progress, skipping periodic flush..")
             return
 
-        self.is_flushing = True
+        async with self._flush_lock:
 
-        if self.processor.has_items():
-            for output in self.processor.get_items():
-                await self.queue.put(output)
+            if self.processor.has_items():
+                for output in self.processor.get_items():
+                    await self.queue.put(output)
 
-        while True:
+            while True:
 
-            self.flush_total_records = 0
-            self.flush_total_size = 0
+                self.flush_total_records = 0
+                self.flush_total_size = 0
 
-            if self.queue.qsize() > 0 or len(self.overflow) > 0:
-                log.debug("flush queue={} overflow={}".format(self.queue.qsize(), len(self.overflow)))
+                if self.queue.qsize() > 0 or len(self.overflow) > 0:
+                    log.debug("flush queue={} overflow={}".format(self.queue.qsize(), len(self.overflow)))
 
-            items = await self.get_batch()
+                items = await self.get_batch()
 
-            if not items:
-                break
+                if not items:
+                    break
 
-            else:
-                # Measure flush duration
-                with self.metrics.timer(MetricType.PRODUCER_FLUSH_DURATION, {"stream_name": self.stream_name}):
-                    result = await self._push_kinesis(items)
-                    await self.process_result(result, items)
+                else:
+                    # Measure flush duration
+                    with self.metrics.timer(MetricType.PRODUCER_FLUSH_DURATION, {"stream_name": self.stream_name}):
+                        result = await self._push_kinesis(items)
+                        await self.process_result(result, items)
 
-                # Record batch size
-                self.metrics.histogram(MetricType.PRODUCER_BATCH_SIZE, len(items), {"stream_name": self.stream_name})
-
-        self.is_flushing = False
+                    # Record batch size
+                    self.metrics.histogram(MetricType.PRODUCER_BATCH_SIZE, len(items), {"stream_name": self.stream_name})
 
     async def process_result(self, result, items):
         if not result:
@@ -351,7 +351,7 @@ class Producer(Base):
             try:
 
                 # Use custom partition key if provided, otherwise generate one
-                results = await self.client.put_records(
+                results = await asyncio.shield(self.client.put_records(
                     Records=[
                         {
                             "Data": item.data,
@@ -364,7 +364,7 @@ class Producer(Base):
                         for item in items
                     ],
                     **self.address,
-                )
+                ))
 
                 log.info(
                     "flush complete with {} record ({} items) @ {} kb".format(
@@ -411,7 +411,11 @@ class Producer(Base):
             except ClientConnectionError:
                 await self.get_conn()
             except asyncio.CancelledError:
-                return
+                # In-flight put_records continues (shielded), but we can't get the result.
+                # Re-queue items so the final flush in close() can retry them.
+                log.debug("put_records cancelled, re-queuing %d items to overflow", len(items))
+                self.overflow.extend(items)
+                raise
             except Exception as e:
                 log.exception(e)
                 log.critical("Unknown Exception Caught")

@@ -3,8 +3,10 @@ import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from aiohttp import ClientConnectionError
 
 from kinesis import Producer, exceptions
+from kinesis.aggregators import OutputItem
 from kinesis.processors import JsonLineProcessor, JsonProcessor, StringProcessor
 
 log = logging.getLogger(__name__)
@@ -679,3 +681,148 @@ class TestProducer:
         assert producer._just_created is False
 
         await producer.close()
+
+
+class TestProducerFlushLifecycle:
+    """Unit tests for producer flush/close lifecycle (no Docker required).
+
+    These test the fix for silent data loss when close() is called during
+    an active background flush.
+    """
+
+    @staticmethod
+    def _success_response(records):
+        """Build a successful put_records response matching the batch size."""
+        return {
+            "FailedRecordCount": 0,
+            "Records": [{"ShardId": "shard-1", "SequenceNumber": str(i)} for i in range(len(records))],
+        }
+
+    @classmethod
+    def _make_mock_producer(cls, put_records_fn=None, **kwargs):
+        """Create a Producer with mocked Kinesis client for unit testing."""
+        defaults = {
+            "stream_name": "test-stream",
+            "endpoint_url": "http://localhost:4567",
+            "skip_describe_stream": True,
+            "buffer_time": 10,
+        }
+        defaults.update(kwargs)
+
+        producer = Producer(**defaults)
+        producer.stream_status = producer.ACTIVE
+
+        async def default_put_records(**kw):
+            return cls._success_response(kw.get("Records", []))
+
+        mock_client = AsyncMock()
+        mock_client.put_records = put_records_fn or default_put_records
+        mock_client.close = AsyncMock()
+        producer.client = mock_client
+
+        return producer
+
+    @pytest.mark.asyncio
+    async def test_close_flushes_when_background_task_was_mid_flush(self):
+        """When close() is called during a background flush, all items must be delivered."""
+        delivered = []
+        flush_started = asyncio.Event()
+
+        async def slow_put_records(**kwargs):
+            flush_started.set()
+            await asyncio.sleep(0.3)
+            delivered.extend(kwargs["Records"])
+            return self._success_response(kwargs["Records"])
+
+        producer = self._make_mock_producer(
+            put_records_fn=slow_put_records,
+            buffer_time=0.05,
+        )
+
+        await producer.put({"msg": "1"})
+        await producer.put({"msg": "2"})
+
+        # Wait for background flush to start the slow put_records
+        await asyncio.wait_for(flush_started.wait(), timeout=2.0)
+
+        # Add another item while flush is in progress
+        await producer.put({"msg": "3"})
+
+        # close() should wait for in-progress flush and then do a final flush
+        await producer.close()
+
+        assert len(delivered) == 3
+
+    @pytest.mark.asyncio
+    async def test_cancelled_push_requeues_items(self):
+        """Items must be re-queued to overflow when _push_kinesis is cancelled."""
+        block = asyncio.Event()
+
+        async def blocking_put_records(**kwargs):
+            await block.wait()
+            return {"FailedRecordCount": 0, "Records": []}
+
+        producer = self._make_mock_producer(put_records_fn=blocking_put_records)
+
+        items = [
+            OutputItem(size=10, n=1, data=b'{"msg":"1"}', partition_key="k1"),
+            OutputItem(size=10, n=1, data=b'{"msg":"2"}', partition_key="k2"),
+        ]
+
+        # Run _push_kinesis in a task and cancel it
+        push_task = asyncio.create_task(producer._push_kinesis(items))
+        await asyncio.sleep(0.05)  # Let it start
+        push_task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await push_task
+
+        # Unblock the shielded coroutine to prevent warnings
+        block.set()
+        await asyncio.sleep(0)
+
+        assert len(producer.overflow) == 2
+        assert producer.overflow == items
+
+        await producer.close()
+
+    @pytest.mark.asyncio
+    async def test_flush_lock_released_on_exception(self):
+        """Flush lock must be released even when _push_kinesis raises."""
+        call_count = 0
+
+        async def failing_then_succeeding(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ClientConnectionError("connection lost")
+            return self._success_response(kwargs["Records"])
+
+        producer = self._make_mock_producer(put_records_fn=failing_then_succeeding)
+
+        await producer.put({"msg": "1"})
+
+        # Mock get_conn so it doesn't try real reconnection
+        with patch.object(producer, "get_conn", new_callable=AsyncMock):
+            await producer.flush()
+
+        # Lock must be released — another flush should not be blocked
+        assert not producer._flush_lock.locked()
+
+        await producer.close()
+
+    @pytest.mark.asyncio
+    async def test_rapid_produce_close_delivers_all(self):
+        """Rapid produce/close cycles must deliver all records."""
+        total_delivered = []
+
+        async def tracking_put_records(**kwargs):
+            total_delivered.extend(kwargs["Records"])
+            return self._success_response(kwargs["Records"])
+
+        for i in range(5):
+            producer = self._make_mock_producer(put_records_fn=tracking_put_records)
+            await producer.put({"msg": f"test-{i}"})
+            await producer.close()
+
+        assert len(total_delivered) == 5

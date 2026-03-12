@@ -305,11 +305,20 @@ If you wish to avoid excessive throttling or have multiple producers on a stream
 ```python
 from kinesis import Consumer
 
+# One-shot: consume until idle_timeout (default 2s) with no new records
 async with Consumer(stream_name="test") as consumer:
     async for item in consumer:
         print(item)
-    # Consumer continues to wait for new messages after catching up
+
+# Continuous: wrap in while True to keep consuming across idle gaps
+async with Consumer(stream_name="test") as consumer:
+    while True:
+        async for item in consumer:
+            print(item)
 ```
+
+> **Note**: `async for` ends after `idle_timeout` seconds of queue inactivity (default 2.0s).
+> For continuous consumption, wrap the `async for` in a `while True` loop.
 
 
 Options:
@@ -324,7 +333,7 @@ Options:
 | max_queue_size | 10000 | the fetch() task shard will block when queue is at max |
 | max_shard_consumers | None | Max number of shards to use. None = all |
 | record_limit | 10000 | Number of records to fetch with get_records() |
-| sleep_time_no_records | 2 | No of seconds to sleep when caught up |
+| sleep_time_no_records | 2 | Seconds to sleep per shard when no new records are returned by `get_records` |
 | iterator_type | TRIM_HORIZON | Default shard iterator type for new/unknown shards (ie start from start of stream). Alternatives are "LATEST" (ie end of stream), "AT_TIMESTAMP" (ie particular point in time, requires defining `timestamp` arg) |
 | shard_fetch_rate | 1 | No of fetches per second (max = 5). 1 is recommended as allows having multiple consumers without hitting the max limit. |
 | checkpointer | MemoryCheckPointer() | Checkpointer to use |
@@ -337,6 +346,7 @@ Options:
 | create_stream | False | Creates a Kinesis Stream based on the `stream_name` keyword argument. Note if stream already existing it will ignore |
 | create_stream_shards | 1 | Sets the amount of shard you want for your new stream. Note if stream already existing it will ignore  |
 | describe_timeout | 60 | Timeout in seconds for waiting for stream to become ACTIVE during startup. Increase for slow backends (e.g. LocalStack) |
+| idle_timeout | 2.0 | Seconds to wait for new records before ending iteration. Controls how long `async for` blocks on an empty queue before raising `StopAsyncIteration` |
 | timestamp | None | Timestamp to start reading stream from. Used with iterator type "AT_TIMESTAMP"
 
 ## Shard Management

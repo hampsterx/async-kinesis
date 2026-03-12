@@ -18,7 +18,6 @@ from kinesis.aggregators import (
     NetstringAggregator,
     NewlineAggregator,
     OutputItem,
-    SimpleAggregator,
 )
 from kinesis.processors import (
     JsonLineProcessor,
@@ -570,7 +569,7 @@ class KinesisTests(BaseKinesisTests):
 
     async def test_producer_and_consumer(self):
 
-        async with Producer(stream_name=self.stream_name, endpoint_url=ENDPOINT_URL) as producer:
+        async with Producer(stream_name=self.stream_name, endpoint_url=ENDPOINT_URL):
             pass
 
             async with Consumer(stream_name=self.stream_name, endpoint_url=ENDPOINT_URL):
@@ -815,7 +814,7 @@ class KinesisTests(BaseKinesisTests):
             ) as consumer:
 
                 # Manually start
-                await consumer.start_consumer()
+                consumer._start_fetch_task()
 
                 await producer.put("test.B")
 
@@ -961,7 +960,7 @@ class AWSKinesisTests(BaseKinesisTests):
             ) as consumer:
 
                 # Manually start
-                await consumer.start_consumer()
+                consumer._start_fetch_task()
 
                 await producer.put("test")
 
@@ -1018,7 +1017,7 @@ class AWSKinesisTests(BaseKinesisTests):
                 iterator_type="LATEST",
             ) as consumer:
 
-                await consumer.start_consumer()
+                consumer._start_fetch_task()
 
                 # Wait a bit just to be sure iterator is gonna get late
                 await asyncio.sleep(3)

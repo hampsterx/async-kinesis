@@ -20,7 +20,7 @@ PROCESSORS = {
 class _ClientHelper(Base):
     """Minimal Base subclass for lightweight Kinesis API access (describe/list only)."""
 
-    def __init__(self, stream_name="", endpoint_url=None, region_name=None):
+    def __init__(self, stream_name="", *, endpoint_url=None, region_name=None):
         super().__init__(
             stream_name=stream_name,
             endpoint_url=endpoint_url,

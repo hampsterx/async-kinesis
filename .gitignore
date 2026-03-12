@@ -11,5 +11,6 @@ temp.py
 .env
 .mypy_cache
 .tox
+.coverage
 release.sh
 CLAUDE.md

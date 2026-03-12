@@ -333,7 +333,6 @@ class TestProducer:
         This test catches the bug fixed in PR #37 where bandwidth throttle was using
         self.flush_total_size (cumulative) instead of size_kb (individual item size).
         """
-        from unittest.mock import MagicMock
 
         # Track what sizes the bandwidth throttle is called with
         throttle_sizes = []
@@ -465,7 +464,7 @@ class TestProducer:
     async def test_producer_kpl_partition_key_compatibility(self, random_stream_name, endpoint_url):
         """Test that KPL processors reject custom partition keys (Issue #34)."""
         try:
-            import aws_kinesis_agg
+            import aws_kinesis_agg  # noqa: F401
         except ImportError:
             pytest.skip("KPL aggregation library not available")
 
@@ -489,7 +488,6 @@ class TestProducer:
     @pytest.mark.asyncio
     async def test_producer_partition_key_aggregation_grouping(self, random_stream_name, endpoint_url):
         """Test that aggregated records group by partition key (Issue #34)."""
-        from unittest.mock import MagicMock
 
         from kinesis.processors import JsonLineProcessor
 
@@ -553,7 +551,6 @@ class TestProducer:
     @pytest.mark.asyncio
     async def test_producer_partition_key_bandwidth_calculation(self, random_stream_name, endpoint_url):
         """Test that partition key size is included in bandwidth calculations (Issue #34)."""
-        from unittest.mock import MagicMock
 
         # Track bandwidth throttle sizes
         throttle_sizes = []
@@ -720,6 +717,10 @@ class TestProducerFlushLifecycle:
         mock_client.close = AsyncMock()
         producer.client = mock_client
 
+        # Start the background flush loop (normally done by start() via __aenter__)
+        producer._stop_event = asyncio.Event()
+        producer.flush_task = asyncio.create_task(producer._flush())
+
         return producer
 
     @pytest.mark.asyncio
@@ -755,7 +756,11 @@ class TestProducerFlushLifecycle:
 
     @pytest.mark.asyncio
     async def test_cancelled_push_requeues_items(self):
-        """Items must be re-queued to overflow when _push_kinesis is cancelled."""
+        """Items must be re-queued to overflow when _push_kinesis is cancelled.
+
+        close() destroys the HTTP client, so the shielded put_records call may fail.
+        Re-queuing guarantees at-least-once delivery via the final flush.
+        """
         block = asyncio.Event()
 
         async def blocking_put_records(**kwargs):
@@ -782,7 +787,7 @@ class TestProducerFlushLifecycle:
         await asyncio.sleep(0)
 
         assert len(producer.overflow) == 2
-        assert producer.overflow == items
+        assert list(producer.overflow) == items
 
         await producer.close()
 
@@ -826,3 +831,25 @@ class TestProducerFlushLifecycle:
             await producer.close()
 
         assert len(total_delivered) == 5
+
+    @pytest.mark.asyncio
+    async def test_close_during_reconnect_stops_flush_task(self):
+        """Flush task must be stopped even when close() is called during RECONNECT status.
+
+        close() only tears down — start() is responsible for restarting the flush task.
+        """
+        producer = self._make_mock_producer(buffer_time=0.05)
+
+        # _make_mock_producer already started a flush task; wait for it to be running
+        await asyncio.sleep(0.1)
+
+        assert not producer.flush_task.done()
+
+        # Set RECONNECT status — previously this skipped _stop_event.set()
+        producer.stream_status = producer.RECONNECT
+
+        old_flush_task = producer.flush_task
+        await producer.close()
+
+        # Old flush task should have been stopped
+        assert old_flush_task.done()

@@ -251,7 +251,7 @@ async def test_producer(
             ) as consumer:
 
                 # Ensure consumer is set up before producing
-                await consumer.start_consumer(wait_iterations=0)
+                consumer._start_fetch_task()
 
                 # Add small delay to ensure consumer is ready
                 await asyncio.sleep(1)
@@ -349,7 +349,7 @@ async def run_benchmark(args):
 
     if not args.dry_run:
         # Create the stream
-        async with StreamManager(stream_name, args.shards) as stream:
+        async with StreamManager(stream_name, args.shards):
 
             for iteration in range(args.iterations):
                 if args.iterations > 1:
@@ -512,7 +512,7 @@ def main():
     def cleanup_handler(signum=None, frame=None):
         """Handle cleanup on exit"""
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             asyncio.create_task(cleanup_all_streams())
         except RuntimeError:
             # No running loop, create one

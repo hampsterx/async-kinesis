@@ -17,6 +17,7 @@ class Base:
     def __init__(
         self,
         stream_name: str,
+        *,
         session: Optional[AioSession] = None,
         endpoint_url: Optional[str] = None,
         region_name: Optional[str] = None,

@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from asyncio import TimeoutError
-from asyncio.queues import QueueEmpty
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, Optional
 
@@ -36,6 +35,7 @@ class Consumer(Base):
     def __init__(
         self,
         stream_name: str,
+        *,
         session: Optional[AioSession] = None,
         endpoint_url: Optional[str] = None,
         region_name: Optional[str] = None,
@@ -55,6 +55,7 @@ class Consumer(Base):
         create_stream: bool = False,
         create_stream_shards: int = 1,
         describe_timeout: int = 60,
+        idle_timeout: float = 2.0,
         timestamp: Optional[datetime] = None,
     ) -> None:
 
@@ -76,6 +77,8 @@ class Consumer(Base):
         self.queue = asyncio.Queue(maxsize=max_queue_size)
 
         self.sleep_time_no_records = sleep_time_no_records
+
+        self.idle_timeout = idle_timeout
 
         self.max_shard_consumers = max_shard_consumers
 
@@ -669,18 +672,8 @@ class Consumer(Base):
             "shard_details": shard_details,
         }
 
-    async def start_consumer(self, wait_iterations=10, wait_sleep=0.25):
-
-        # Start task to fetch periodically
-
+    def _start_fetch_task(self):
         self.fetch_task = asyncio.create_task(self._fetch())
-
-        # Wait a while until we have some results
-        for i in range(0, wait_iterations):
-            if self.fetch_task and self.queue.qsize() == 0:
-                await asyncio.sleep(wait_sleep)
-
-        log.debug("start_consumer completed.. queue size={}".format(self.queue.qsize()))
 
     async def __anext__(self):
 
@@ -688,7 +681,7 @@ class Consumer(Base):
             await self.get_conn()
 
         if not self.fetch_task:
-            await self.start_consumer()
+            self._start_fetch_task()
 
         # Raise exception from Fetch Task to main task otherwise raise exception inside
         # Fetch Task will fail silently
@@ -702,23 +695,21 @@ class Consumer(Base):
 
         while True:
             try:
-                item = self.queue.get_nowait()
+                item = await asyncio.wait_for(self.queue.get(), timeout=self.idle_timeout)
+            except asyncio.TimeoutError:
+                log.debug(f"Queue idle for {self.idle_timeout}s, stopping iteration")
+                raise StopAsyncIteration from None
 
-                if item and isinstance(item, dict) and "__CHECKPOINT__" in item:
-                    if self.checkpointer:
-                        await self.checkpointer.checkpoint(
-                            item["__CHECKPOINT__"]["ShardId"],
-                            item["__CHECKPOINT__"]["SequenceNumber"],
-                        )
-                    checkpoint_count += 1
-                    if checkpoint_count >= max_checkpoints:
-                        log.warning(f"Processed {max_checkpoints} checkpoints, stopping iteration")
-                        raise StopAsyncIteration
-                    continue
+            if item and isinstance(item, dict) and "__CHECKPOINT__" in item:
+                if self.checkpointer:
+                    await self.checkpointer.checkpoint(
+                        item["__CHECKPOINT__"]["ShardId"],
+                        item["__CHECKPOINT__"]["SequenceNumber"],
+                    )
+                checkpoint_count += 1
+                if checkpoint_count >= max_checkpoints:
+                    log.warning(f"Processed {max_checkpoints} checkpoints, stopping iteration")
+                    raise StopAsyncIteration
+                continue
 
-                return item
-
-            except QueueEmpty:
-                log.debug("Queue empty..")
-                await asyncio.sleep(self.sleep_time_no_records)
-                raise StopAsyncIteration
+            return item

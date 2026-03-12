@@ -1,11 +1,12 @@
 import asyncio
 import logging
+import time
 from unittest.mock import AsyncMock
 
 import pytest
 
 from kinesis import Consumer, MemoryCheckPointer, Producer, exceptions
-from kinesis.processors import JsonProcessor, StringProcessor
+from kinesis.processors import JsonProcessor
 from kinesis.timeout_compat import timeout
 
 log = logging.getLogger(__name__)
@@ -449,9 +450,7 @@ class TestConsumer:
     @pytest.mark.asyncio
     async def test_consumer_expired_iterator_handling(self, test_stream, endpoint_url):
         """Test handling of expired shard iterators."""
-        from unittest.mock import AsyncMock, patch
-
-        from botocore.exceptions import ClientError
+        from unittest.mock import AsyncMock
 
         consumer = Consumer(
             stream_name=test_stream,
@@ -470,11 +469,7 @@ class TestConsumer:
         consumer.client = AsyncMock()
         consumer.get_shard_iterator = AsyncMock(return_value="new-iterator")
 
-        # Mock expired iterator exception
-        expired_error = ClientError(
-            error_response={"Error": {"Code": "ExpiredIteratorException"}},
-            operation_name="GetRecords",
-        )
+        # Note: ExpiredIteratorException has Code="ExpiredIteratorException" in the Error dict
 
         # Test that expired iterator is handled properly
         # This would normally be called in get_records method
@@ -542,18 +537,18 @@ class TestConsumer:
         assert "shard-child-002" in consumer._child_shards
 
         # Parent should be allocatable
-        assert consumer._should_allocate_shard("shard-parent-001") == True
+        assert consumer._should_allocate_shard("shard-parent-001")
 
         # Children should NOT be allocatable while parent is active
-        assert consumer._should_allocate_shard("shard-child-001") == False
-        assert consumer._should_allocate_shard("shard-child-002") == False
+        assert not consumer._should_allocate_shard("shard-child-001")
+        assert not consumer._should_allocate_shard("shard-child-002")
 
         # Mark parent as exhausted
         consumer._exhausted_parents.add("shard-parent-001")
 
         # Now children should be allocatable
-        assert consumer._should_allocate_shard("shard-child-001") == True
-        assert consumer._should_allocate_shard("shard-child-002") == True
+        assert consumer._should_allocate_shard("shard-child-001")
+        assert consumer._should_allocate_shard("shard-child-002")
 
     @pytest.mark.asyncio
     async def test_consumer_shard_topology_status(self, endpoint_url):
@@ -627,3 +622,139 @@ class TestConsumer:
         assert len(consumer._parent_shards) == 1
         assert len(consumer._child_shards) == 2
         assert "original-shard" in consumer._parent_shards
+
+
+class TestConsumerIdleTimeout:
+    """Unit tests for consumer idle_timeout behaviour (no Docker required).
+
+    These test the fix for the one-shot consumption pattern where __anext__
+    gives up immediately on an empty queue instead of waiting for records
+    to arrive from Kinesis.
+    """
+
+    @staticmethod
+    def _make_mock_consumer(**kwargs):
+        """Create a Consumer with mocked internals for unit testing."""
+        defaults = {
+            "stream_name": "test-stream",
+            "endpoint_url": "http://localhost:4567",
+            "skip_describe_stream": True,
+            "idle_timeout": 0.5,
+        }
+        defaults.update(kwargs)
+
+        consumer = Consumer(**defaults)
+        consumer.stream_status = consumer.ACTIVE
+        consumer.shards = [{"ShardId": "shard-0"}]
+
+        # Mock fetch task as a no-op running task
+        consumer.fetch_task = asyncio.ensure_future(asyncio.sleep(3600))
+
+        return consumer
+
+    @staticmethod
+    async def _cleanup(consumer):
+        """Cancel the mock fetch task to avoid 'task was destroyed' warnings."""
+        consumer.fetch_task.cancel()
+        try:
+            await consumer.fetch_task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_anext_waits_for_delayed_records(self):
+        """Records arriving within idle_timeout should be consumed, not skipped."""
+        consumer = self._make_mock_consumer(idle_timeout=2.0)
+
+        # Deliver a record after a short delay
+        async def delayed_put():
+            await asyncio.sleep(0.3)
+            await consumer.queue.put({"msg": "delayed"})
+
+        asyncio.create_task(delayed_put())
+
+        item = await consumer.__anext__()
+        assert item == {"msg": "delayed"}
+
+        await self._cleanup(consumer)
+
+    @pytest.mark.asyncio
+    async def test_anext_stops_after_idle_timeout(self):
+        """With no records, StopAsyncIteration should fire after idle_timeout, not immediately."""
+        consumer = self._make_mock_consumer(idle_timeout=0.3)
+
+        start = time.monotonic()
+        with pytest.raises(StopAsyncIteration):
+            await consumer.__anext__()
+        elapsed = time.monotonic() - start
+
+        # Should have waited at least close to idle_timeout (not instant)
+        assert elapsed >= 0.25, f"Expected ~0.3s wait, got {elapsed:.3f}s"
+
+        await self._cleanup(consumer)
+
+    @pytest.mark.asyncio
+    async def test_checkpoints_processed_before_data(self):
+        """Checkpoint items in queue should be processed transparently before returning data."""
+        consumer = self._make_mock_consumer()
+        consumer.checkpointer = AsyncMock()
+        consumer.checkpointer.checkpoint = AsyncMock()
+
+        # Queue: checkpoint, then a real record
+        await consumer.queue.put({"__CHECKPOINT__": {"ShardId": "shard-0", "SequenceNumber": "100"}})
+        await consumer.queue.put({"msg": "real"})
+
+        item = await consumer.__anext__()
+        assert item == {"msg": "real"}
+        consumer.checkpointer.checkpoint.assert_awaited_once_with("shard-0", "100")
+
+        await self._cleanup(consumer)
+
+    @pytest.mark.asyncio
+    async def test_streaming_pattern_unaffected(self):
+        """The existing streaming pattern (while True: async for) still works with idle_timeout."""
+        consumer = self._make_mock_consumer(idle_timeout=0.2)
+
+        # Pre-load records
+        for i in range(3):
+            await consumer.queue.put({"msg": f"batch1-{i}"})
+
+        # First iteration: consume all 3
+        batch1 = []
+        async for item in consumer:
+            batch1.append(item)
+        assert len(batch1) == 3
+
+        # Simulate streaming: add more records and iterate again
+        for i in range(2):
+            await consumer.queue.put({"msg": f"batch2-{i}"})
+
+        batch2 = []
+        async for item in consumer:
+            batch2.append(item)
+        assert len(batch2) == 2
+
+        await self._cleanup(consumer)
+
+    @pytest.mark.asyncio
+    async def test_consume_once_with_propagation_delay(self):
+        """One-shot consume pattern receives all records despite Kinesis propagation delay."""
+        consumer = self._make_mock_consumer(idle_timeout=2.0)
+
+        # Simulate records arriving in bursts with propagation delay
+        async def delayed_produce():
+            await asyncio.sleep(0.3)  # Kinesis propagation delay
+            for i in range(3):
+                await consumer.queue.put({"msg": f"record-{i}"})
+
+        asyncio.create_task(delayed_produce())
+
+        # One-shot pattern: async for should wait for records, then stop after idle_timeout
+        consumed = []
+        async for item in consumer:
+            consumed.append(item)
+
+        assert len(consumed) == 3
+        assert [r["msg"] for r in consumed] == ["record-0", "record-1", "record-2"]
+
+        await self._cleanup(consumer)

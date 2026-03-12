@@ -188,6 +188,7 @@ class MockProducer:
     def __init__(
         self,
         stream_name: str,
+        *,
         processor: Optional[Processor] = None,
         # Accepted for signature compatibility — ignored
         session=None,
@@ -270,6 +271,7 @@ class MockConsumer:
     def __init__(
         self,
         stream_name: str,
+        *,
         processor: Optional[Processor] = None,
         checkpointer=None,
         iterator_type: str = "TRIM_HORIZON",

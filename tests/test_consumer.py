@@ -623,6 +623,279 @@ class TestConsumer:
         assert len(consumer._child_shards) == 2
         assert "original-shard" in consumer._parent_shards
 
+    @pytest.mark.asyncio
+    async def test_wait_ready_then_produce_latest(self, random_stream_name, endpoint_url):
+        """End-to-end: wait_ready() with LATEST, then produce, then consume."""
+        # Create stream first
+        async with Producer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            create_stream=True,
+            create_stream_shards=1,
+        ) as producer:
+            # Put a throwaway record so the stream is fully active
+            await producer.put({"setup": True})
+            await producer.flush()
+
+        # Start consumer with LATEST — should only see records produced AFTER wait_ready
+        async with Consumer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            iterator_type="LATEST",
+            sleep_time_no_records=0.5,
+            idle_timeout=3.0,
+        ) as consumer:
+            await consumer.wait_ready(timeout=10)
+
+            # Now produce — consumer has iterators, so these should be seen
+            async with Producer(
+                stream_name=random_stream_name,
+                endpoint_url=endpoint_url,
+            ) as producer:
+                for i in range(3):
+                    await producer.put({"seq": i})
+                await producer.flush()
+
+            consumed = []
+            try:
+                async with timeout(10):
+                    async for message in consumer:
+                        consumed.append(message)
+                        if len(consumed) >= 3:
+                            break
+            except asyncio.TimeoutError:
+                pass
+
+            assert len(consumed) == 3
+            assert [m["seq"] for m in consumed] == [0, 1, 2]
+
+
+def _make_mock_consumer(**kwargs):
+    """Create a Consumer with mocked internals for unit testing (no Docker)."""
+    defaults = {
+        "stream_name": "test-stream",
+        "endpoint_url": "http://localhost:4567",
+        "skip_describe_stream": True,
+        "idle_timeout": 0.5,
+    }
+    defaults.update(kwargs)
+
+    consumer = Consumer(**defaults)
+    consumer.stream_status = consumer.ACTIVE
+    consumer.shards = [{"ShardId": "shard-0"}]
+
+    # Mock fetch task as a no-op running task
+    consumer.fetch_task = asyncio.ensure_future(asyncio.sleep(3600))
+
+    return consumer
+
+
+@pytest.fixture
+async def mock_consumer():
+    """Fixture that creates mock consumers and guarantees cleanup even on assertion failure."""
+    consumers = []
+
+    def _factory(**kwargs):
+        consumer = _make_mock_consumer(**kwargs)
+        consumers.append(consumer)
+        return consumer
+
+    yield _factory
+
+    for c in consumers:
+        if c.fetch_task:
+            if not c.fetch_task.done():
+                c.fetch_task.cancel()
+            try:
+                await c.fetch_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
+class TestConsumerReadySignal:
+    """Unit tests for consumer ready signal (no Docker required)."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_sets_ready_when_shards_allocated(self, mock_consumer):
+        """fetch() should set _ready when all allocated shards have iterators."""
+        consumer = mock_consumer()
+
+        # Simulate: shard is allocated and has an iterator
+        consumer.shards = [{"ShardId": "shard-0", "ShardIterator": "iter-abc"}]
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+        await consumer.checkpointer.allocate("shard-0")
+
+        # Mock refresh_shards and get_records so fetch() runs through the loop
+        consumer.refresh_shards = AsyncMock()
+        consumer.get_records = AsyncMock(return_value=None)
+
+        await consumer.fetch()
+
+        assert consumer.is_ready
+
+    @pytest.mark.asyncio
+    async def test_wait_ready_returns_immediately_when_already_ready(self, mock_consumer):
+        """If _ready is already set, wait_ready() should return near-instantly."""
+        consumer = mock_consumer(skip_describe_stream=False)
+        consumer.shards = [{"ShardId": "shard-0"}]
+        consumer._ready.set()
+
+        start = time.monotonic()
+        await consumer.wait_ready(timeout=5)
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 0.1, f"Expected instant return, got {elapsed:.3f}s"
+
+    @pytest.mark.asyncio
+    async def test_fetch_not_ready_with_zero_owned_shards(self, mock_consumer):
+        """Consumer with zero allocated shards should NOT become ready (would miss LATEST records)."""
+        consumer = mock_consumer()
+        # Mock checkpointer that always fails allocation (simulates stale lease / another consumer)
+        consumer.checkpointer = AsyncMock()
+        consumer.checkpointer.is_allocated = lambda shard_id: False
+        consumer.checkpointer.allocate = AsyncMock(return_value=(False, None))
+        consumer.shards = [{"ShardId": "shard-0"}]
+
+        consumer.refresh_shards = AsyncMock()
+        consumer.get_records = AsyncMock(return_value=None)
+        await consumer.fetch()
+
+        assert not consumer.is_ready, "Zero owned shards should not be ready"
+
+    @pytest.mark.asyncio
+    async def test_fetch_multi_shard_waits_for_all(self, mock_consumer):
+        """Readiness should only fire when ALL owned shards have iterators."""
+        consumer = mock_consumer()
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+
+        # 3 shards, only 2 have iterators
+        consumer.shards = [
+            {"ShardId": "shard-0", "ShardIterator": "iter-0"},
+            {"ShardId": "shard-1", "ShardIterator": "iter-1"},
+            {"ShardId": "shard-2"},  # No iterator yet
+        ]
+        await consumer.checkpointer.allocate("shard-0")
+        await consumer.checkpointer.allocate("shard-1")
+        await consumer.checkpointer.allocate("shard-2")
+
+        # Mock fetch to run through the loop without side effects
+        consumer.refresh_shards = AsyncMock()
+        consumer.get_records = AsyncMock(return_value=None)
+        await consumer.fetch()
+
+        assert not consumer.is_ready, "Should NOT be ready — shard-2 missing iterator"
+
+        # Now give shard-2 its iterator
+        consumer.shards[2]["ShardIterator"] = "iter-2"
+        await consumer.fetch()
+
+        assert consumer.is_ready, "Should be ready — all shards have iterators"
+
+    @pytest.mark.asyncio
+    async def test_fetch_max_shard_consumers(self, mock_consumer):
+        """With max_shard_consumers=2, readiness fires after those 2 get iterators."""
+        consumer = mock_consumer(max_shard_consumers=2)
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+
+        # 4 shards exist but only 2 are allocated
+        consumer.shards = [
+            {"ShardId": "shard-0", "ShardIterator": "iter-0"},
+            {"ShardId": "shard-1", "ShardIterator": "iter-1"},
+            {"ShardId": "shard-2"},
+            {"ShardId": "shard-3"},
+        ]
+        await consumer.checkpointer.allocate("shard-0")
+        await consumer.checkpointer.allocate("shard-1")
+        # shard-2 and shard-3 are NOT allocated
+
+        consumer.refresh_shards = AsyncMock()
+        consumer.get_records = AsyncMock(return_value=None)
+        await consumer.fetch()
+
+        assert consumer.is_ready, "Should be ready — both allocated shards have iterators"
+
+    @pytest.mark.asyncio
+    async def test_wait_ready_skip_describe_stream_raises(self, mock_consumer):
+        """wait_ready() should raise ValueError with skip_describe_stream=True."""
+        consumer = mock_consumer(skip_describe_stream=True)
+
+        with pytest.raises(ValueError, match="skip_describe_stream"):
+            await consumer.wait_ready(timeout=1)
+
+    @pytest.mark.asyncio
+    async def test_wait_ready_fetch_task_crash(self, mock_consumer):
+        """If the fetch task crashes, wait_ready() should re-raise immediately."""
+        consumer = mock_consumer(skip_describe_stream=False)
+        consumer.shards = [{"ShardId": "shard-0"}]
+
+        # Replace fetch task with one that already failed
+        consumer.fetch_task.cancel()
+        try:
+            await consumer.fetch_task
+        except asyncio.CancelledError:
+            pass
+
+        async def failing_fetch():
+            raise RuntimeError("Simulated fetch crash")
+
+        consumer.fetch_task = asyncio.ensure_future(failing_fetch())
+        await asyncio.sleep(0.05)
+
+        with pytest.raises(RuntimeError, match="Simulated fetch crash"):
+            await consumer.wait_ready(timeout=5)
+
+    @pytest.mark.asyncio
+    async def test_wait_ready_fetch_task_crash_during_wait(self, mock_consumer):
+        """If fetch task dies DURING the wait, wait_ready() should raise immediately."""
+        consumer = mock_consumer(skip_describe_stream=False)
+        consumer.shards = [{"ShardId": "shard-0"}]
+
+        # Replace fetch task with one that fails after a delay
+        consumer.fetch_task.cancel()
+        try:
+            await consumer.fetch_task
+        except asyncio.CancelledError:
+            pass
+
+        async def delayed_crash():
+            await asyncio.sleep(0.2)
+            raise RuntimeError("Delayed fetch crash")
+
+        consumer.fetch_task = asyncio.ensure_future(delayed_crash())
+
+        start = time.monotonic()
+        with pytest.raises(RuntimeError, match="Delayed fetch crash"):
+            await consumer.wait_ready(timeout=10)
+        elapsed = time.monotonic() - start
+
+        # Should have raised quickly (~0.2s), not waited for the 10s timeout
+        assert elapsed < 2.0, f"Expected fast failure, got {elapsed:.3f}s"
+
+    @pytest.mark.asyncio
+    async def test_wait_ready_fetch_task_cancelled(self, mock_consumer):
+        """If fetch task is cancelled (shutdown), wait_ready() should raise RuntimeError."""
+        consumer = mock_consumer(skip_describe_stream=False)
+        consumer.shards = [{"ShardId": "shard-0"}]
+
+        # Cancel the fetch task to simulate graceful shutdown
+        consumer.fetch_task.cancel()
+        try:
+            await consumer.fetch_task
+        except asyncio.CancelledError:
+            pass
+
+        with pytest.raises(RuntimeError, match="cancelled"):
+            await consumer.wait_ready(timeout=1)
+
+    @pytest.mark.asyncio
+    async def test_is_ready_property(self, mock_consumer):
+        """is_ready should reflect the state of _ready event."""
+        consumer = mock_consumer()
+
+        assert not consumer.is_ready
+        consumer._ready.set()
+        assert consumer.is_ready
+
 
 class TestConsumerIdleTimeout:
     """Unit tests for consumer idle_timeout behaviour (no Docker required).
@@ -632,39 +905,10 @@ class TestConsumerIdleTimeout:
     to arrive from Kinesis.
     """
 
-    @staticmethod
-    def _make_mock_consumer(**kwargs):
-        """Create a Consumer with mocked internals for unit testing."""
-        defaults = {
-            "stream_name": "test-stream",
-            "endpoint_url": "http://localhost:4567",
-            "skip_describe_stream": True,
-            "idle_timeout": 0.5,
-        }
-        defaults.update(kwargs)
-
-        consumer = Consumer(**defaults)
-        consumer.stream_status = consumer.ACTIVE
-        consumer.shards = [{"ShardId": "shard-0"}]
-
-        # Mock fetch task as a no-op running task
-        consumer.fetch_task = asyncio.ensure_future(asyncio.sleep(3600))
-
-        return consumer
-
-    @staticmethod
-    async def _cleanup(consumer):
-        """Cancel the mock fetch task to avoid 'task was destroyed' warnings."""
-        consumer.fetch_task.cancel()
-        try:
-            await consumer.fetch_task
-        except asyncio.CancelledError:
-            pass
-
     @pytest.mark.asyncio
-    async def test_anext_waits_for_delayed_records(self):
+    async def test_anext_waits_for_delayed_records(self, mock_consumer):
         """Records arriving within idle_timeout should be consumed, not skipped."""
-        consumer = self._make_mock_consumer(idle_timeout=2.0)
+        consumer = mock_consumer(idle_timeout=2.0)
 
         # Deliver a record after a short delay
         async def delayed_put():
@@ -676,12 +920,10 @@ class TestConsumerIdleTimeout:
         item = await consumer.__anext__()
         assert item == {"msg": "delayed"}
 
-        await self._cleanup(consumer)
-
     @pytest.mark.asyncio
-    async def test_anext_stops_after_idle_timeout(self):
+    async def test_anext_stops_after_idle_timeout(self, mock_consumer):
         """With no records, StopAsyncIteration should fire after idle_timeout, not immediately."""
-        consumer = self._make_mock_consumer(idle_timeout=0.3)
+        consumer = mock_consumer(idle_timeout=0.3)
 
         start = time.monotonic()
         with pytest.raises(StopAsyncIteration):
@@ -691,12 +933,10 @@ class TestConsumerIdleTimeout:
         # Should have waited at least close to idle_timeout (not instant)
         assert elapsed >= 0.25, f"Expected ~0.3s wait, got {elapsed:.3f}s"
 
-        await self._cleanup(consumer)
-
     @pytest.mark.asyncio
-    async def test_checkpoints_processed_before_data(self):
+    async def test_checkpoints_processed_before_data(self, mock_consumer):
         """Checkpoint items in queue should be processed transparently before returning data."""
-        consumer = self._make_mock_consumer()
+        consumer = mock_consumer()
         consumer.checkpointer = AsyncMock()
         consumer.checkpointer.checkpoint = AsyncMock()
 
@@ -708,12 +948,10 @@ class TestConsumerIdleTimeout:
         assert item == {"msg": "real"}
         consumer.checkpointer.checkpoint.assert_awaited_once_with("shard-0", "100")
 
-        await self._cleanup(consumer)
-
     @pytest.mark.asyncio
-    async def test_streaming_pattern_unaffected(self):
+    async def test_streaming_pattern_unaffected(self, mock_consumer):
         """The existing streaming pattern (while True: async for) still works with idle_timeout."""
-        consumer = self._make_mock_consumer(idle_timeout=0.2)
+        consumer = mock_consumer(idle_timeout=0.2)
 
         # Pre-load records
         for i in range(3):
@@ -734,12 +972,10 @@ class TestConsumerIdleTimeout:
             batch2.append(item)
         assert len(batch2) == 2
 
-        await self._cleanup(consumer)
-
     @pytest.mark.asyncio
-    async def test_consume_once_with_propagation_delay(self):
+    async def test_consume_once_with_propagation_delay(self, mock_consumer):
         """One-shot consume pattern receives all records despite Kinesis propagation delay."""
-        consumer = self._make_mock_consumer(idle_timeout=2.0)
+        consumer = mock_consumer(idle_timeout=2.0)
 
         # Simulate records arriving in bursts with propagation delay
         async def delayed_produce():
@@ -756,5 +992,3 @@ class TestConsumerIdleTimeout:
 
         assert len(consumed) == 3
         assert [r["msg"] for r in consumed] == ["record-0", "record-1", "record-2"]
-
-        await self._cleanup(consumer)

@@ -438,6 +438,9 @@ async def alerting_consumer():
         sleep_time_no_records=0.5  # Minimal latency
     ) as consumer:
 
+        # Avoid missing events produced before iterator setup completes
+        await consumer.wait_ready()
+
         async for event in consumer:
             if event.get("severity") == "critical":
                 logger.error(f"CRITICAL ALERT: {event}")
@@ -646,6 +649,7 @@ async def run_monitoring():
 5. **Rate Limiting**: Configure conservative limits to avoid throttling
 6. **Checkpointing**: Use Redis checkpointer for multi-consumer scenarios
 7. **Processor Selection**: Choose the right processor for your data format and volume
+8. **Ready Signal**: Use `await consumer.wait_ready()` with `LATEST` iterators to avoid race conditions
 
 ## Next Steps
 

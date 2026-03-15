@@ -710,7 +710,7 @@ class Consumer(Base):
         if self.skip_describe_stream:
             raise ValueError("wait_ready() is not supported with skip_describe_stream=True")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
 
         # Ensure lifecycle is initialized (get_conn calls start() which describes the stream)

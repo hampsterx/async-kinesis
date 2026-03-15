@@ -873,7 +873,7 @@ class TestConsumerReadySignal:
 
     @pytest.mark.asyncio
     async def test_wait_ready_fetch_task_cancelled(self, mock_consumer):
-        """If fetch task is cancelled (shutdown), wait_ready() should raise RuntimeError."""
+        """If fetch task is cancelled (shutdown), wait_ready() should raise CancelledError."""
         consumer = mock_consumer(skip_describe_stream=False)
         consumer.shards = [{"ShardId": "shard-0"}]
 
@@ -884,7 +884,7 @@ class TestConsumerReadySignal:
         except asyncio.CancelledError:
             pass
 
-        with pytest.raises(RuntimeError, match="cancelled"):
+        with pytest.raises(asyncio.CancelledError, match="cancelled"):
             await consumer.wait_ready(timeout=1)
 
     @pytest.mark.asyncio

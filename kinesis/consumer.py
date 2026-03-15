@@ -334,7 +334,9 @@ class Consumer(Base):
                 shard["fetch"] = asyncio.create_task(self.get_records(shard=shard))
 
         # Signal readiness once all allocated shards have iterators
-        if not self._ready.is_set():
+        # Guard with is_fetching to prevent close() race where _ready is cleared
+        # but a concurrent fetch() iteration re-sets it before cancellation propagates
+        if self.is_fetching and not self._ready.is_set():
             allocated_shards = [s for s in self.shards if self.checkpointer.is_allocated(s["ShardId"])]
             if allocated_shards and all(s.get("ShardIterator") is not None for s in allocated_shards):
                 log.info("Consumer ready: all %d allocated shards have iterators", len(allocated_shards))
@@ -700,12 +702,16 @@ class Consumer(Base):
         Raises:
             ValueError: If consumer was created with ``skip_describe_stream=True``.
             asyncio.TimeoutError: If consumer doesn't become ready within timeout.
+            asyncio.CancelledError: If the fetch task is cancelled before consumer becomes ready.
             BaseException: If the fetch task dies before consumer becomes ready,
                          its exception is re-raised directly.
             RuntimeError: If the fetch task exits cleanly before consumer becomes ready.
         """
         if self.skip_describe_stream:
             raise ValueError("wait_ready() is not supported with skip_describe_stream=True")
+
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
 
         # Ensure lifecycle is initialized (get_conn calls start() which describes the stream)
         if self.shards is None:
@@ -714,19 +720,23 @@ class Consumer(Base):
             except asyncio.TimeoutError:
                 raise asyncio.TimeoutError(
                     f"Consumer did not become ready within {timeout}s (timed out connecting to stream)"
-                )
+                ) from None
         if not self.fetch_task:
             self._start_fetch_task()
 
         if self._ready.is_set():
             return
 
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise asyncio.TimeoutError(f"Consumer did not become ready within {timeout}s (no time left after connect)")
+
         # Race the ready signal against the fetch task dying
         ready_fut = asyncio.ensure_future(self._ready.wait())
         try:
             done, pending = await asyncio.wait(
                 [ready_fut, self.fetch_task],
-                timeout=timeout,
+                timeout=remaining,
                 return_when=asyncio.FIRST_COMPLETED,
             )
         except BaseException:
@@ -742,10 +752,9 @@ class Consumer(Base):
 
         if self.fetch_task in done:
             # Fetch task died or exited before we became ready
-            try:
-                exc = self.fetch_task.exception()
-            except asyncio.CancelledError:
-                raise RuntimeError("Fetch task was cancelled before consumer became ready")
+            if self.fetch_task.cancelled():
+                raise asyncio.CancelledError("Fetch task was cancelled before consumer became ready")
+            exc = self.fetch_task.exception()
             if exc:
                 raise exc
             raise RuntimeError("Fetch task exited before consumer became ready")

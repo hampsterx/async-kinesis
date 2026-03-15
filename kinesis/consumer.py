@@ -98,6 +98,8 @@ class Consumer(Base):
 
         self.timestamp = timestamp
 
+        self._ready = asyncio.Event()
+
         # Shard management
         self._last_shard_refresh = 0
         self._shard_refresh_interval = 60  # Refresh shards every 60 seconds
@@ -112,6 +114,8 @@ class Consumer(Base):
 
     async def close(self):
         log.debug("Closing Connection..")
+        self._ready.clear()
+
         if not self.stream_status == self.RECONNECT:
 
             await self.flush()
@@ -328,6 +332,15 @@ class Consumer(Base):
 
             if "ShardIterator" in shard and shard["ShardIterator"] is not None:
                 shard["fetch"] = asyncio.create_task(self.get_records(shard=shard))
+
+        # Signal readiness once all allocated shards have iterators
+        # Guard with is_fetching to prevent close() race where _ready is cleared
+        # but a concurrent fetch() iteration re-sets it before cancellation propagates
+        if self.is_fetching and not self._ready.is_set():
+            allocated_shards = [s for s in self.shards if self.checkpointer.is_allocated(s["ShardId"])]
+            if allocated_shards and all(s.get("ShardIterator") is not None for s in allocated_shards):
+                log.info("Consumer ready: all %d allocated shards have iterators", len(allocated_shards))
+                self._ready.set()
 
     async def get_records(self, shard):
 
@@ -674,6 +687,85 @@ class Consumer(Base):
 
     def _start_fetch_task(self):
         self.fetch_task = asyncio.create_task(self._fetch())
+
+    async def wait_ready(self, timeout=30):
+        """Wait until consumer has obtained shard iterators and is ready to receive records.
+
+        Useful with ``iterator_type="LATEST"`` where callers need to know when it's safe
+        to produce events. Starts the fetch task if not already running (e.g. when called
+        before the first ``async for`` iteration).
+
+        Args:
+            timeout: Maximum seconds to wait. Default 30s accounts for AWS API
+                     retries and exponential backoff on get_shard_iterator().
+
+        Raises:
+            ValueError: If consumer was created with ``skip_describe_stream=True``.
+            asyncio.TimeoutError: If consumer doesn't become ready within timeout.
+            asyncio.CancelledError: If the fetch task is cancelled before consumer becomes ready.
+            BaseException: If the fetch task dies before consumer becomes ready,
+                         its exception is re-raised directly.
+            RuntimeError: If the fetch task exits cleanly before consumer becomes ready.
+        """
+        if self.skip_describe_stream:
+            raise ValueError("wait_ready() is not supported with skip_describe_stream=True")
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+
+        # Ensure lifecycle is initialized (get_conn calls start() which describes the stream)
+        if self.shards is None:
+            try:
+                await asyncio.wait_for(self.get_conn(), timeout=timeout)
+            except asyncio.TimeoutError:
+                raise asyncio.TimeoutError(
+                    f"Consumer did not become ready within {timeout}s (timed out connecting to stream)"
+                ) from None
+        if not self.fetch_task:
+            self._start_fetch_task()
+
+        if self._ready.is_set():
+            return
+
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise asyncio.TimeoutError(f"Consumer did not become ready within {timeout}s (no time left after connect)")
+
+        # Race the ready signal against the fetch task dying
+        ready_fut = asyncio.ensure_future(self._ready.wait())
+        try:
+            done, pending = await asyncio.wait(
+                [ready_fut, self.fetch_task],
+                timeout=remaining,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        except BaseException:
+            ready_fut.cancel()
+            raise
+
+        # Clean up if ready_fut didn't win (never cancel fetch_task)
+        if ready_fut in pending:
+            ready_fut.cancel()
+
+        if ready_fut in done:
+            return  # Consumer is ready
+
+        if self.fetch_task in done:
+            # Fetch task died or exited before we became ready
+            if self.fetch_task.cancelled():
+                raise asyncio.CancelledError("Fetch task was cancelled before consumer became ready")
+            exc = self.fetch_task.exception()
+            if exc:
+                raise exc
+            raise RuntimeError("Fetch task exited before consumer became ready")
+
+        # Neither completed — timeout
+        raise asyncio.TimeoutError(f"Consumer did not become ready within {timeout}s")
+
+    @property
+    def is_ready(self) -> bool:
+        """Non-blocking check whether consumer has obtained shard iterators."""
+        return self._ready.is_set()
 
     async def __anext__(self):
 

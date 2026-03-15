@@ -23,6 +23,13 @@ async with Consumer(stream_name="my-stream") as consumer:
         print(message)
 ```
 
+**Consumer with readiness signal** (for `LATEST` iterator type):
+```python
+async with Consumer(stream_name="my-stream", iterator_type="LATEST") as consumer:
+    await consumer.wait_ready()  # Blocks until shard iterators are obtained
+    # Now safe to produce — consumer won't miss events
+```
+
 **CLI:**
 ```bash
 pip install async-kinesis[cli]
@@ -347,7 +354,15 @@ Options:
 | create_stream_shards | 1 | Sets the amount of shard you want for your new stream. Note if stream already existing it will ignore  |
 | describe_timeout | 60 | Timeout in seconds for waiting for stream to become ACTIVE during startup. Increase for slow backends (e.g. LocalStack) |
 | idle_timeout | 2.0 | Seconds to wait for new records before ending iteration. Controls how long `async for` blocks on an empty queue before raising `StopAsyncIteration` |
-| timestamp | None | Timestamp to start reading stream from. Used with iterator type "AT_TIMESTAMP"
+| timestamp | None | Timestamp to start reading stream from. Used with iterator type "AT_TIMESTAMP" |
+
+#### Consumer Methods
+
+| Method | Description |
+| --- | --- |
+| `await consumer.wait_ready(timeout=30)` | Wait until all allocated shards have iterators. Essential with `iterator_type="LATEST"` to know when it's safe to produce. Raises `asyncio.TimeoutError` on timeout, re-raises fetch task exceptions immediately. |
+| `consumer.is_ready` | Non-blocking boolean check for readiness. |
+| `consumer.get_shard_status()` | Get detailed shard allocation, topology, and health information. |
 
 ## Shard Management
 

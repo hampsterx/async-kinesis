@@ -189,12 +189,15 @@ async def mock_consumer():
 
     yield _factory
 
+    teardown_errors = []
     for c in consumers:
         for task in [getattr(c, "_checkpoint_flusher_task", None), c.fetch_task]:
             if task is None:
                 continue
             if task.done():
-                # Surface exceptions from tasks that finished during the test
+                # Log exceptions from tasks that finished during the test.
+                # Don't re-raise: the test itself is responsible for observing
+                # expected task failures (e.g. test_wait_ready_fetch_task_crash).
                 if not task.cancelled() and task.exception():
                     log.warning(
                         "Task finished with error during test: %s", task.exception(), exc_info=task.exception()
@@ -205,5 +208,8 @@ async def mock_consumer():
                     await task
                 except asyncio.CancelledError:
                     pass
-                except Exception:
-                    log.warning("Unexpected error during mock_consumer teardown", exc_info=True)
+                except Exception as exc:
+                    teardown_errors.append(exc)
+    if teardown_errors:
+        log.warning("mock_consumer teardown errors: %s", teardown_errors)
+        raise teardown_errors[0]

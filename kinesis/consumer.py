@@ -147,9 +147,10 @@ class Consumer(Base):
 
             # Flush deferred checkpoints (from __anext__ deferral)
             if self._deferred_checkpoints and self.checkpointer:
-                for shard_id, sequence in self._deferred_checkpoints.items():
+                for shard_id, sequence in list(self._deferred_checkpoints.items()):
                     await self._maybe_checkpoint(shard_id, sequence)
-                self._deferred_checkpoints.clear()
+                    if self._deferred_checkpoints.get(shard_id) == sequence:
+                        del self._deferred_checkpoints[shard_id]
 
             # Cancel background flusher (triggers final flush via CancelledError)
             if self._checkpoint_flusher_task is not None:
@@ -373,15 +374,17 @@ class Consumer(Base):
                         if self.checkpointer:
                             # Flush deferred checkpoint if it's for this shard
                             if shard_id in self._deferred_checkpoints:
-                                await self._maybe_checkpoint(
-                                    shard_id, self._deferred_checkpoints.pop(shard_id)
-                                )
+                                seq = self._deferred_checkpoints[shard_id]
+                                await self._maybe_checkpoint(shard_id, seq)
+                                if self._deferred_checkpoints.get(shard_id) == seq:
+                                    del self._deferred_checkpoints[shard_id]
 
                             # Flush interval-buffered checkpoint for this shard
                             if shard_id in self._pending_checkpoints:
-                                await self.checkpointer.checkpoint(
-                                    shard_id, self._pending_checkpoints.pop(shard_id)
-                                )
+                                seq = self._pending_checkpoints[shard_id]
+                                await self.checkpointer.checkpoint(shard_id, seq)
+                                if self._pending_checkpoints.get(shard_id) == seq:
+                                    del self._pending_checkpoints[shard_id]
 
                             # Note: the terminal batch's records are enqueued but no
                             # checkpoint sentinel was added (would race with deallocate).
@@ -877,7 +880,9 @@ class Consumer(Base):
         newer sequence written by _maybe_checkpoint during the await.
         """
         for shard_id in list(self._pending_checkpoints):
-            seq = self._pending_checkpoints[shard_id]
+            seq = self._pending_checkpoints.get(shard_id)
+            if seq is None:
+                continue
             await self.checkpointer.checkpoint(shard_id, seq)
             # Only delete if the value hasn't been superseded during the await
             if self._pending_checkpoints.get(shard_id) == seq:
@@ -900,9 +905,10 @@ class Consumer(Base):
 
         # 1. Commit deferred checkpoints from previous iteration (implicit ACK)
         if self._deferred_checkpoints:
-            for shard_id, sequence in self._deferred_checkpoints.items():
+            for shard_id, sequence in list(self._deferred_checkpoints.items()):
                 await self._maybe_checkpoint(shard_id, sequence)
-            self._deferred_checkpoints.clear()
+                if self._deferred_checkpoints.get(shard_id) == sequence:
+                    del self._deferred_checkpoints[shard_id]
 
         checkpoint_count = 0
         max_checkpoints = 100  # Prevent infinite checkpoint processing

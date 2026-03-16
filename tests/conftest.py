@@ -150,3 +150,55 @@ skip_if_no_aws = pytest.mark.skipif(
 )
 
 skip_if_no_redis = pytest.mark.skipif(not os.environ.get("REDIS_HOST"), reason="Redis not available (set REDIS_HOST)")
+
+
+# --- Mock consumer for unit tests (no Docker) ---
+
+
+def _make_mock_consumer(**kwargs):
+    """Create a Consumer with mocked internals for unit testing (no Docker)."""
+    defaults = {
+        "stream_name": "test-stream",
+        "endpoint_url": "http://localhost:4567",
+        "skip_describe_stream": True,
+        "idle_timeout": 0.5,
+    }
+    defaults.update(kwargs)
+
+    c = Consumer(**defaults)
+    c.stream_status = c.ACTIVE
+    c.shards = [{"ShardId": "shard-0"}]
+
+    # Mock fetch task as a no-op running task
+    c.fetch_task = asyncio.ensure_future(asyncio.sleep(3600))
+
+    return c
+
+
+@pytest_asyncio.fixture
+async def mock_consumer():
+    """Fixture that creates mock consumers and guarantees cleanup even on assertion failure."""
+    consumers = []
+
+    def _factory(**kwargs):
+        c = _make_mock_consumer(**kwargs)
+        consumers.append(c)
+        return c
+
+    yield _factory
+
+    for c in consumers:
+        if getattr(c, "_checkpoint_flusher_task", None):
+            if not c._checkpoint_flusher_task.done():
+                c._checkpoint_flusher_task.cancel()
+            try:
+                await c._checkpoint_flusher_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        if c.fetch_task:
+            if not c.fetch_task.done():
+                c.fetch_task.cancel()
+            try:
+                await c.fetch_task
+            except (asyncio.CancelledError, Exception):
+                pass

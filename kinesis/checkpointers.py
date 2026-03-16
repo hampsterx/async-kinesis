@@ -9,26 +9,67 @@ log = logging.getLogger(__name__)
 
 
 class CheckPointer(Protocol):
-    """Protocol for checkpointer implementations."""
+    """Protocol for checkpointer implementations.
+
+    Checkpointers track processing progress per shard so that a consumer
+    can resume from the correct position after a restart. They also provide
+    shard-level locking so that multiple consumers don't process the same
+    shard concurrently.
+    """
 
     async def allocate(self, shard_id: str) -> Tuple[bool, Optional[str]]:
-        """Allocate a shard for processing."""
+        """Allocate a shard for processing.
+
+        Returns (True, sequence) if allocation succeeded. The sequence is the
+        last checkpointed position (None if no prior checkpoint exists).
+        Returns (False, None) if the shard is owned by another consumer.
+
+        Implementations must be safe to call multiple times for the same shard
+        (idempotent if already allocated by this consumer).
+        """
         ...
 
     async def deallocate(self, shard_id: str) -> None:
-        """Deallocate a shard."""
+        """Release a shard (e.g., on shard closure or consumer shutdown).
+
+        Must preserve the last checkpoint sequence for future consumers.
+        Called when a shard's iterator is exhausted (resharding) or on
+        consumer close(). The consumer guarantees all pending checkpoints
+        for this shard are flushed before deallocate() is called.
+        """
         ...
 
     async def checkpoint(self, shard_id: str, sequence_number: str) -> None:
-        """Checkpoint progress for a shard."""
+        """Record processing progress for a shard.
+
+        Called after the consumer has yielded all records up to sequence_number
+        to the user and the user has returned control (called __anext__ again).
+        At-least-once semantics: the last batch's records may be reprocessed
+        on restart if close() was not called after the final iteration.
+
+        Implementations should be idempotent and handle out-of-order calls
+        gracefully (e.g., ignore a sequence older than the current checkpoint).
+
+        If this method raises, the consumer will propagate the exception. The
+        checkpoint is considered not persisted; the same records may be
+        re-delivered on restart.
+        """
         ...
 
     def get_all_checkpoints(self) -> Dict[str, str]:
-        """Get all checkpoints."""
+        """Return all known checkpoints as {shard_id: sequence}.
+
+        Used for monitoring and status reporting. May return stale data
+        for eventually-consistent backends.
+        """
         ...
 
     async def close(self) -> None:
-        """Close the checkpointer."""
+        """Clean up resources and deallocate all owned shards.
+
+        Implementations should flush any pending/buffered checkpoints
+        before deallocating.
+        """
         ...
 
 

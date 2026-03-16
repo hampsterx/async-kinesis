@@ -57,6 +57,7 @@ class Consumer(Base):
         describe_timeout: int = 60,
         idle_timeout: float = 2.0,
         timestamp: Optional[datetime] = None,
+        checkpoint_interval: Optional[float] = None,
     ) -> None:
 
         super(Consumer, self).__init__(
@@ -100,6 +101,23 @@ class Consumer(Base):
 
         self._ready = asyncio.Event()
 
+        # Deferred checkpoints awaiting implicit ack (per-shard)
+        self._deferred_checkpoints: Dict[str, str] = {}  # shard_id → sequence
+
+        # Checkpoint interval state (Change 2: checkpoint debouncing)
+        self.checkpoint_interval = checkpoint_interval
+        self._pending_checkpoints: Dict[str, str] = {}  # shard_id → sequence
+        self._checkpoint_flusher_task: Optional[asyncio.Task] = None
+
+        # Validate mutual exclusion: checkpoint_interval + auto_checkpoint=False
+        if checkpoint_interval is not None and checkpointer is not None:
+            if getattr(checkpointer, "auto_checkpoint", True) is False:
+                raise ValueError(
+                    "checkpoint_interval and auto_checkpoint=False are mutually exclusive. "
+                    "Consumer-level debounce calls checkpointer.checkpoint() which silently "
+                    "buffers under auto_checkpoint=False, achieving nothing."
+                )
+
         # Shard management
         self._last_shard_refresh = 0
         self._shard_refresh_interval = 60  # Refresh shards every 60 seconds
@@ -123,6 +141,27 @@ class Consumer(Base):
             if self.fetch_task:
                 self.fetch_task.cancel()
                 self.fetch_task = None
+
+            # Flush deferred checkpoints (from __anext__ deferral)
+            if self._deferred_checkpoints and self.checkpointer:
+                for shard_id, sequence in self._deferred_checkpoints.items():
+                    await self._maybe_checkpoint(shard_id, sequence)
+                self._deferred_checkpoints.clear()
+
+            # Cancel background flusher (triggers final flush via CancelledError)
+            if self._checkpoint_flusher_task is not None:
+                self._checkpoint_flusher_task.cancel()
+                try:
+                    await self._checkpoint_flusher_task
+                except asyncio.CancelledError:
+                    pass
+                self._checkpoint_flusher_task = None
+
+            # Final flush of any remaining interval-buffered checkpoints.
+            # Needed when the flusher task was cancelled before it started
+            # executing (CancelledError handler in _checkpoint_flusher never ran).
+            if self.checkpointer and self._pending_checkpoints:
+                await self._flush_pending_checkpoints()
 
             if self.checkpointer:
                 await self.checkpointer.close()
@@ -242,13 +281,18 @@ class Consumer(Base):
                         log.debug("Shard {} got {} records".format(shard["ShardId"], len(records)))
 
                         total_items = 0
+                        last_enqueued_sequence = None
                         for row in result["Records"]:
+                            enqueued_any = False
                             for n, output in enumerate(self.processor.parse(row["Data"])):
                                 try:
                                     await asyncio.wait_for(self.queue.put(output), timeout=30.0)
+                                    enqueued_any = True
                                 except asyncio.TimeoutError:
                                     log.warning("Queue put timed out, skipping record")
                                     continue
+                            if enqueued_any:
+                                last_enqueued_sequence = row["SequenceNumber"]
                             total_items += n + 1
 
                         # Get approx minutes behind..
@@ -274,25 +318,25 @@ class Consumer(Base):
                                 )
                             )
 
-                        # Add checkpoint record
-                        last_record = result["Records"][-1]
-                        try:
-                            await asyncio.wait_for(
-                                self.queue.put(
-                                    {
-                                        "__CHECKPOINT__": {
-                                            "ShardId": shard["ShardId"],
-                                            "SequenceNumber": last_record["SequenceNumber"],
+                        # Add checkpoint record — only for last *enqueued* sequence
+                        if last_enqueued_sequence:
+                            try:
+                                await asyncio.wait_for(
+                                    self.queue.put(
+                                        {
+                                            "__CHECKPOINT__": {
+                                                "ShardId": shard["ShardId"],
+                                                "SequenceNumber": last_enqueued_sequence,
+                                            }
                                         }
-                                    }
-                                ),
-                                timeout=30.0,
-                            )
-                        except asyncio.TimeoutError:
-                            log.warning("Checkpoint queue put timed out")
-                            # Continue without checkpoint - not critical
+                                    ),
+                                    timeout=30.0,
+                                )
+                            except asyncio.TimeoutError:
+                                log.warning("Checkpoint queue put timed out")
+                                # Continue without checkpoint - not critical
 
-                        shard["LastSequenceNumber"] = last_record["SequenceNumber"]
+                            shard["LastSequenceNumber"] = last_enqueued_sequence
 
                     else:
                         log.debug(
@@ -313,8 +357,20 @@ class Consumer(Base):
                             if children:
                                 log.info(f"Parent shard {shard_id} exhausted, enabling child shards: {children}")
 
-                        # Deallocate the shard so other consumers can take over child shards
+                        # Flush pending checkpoints for this shard before deallocating
                         if self.checkpointer:
+                            # Flush deferred checkpoint if it's for this shard
+                            if shard_id in self._deferred_checkpoints:
+                                await self._maybe_checkpoint(
+                                    shard_id, self._deferred_checkpoints.pop(shard_id)
+                                )
+
+                            # Flush interval-buffered checkpoint for this shard
+                            if shard_id in self._pending_checkpoints:
+                                await self.checkpointer.checkpoint(
+                                    shard_id, self._pending_checkpoints.pop(shard_id)
+                                )
+
                             await self.checkpointer.deallocate(shard_id)
 
                         # Remove shard iterator to stop fetching from this shard
@@ -767,6 +823,44 @@ class Consumer(Base):
         """Non-blocking check whether consumer has obtained shard iterators."""
         return self._ready.is_set()
 
+    async def _maybe_checkpoint(self, shard_id: str, sequence: str):
+        """Commit a checkpoint, either immediately or via interval buffer."""
+        if self.checkpoint_interval is None:
+            # No debouncing — checkpoint immediately
+            await self.checkpointer.checkpoint(shard_id, sequence)
+            return
+
+        # Buffer for background flush
+        self._pending_checkpoints[shard_id] = sequence
+
+        # Start flusher on first use
+        if self._checkpoint_flusher_task is None:
+            self._checkpoint_flusher_task = asyncio.ensure_future(self._checkpoint_flusher())
+
+    async def _checkpoint_flusher(self):
+        """Background task that flushes buffered checkpoints periodically."""
+        try:
+            while True:
+                await asyncio.sleep(self.checkpoint_interval)
+                try:
+                    await self._flush_pending_checkpoints()
+                except Exception:
+                    log.exception("Error flushing checkpoints, will retry next interval")
+        except asyncio.CancelledError:
+            # Final flush on shutdown — propagate errors so close() knows
+            await self._flush_pending_checkpoints()
+
+    async def _flush_pending_checkpoints(self):
+        """Flush all interval-buffered checkpoints to the backend.
+
+        Entries are removed individually on success so that a failure
+        mid-loop preserves the remaining (unflushed) checkpoints for
+        the next attempt.
+        """
+        for shard_id in list(self._pending_checkpoints):
+            await self.checkpointer.checkpoint(shard_id, self._pending_checkpoints[shard_id])
+            del self._pending_checkpoints[shard_id]
+
     async def __anext__(self):
 
         if not self.shards:
@@ -782,9 +876,16 @@ class Consumer(Base):
             if exception:
                 raise exception
 
+        # 1. Commit deferred checkpoints from previous iteration (implicit ACK)
+        if self._deferred_checkpoints:
+            for shard_id, sequence in self._deferred_checkpoints.items():
+                await self._maybe_checkpoint(shard_id, sequence)
+            self._deferred_checkpoints.clear()
+
         checkpoint_count = 0
         max_checkpoints = 100  # Prevent infinite checkpoint processing
 
+        # 2. Get items from queue, deferring any checkpoint sentinels
         while True:
             try:
                 item = await asyncio.wait_for(self.queue.get(), timeout=self.idle_timeout)
@@ -794,10 +895,10 @@ class Consumer(Base):
 
             if item and isinstance(item, dict) and "__CHECKPOINT__" in item:
                 if self.checkpointer:
-                    await self.checkpointer.checkpoint(
-                        item["__CHECKPOINT__"]["ShardId"],
-                        item["__CHECKPOINT__"]["SequenceNumber"],
-                    )
+                    # Don't execute now — defer to next __anext__ call
+                    self._deferred_checkpoints[item["__CHECKPOINT__"]["ShardId"]] = item[
+                        "__CHECKPOINT__"
+                    ]["SequenceNumber"]
                 checkpoint_count += 1
                 if checkpoint_count >= max_checkpoints:
                     log.warning(f"Processed {max_checkpoints} checkpoints, stopping iteration")

@@ -232,6 +232,47 @@ class TestShardDeallocationOrdering:
         ])
 
     @pytest.mark.asyncio
+    async def test_shard_exhaustion_with_records_no_sentinel_enqueued(self, mock_consumer):
+        """When a shard exhausts with a final batch of records, no checkpoint
+        sentinel is enqueued (would race with deallocate). Records are in the
+        queue for processing; the terminal batch replays on restart (at-least-once)."""
+        consumer = mock_consumer(sleep_time_no_records=0)
+        checkpointer = _make_mock_checkpointer()
+        consumer.checkpointer = checkpointer
+        consumer.refresh_shards = AsyncMock()
+        consumer.get_records = AsyncMock(return_value=None)
+
+        shard = consumer.shards[0]
+        shard["ShardIterator"] = "iter-0"
+        shard["stats"] = ShardStats()
+        shard["throttler"] = Throttler(rate_limit=1, period=1)
+
+        fetch_result = {
+            "Records": [
+                {"SequenceNumber": "100", "Data": b'{"msg": "r1"}'},
+                {"SequenceNumber": "200", "Data": b'{"msg": "r2"}'},
+            ],
+            "NextShardIterator": None,  # Shard exhausted with records
+        }
+        fut = asyncio.get_running_loop().create_future()
+        fut.set_result(fetch_result)
+        shard["fetch"] = fut
+
+        await consumer.fetch()
+
+        # Deallocate should be called (no checkpoint for terminal batch)
+        checkpointer.deallocate.assert_awaited_once_with("shard-0")
+
+        # Records should be in the queue, but no checkpoint sentinel
+        items = []
+        while not consumer.queue.empty():
+            items.append(consumer.queue.get_nowait())
+        data_items = [i for i in items if isinstance(i, dict) and "msg" in i]
+        checkpoint_items = [i for i in items if isinstance(i, dict) and "__CHECKPOINT__" in i]
+        assert len(data_items) == 2
+        assert checkpoint_items == [], "No sentinel for terminal batch (would race with deallocate)"
+
+    @pytest.mark.asyncio
     async def test_close_flushes_then_deallocates(self, mock_consumer):
         """close() flushes all pending checkpoints before deallocating shards."""
         consumer = mock_consumer()

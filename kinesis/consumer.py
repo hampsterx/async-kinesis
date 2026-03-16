@@ -104,7 +104,9 @@ class Consumer(Base):
         # Deferred checkpoints awaiting implicit ack (per-shard)
         self._deferred_checkpoints: Dict[str, str] = {}  # shard_id → sequence
 
-        # Checkpoint interval state (Change 2: checkpoint debouncing)
+        # Checkpoint interval state
+        if checkpoint_interval is not None and checkpoint_interval <= 0:
+            raise ValueError(f"checkpoint_interval must be positive, got {checkpoint_interval}")
         self.checkpoint_interval = checkpoint_interval
         self._pending_checkpoints: Dict[str, str] = {}  # shard_id → sequence
         self._checkpoint_flusher_task: Optional[asyncio.Task] = None
@@ -283,17 +285,19 @@ class Consumer(Base):
                         total_items = 0
                         last_enqueued_sequence = None
                         for row in result["Records"]:
-                            enqueued_any = False
-                            for n, output in enumerate(self.processor.parse(row["Data"])):
+                            item_count = 0
+                            dropped = False
+                            for output in self.processor.parse(row["Data"]):
                                 try:
                                     await asyncio.wait_for(self.queue.put(output), timeout=30.0)
-                                    enqueued_any = True
+                                    item_count += 1
                                 except asyncio.TimeoutError:
                                     log.warning("Queue put timed out, skipping record")
-                                    continue
-                            if enqueued_any:
+                                    dropped = True
+                                    break
+                            if item_count > 0 and not dropped:
                                 last_enqueued_sequence = row["SequenceNumber"]
-                            total_items += n + 1
+                            total_items += item_count
 
                         # Get approx minutes behind..
                         last_arrival = records[-1].get("ApproximateArrivalTimestamp")
@@ -318,27 +322,30 @@ class Consumer(Base):
                                 )
                             )
 
-                        # Add checkpoint record — only for last *enqueued* sequence
+                        # Add checkpoint record — only for last *enqueued* sequence.
+                        # Skip sentinel for exhausted shards; their terminal checkpoint
+                        # is flushed synchronously in the deallocation block below.
                         if last_enqueued_sequence:
-                            try:
-                                await asyncio.wait_for(
-                                    self.queue.put(
-                                        {
-                                            "__CHECKPOINT__": {
-                                                "ShardId": shard["ShardId"],
-                                                "SequenceNumber": last_enqueued_sequence,
-                                            }
-                                        }
-                                    ),
-                                    timeout=30.0,
-                                )
-                            except asyncio.TimeoutError:
-                                log.warning("Checkpoint queue put timed out")
-                                # Continue without checkpoint - not critical
-
                             shard["LastSequenceNumber"] = last_enqueued_sequence
 
+                            if result.get("NextShardIterator"):
+                                try:
+                                    await asyncio.wait_for(
+                                        self.queue.put(
+                                            {
+                                                "__CHECKPOINT__": {
+                                                    "ShardId": shard["ShardId"],
+                                                    "SequenceNumber": last_enqueued_sequence,
+                                                }
+                                            }
+                                        ),
+                                        timeout=30.0,
+                                    )
+                                except asyncio.TimeoutError:
+                                    log.warning("Checkpoint queue put timed out")
+
                     else:
+                        last_enqueued_sequence = None
                         log.debug(
                             "Shard {} caught up, sleeping {}s".format(shard["ShardId"], self.sleep_time_no_records)
                         )
@@ -357,7 +364,7 @@ class Consumer(Base):
                             if children:
                                 log.info(f"Parent shard {shard_id} exhausted, enabling child shards: {children}")
 
-                        # Flush pending checkpoints for this shard before deallocating
+                        # Flush all pending checkpoints for this shard before deallocating
                         if self.checkpointer:
                             # Flush deferred checkpoint if it's for this shard
                             if shard_id in self._deferred_checkpoints:
@@ -370,6 +377,11 @@ class Consumer(Base):
                                 await self.checkpointer.checkpoint(
                                     shard_id, self._pending_checkpoints.pop(shard_id)
                                 )
+
+                            # Note: the terminal batch's records are enqueued but no
+                            # checkpoint sentinel was added (would race with deallocate).
+                            # Records will be processed normally; the batch replays on
+                            # restart (at-least-once safe, no data loss).
 
                             await self.checkpointer.deallocate(shard_id)
 

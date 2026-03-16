@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+
+log = logging.getLogger(__name__)
 import socket
 import uuid
 from unittest.mock import patch
@@ -188,17 +190,12 @@ async def mock_consumer():
     yield _factory
 
     for c in consumers:
-        if getattr(c, "_checkpoint_flusher_task", None):
-            if not c._checkpoint_flusher_task.done():
-                c._checkpoint_flusher_task.cancel()
-            try:
-                await c._checkpoint_flusher_task
-            except (asyncio.CancelledError, Exception):
-                pass
-        if c.fetch_task:
-            if not c.fetch_task.done():
-                c.fetch_task.cancel()
-            try:
-                await c.fetch_task
-            except (asyncio.CancelledError, Exception):
-                pass
+        for task in [getattr(c, "_checkpoint_flusher_task", None), c.fetch_task]:
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    log.warning("Unexpected error during mock_consumer teardown", exc_info=True)

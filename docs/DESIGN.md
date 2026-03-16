@@ -44,6 +44,20 @@ Unlike earlier versions, the consumer now fully supports dynamic resharding:
 - **Rate limiting**: Configurable per-shard bandwidth and record rate limits
 - **Async buffering**: Non-blocking `put()` operations with configurable queue sizes
 
+### Checkpoint Safety
+
+Checkpoints use a **deferred execution** model to prevent data loss:
+
+1. **Deferred commit**: When a `__CHECKPOINT__` sentinel is dequeued from the internal queue, it is stored as pending but not committed. The checkpoint only fires at the start of the *next* `__anext__()` call, proving the user's code survived processing the preceding records. If the consumer crashes between receiving a record and calling `__anext__()` again, the checkpoint is never committed and records replay on restart (at-least-once).
+
+2. **Queue put timeout**: If enqueueing a parsed record times out (bounded queue full for 30s), `LastSequenceNumber` only advances to the last fully-enqueued record. The remaining rows in the Kinesis batch are abandoned to prevent a non-contiguous sequence gap that would skip records on restart.
+
+3. **Shard deallocation ordering**: When a shard iterator is exhausted (`NextShardIterator=None`), all pending checkpoints for that shard are flushed *before* `deallocate()` releases ownership. No checkpoint sentinel is enqueued for the terminal batch (it would race with deallocation); instead, those records replay on restart. Checkpoint sentinels that were already queued before deallocation are silently skipped via a `_deallocated_shards` set.
+
+4. **`checkpoint_interval` debouncing**: When set, checkpoint writes are buffered in `_pending_checkpoints` and flushed by a background task every N seconds, reducing backend write pressure. The flusher uses compare-and-delete to avoid dropping a newer sequence that arrives during the `await` on the checkpoint backend. On `close()`, deferred checkpoints are committed, the flusher is cancelled (triggering a final flush), and any remaining buffered checkpoints are flushed before the checkpointer is closed.
+
+These guarantees hold under single-process asyncio concurrency. For multi-process coordination, the `CheckPointer` implementation (e.g. Redis with locking) must handle ownership contention.
+
 ## Integration Points
 
 - **Checkpointing**: Pluggable checkpointer interface (Memory, Redis) for multi-consumer coordination

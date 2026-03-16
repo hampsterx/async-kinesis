@@ -191,7 +191,15 @@ async def mock_consumer():
 
     for c in consumers:
         for task in [getattr(c, "_checkpoint_flusher_task", None), c.fetch_task]:
-            if task and not task.done():
+            if task is None:
+                continue
+            if task.done():
+                # Surface exceptions from tasks that finished during the test
+                if not task.cancelled() and task.exception():
+                    log.warning(
+                        "Task finished with error during test: %s", task.exception(), exc_info=task.exception()
+                    )
+            else:
                 task.cancel()
                 try:
                     await task

@@ -142,6 +142,58 @@ class TestQueuePutTimeoutFix:
     """Verify LastSequenceNumber only advances to last successfully enqueued record."""
 
     @pytest.mark.asyncio
+    async def test_queue_put_timeout_breaks_outer_loop(self, mock_consumer):
+        """When queue.put() times out on row 2 of a 3-row batch, row 3 is NOT
+        processed — prevents a non-contiguous sequence gap on restart."""
+        consumer = mock_consumer(sleep_time_no_records=0)
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+        await consumer.checkpointer.allocate("shard-0")
+        consumer.refresh_shards = AsyncMock()
+        consumer.get_records = AsyncMock(return_value=None)
+
+        # Fail on the second row's put (row 2), succeed on row 1
+        put_count = 0
+        original_put = consumer.queue.put
+
+        async def failing_put(item):
+            nonlocal put_count
+            put_count += 1
+            if put_count == 2:  # Row 2's first output
+                raise asyncio.TimeoutError("simulated queue full")
+            await original_put(item)
+
+        consumer.queue.put = failing_put
+
+        shard = consumer.shards[0]
+        shard["ShardIterator"] = "iter-0"
+        shard["stats"] = ShardStats()
+        shard["throttler"] = Throttler(rate_limit=1, period=1)
+
+        fetch_result = {
+            "Records": [
+                {"SequenceNumber": "100", "Data": b'{"msg": "r1"}'},
+                {"SequenceNumber": "200", "Data": b'{"msg": "r2"}'},
+                {"SequenceNumber": "300", "Data": b'{"msg": "r3"}'},
+            ],
+            "NextShardIterator": "iter-next",
+        }
+        fut = asyncio.get_running_loop().create_future()
+        fut.set_result(fetch_result)
+        shard["fetch"] = fut
+
+        await consumer.fetch()
+
+        # Row 1 succeeded, row 2 dropped → outer loop breaks, row 3 never tried
+        assert shard.get("LastSequenceNumber") == "100"
+        # Only 1 data item should be in the queue (row 1)
+        items = []
+        while not consumer.queue.empty():
+            items.append(consumer.queue.get_nowait())
+        data_items = [i for i in items if isinstance(i, dict) and "msg" in i]
+        assert len(data_items) == 1
+        assert data_items[0]["msg"] == "r1"
+
+    @pytest.mark.asyncio
     async def test_queue_put_timeout_no_sequence_advance(self, mock_consumer):
         """When queue.put() times out mid-batch, LastSequenceNumber tracks only
         the last successfully enqueued record, not the last fetched."""
@@ -273,6 +325,28 @@ class TestShardDeallocationOrdering:
         assert checkpoint_items == [], "No sentinel for terminal batch (would race with deallocate)"
 
     @pytest.mark.asyncio
+    async def test_stale_sentinel_skipped_after_deallocation(self, mock_consumer):
+        """A checkpoint sentinel queued before deallocation is silently skipped
+        in __anext__ rather than checkpointing a deallocated shard."""
+        consumer = mock_consumer()
+        checkpointer = _make_mock_checkpointer()
+        consumer.checkpointer = checkpointer
+
+        # Simulate shard-0 already deallocated (e.g. shard exhaustion ran)
+        consumer._deallocated_shards.add("shard-0")
+
+        # Stale sentinel arrives for deallocated shard, then real data
+        await consumer.queue.put({"__CHECKPOINT__": {"ShardId": "shard-0", "SequenceNumber": "100"}})
+        await consumer.queue.put({"msg": "from-other-shard"})
+
+        item = await consumer.__anext__()
+        assert item == {"msg": "from-other-shard"}
+
+        # Sentinel must NOT have been deferred or committed
+        assert "shard-0" not in consumer._deferred_checkpoints
+        checkpointer.checkpoint.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_close_flushes_then_deallocates(self, mock_consumer):
         """close() flushes all pending checkpoints before deallocating shards."""
         consumer = mock_consumer()
@@ -394,6 +468,32 @@ class TestCheckpointInterval:
                 checkpoint_interval=5.0,
                 checkpointer=AsyncMock(auto_checkpoint=False),
             )
+
+    @pytest.mark.asyncio
+    async def test_flush_preserves_newer_sequence_written_during_await(self, mock_consumer):
+        """If _maybe_checkpoint writes a newer sequence for a shard while
+        _flush_pending_checkpoints is awaiting the backend, the newer value
+        must survive (compare-and-delete, not unconditional delete)."""
+        consumer = mock_consumer(checkpoint_interval=60.0)
+        consumer.checkpointer = _make_mock_checkpointer()
+
+        # Simulate: flusher reads seq "100" for shard-0, then during the
+        # checkpoint() await, _maybe_checkpoint overwrites with "200".
+        original_checkpoint = consumer.checkpointer.checkpoint
+
+        async def checkpoint_with_concurrent_write(shard_id, seq):
+            # Simulate _maybe_checkpoint writing a newer value during this await
+            if seq == "100":
+                consumer._pending_checkpoints["shard-0"] = "200"
+            await original_checkpoint(shard_id, seq)
+
+        consumer.checkpointer.checkpoint = AsyncMock(side_effect=checkpoint_with_concurrent_write)
+
+        consumer._pending_checkpoints["shard-0"] = "100"
+        await consumer._flush_pending_checkpoints()
+
+        # "100" was flushed but "200" must still be pending (not deleted)
+        assert consumer._pending_checkpoints.get("shard-0") == "200"
 
     @pytest.mark.asyncio
     async def test_checkpoint_backend_raises_during_flush(self, mock_consumer):

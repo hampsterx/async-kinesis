@@ -128,6 +128,7 @@ class Consumer(Base):
         self._parent_shards = set()  # Track shards that are parents
         self._child_shards = set()  # Track shards that are children
         self._exhausted_parents = set()  # Track parent shards that are fully consumed
+        self._deallocated_shards: set = set()  # Shards already deallocated (skip stale sentinels)
 
     def __aiter__(self) -> AsyncIterator[Any]:
         return self
@@ -295,7 +296,11 @@ class Consumer(Base):
                                     log.warning("Queue put timed out, skipping record")
                                     dropped = True
                                     break
-                            if item_count > 0 and not dropped:
+                            if dropped:
+                                # Stop processing this batch — remaining rows would
+                                # create a non-contiguous sequence gap on restart.
+                                break
+                            if item_count > 0:
                                 last_enqueued_sequence = row["SequenceNumber"]
                             total_items += item_count
 
@@ -384,6 +389,7 @@ class Consumer(Base):
                             # restart (at-least-once safe, no data loss).
 
                             await self.checkpointer.deallocate(shard_id)
+                            self._deallocated_shards.add(shard_id)
 
                         # Remove shard iterator to stop fetching from this shard
                         shard.pop("ShardIterator", None)
@@ -867,11 +873,15 @@ class Consumer(Base):
 
         Entries are removed individually on success so that a failure
         mid-loop preserves the remaining (unflushed) checkpoints for
-        the next attempt.
+        the next attempt.  Uses compare-and-delete to avoid dropping a
+        newer sequence written by _maybe_checkpoint during the await.
         """
         for shard_id in list(self._pending_checkpoints):
-            await self.checkpointer.checkpoint(shard_id, self._pending_checkpoints[shard_id])
-            del self._pending_checkpoints[shard_id]
+            seq = self._pending_checkpoints[shard_id]
+            await self.checkpointer.checkpoint(shard_id, seq)
+            # Only delete if the value hasn't been superseded during the await
+            if self._pending_checkpoints.get(shard_id) == seq:
+                del self._pending_checkpoints[shard_id]
 
     async def __anext__(self):
 
@@ -906,9 +916,13 @@ class Consumer(Base):
                 raise StopAsyncIteration from None
 
             if item and isinstance(item, dict) and "__CHECKPOINT__" in item:
-                if self.checkpointer:
+                cp_shard = item["__CHECKPOINT__"]["ShardId"]
+                if cp_shard in self._deallocated_shards:
+                    # Stale sentinel queued before deallocation; skip silently
+                    log.debug("Skipping checkpoint for deallocated shard %s", cp_shard)
+                elif self.checkpointer:
                     # Don't execute now — defer to next __anext__ call
-                    self._deferred_checkpoints[item["__CHECKPOINT__"]["ShardId"]] = item[
+                    self._deferred_checkpoints[cp_shard] = item[
                         "__CHECKPOINT__"
                     ]["SequenceNumber"]
                 checkpoint_count += 1

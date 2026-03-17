@@ -928,9 +928,7 @@ class Consumer(Base):
                     log.debug("Skipping checkpoint for deallocated shard %s", cp_shard)
                 elif self.checkpointer:
                     # Don't execute now — defer to next __anext__ call
-                    self._deferred_checkpoints[cp_shard] = item[
-                        "__CHECKPOINT__"
-                    ]["SequenceNumber"]
+                    self._deferred_checkpoints[cp_shard] = item["__CHECKPOINT__"]["SequenceNumber"]
                 checkpoint_count += 1
                 if checkpoint_count >= max_checkpoints:
                     log.warning(f"Processed {max_checkpoints} checkpoints, stopping iteration")

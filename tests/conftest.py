@@ -199,9 +199,7 @@ async def mock_consumer():
                 # Don't re-raise: the test itself is responsible for observing
                 # expected task failures (e.g. test_wait_ready_fetch_task_crash).
                 if not task.cancelled() and task.exception():
-                    log.warning(
-                        "Task finished with error during test: %s", task.exception(), exc_info=task.exception()
-                    )
+                    log.warning("Task finished with error during test: %s", task.exception(), exc_info=task.exception())
             else:
                 task.cancel()
                 try:

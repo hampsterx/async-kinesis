@@ -278,10 +278,12 @@ class TestShardDeallocationOrdering:
         await consumer.fetch()
 
         # Checkpoint must have been called before deallocate
-        checkpointer.assert_has_calls([
-            call.checkpoint("shard-0", "100"),
-            call.deallocate("shard-0"),
-        ])
+        checkpointer.assert_has_calls(
+            [
+                call.checkpoint("shard-0", "100"),
+                call.deallocate("shard-0"),
+            ]
+        )
 
     @pytest.mark.asyncio
     async def test_shard_exhaustion_with_records_no_sentinel_enqueued(self, mock_consumer):
@@ -380,9 +382,7 @@ class TestCheckpointInterval:
 
         for i in range(5):
             await consumer.queue.put({"msg": f"r{i}"})
-            await consumer.queue.put(
-                {"__CHECKPOINT__": {"ShardId": "shard-0", "SequenceNumber": str((i + 1) * 100)}}
-            )
+            await consumer.queue.put({"__CHECKPOINT__": {"ShardId": "shard-0", "SequenceNumber": str((i + 1) * 100)}})
 
         for _ in range(5):
             await consumer.__anext__()

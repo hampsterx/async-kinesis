@@ -354,6 +354,7 @@ Options:
 | create_stream_shards | 1 | Sets the amount of shard you want for your new stream. Note if stream already existing it will ignore  |
 | describe_timeout | 60 | Timeout in seconds for waiting for stream to become ACTIVE during startup. Increase for slow backends (e.g. LocalStack) |
 | idle_timeout | 2.0 | Seconds to wait for new records before ending iteration. Controls how long `async for` blocks on an empty queue before raising `StopAsyncIteration` |
+| checkpoint_interval | None | Seconds between checkpoint writes. `None` = checkpoint every batch. Set to e.g. `5.0` to reduce backend write pressure on active streams. Uses a background flusher task so checkpoints fire even during quiet periods. Mutually exclusive with `auto_checkpoint=False` on heartbeat checkpointers |
 | timestamp | None | Timestamp to start reading stream from. Used with iterator type "AT_TIMESTAMP" |
 
 #### Consumer Methods

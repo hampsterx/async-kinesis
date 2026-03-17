@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+
+log = logging.getLogger(__name__)
 import socket
 import uuid
 from unittest.mock import patch
@@ -150,3 +152,62 @@ skip_if_no_aws = pytest.mark.skipif(
 )
 
 skip_if_no_redis = pytest.mark.skipif(not os.environ.get("REDIS_HOST"), reason="Redis not available (set REDIS_HOST)")
+
+
+# --- Mock consumer for unit tests (no Docker) ---
+
+
+def _make_mock_consumer(**kwargs):
+    """Create a Consumer with mocked internals for unit testing (no Docker)."""
+    defaults = {
+        "stream_name": "test-stream",
+        "endpoint_url": "http://localhost:4567",
+        "skip_describe_stream": True,
+        "idle_timeout": 0.5,
+    }
+    defaults.update(kwargs)
+
+    c = Consumer(**defaults)
+    c.stream_status = c.ACTIVE
+    c.shards = [{"ShardId": "shard-0"}]
+
+    # Mock fetch task as a no-op running task
+    c.fetch_task = asyncio.ensure_future(asyncio.sleep(3600))
+
+    return c
+
+
+@pytest_asyncio.fixture
+async def mock_consumer():
+    """Fixture that creates mock consumers and guarantees cleanup even on assertion failure."""
+    consumers = []
+
+    def _factory(**kwargs):
+        c = _make_mock_consumer(**kwargs)
+        consumers.append(c)
+        return c
+
+    yield _factory
+
+    teardown_errors = []
+    for c in consumers:
+        for task in [getattr(c, "_checkpoint_flusher_task", None), c.fetch_task]:
+            if task is None:
+                continue
+            if task.done():
+                # Log exceptions from tasks that finished during the test.
+                # Don't re-raise: the test itself is responsible for observing
+                # expected task failures (e.g. test_wait_ready_fetch_task_crash).
+                if not task.cancelled() and task.exception():
+                    log.warning("Task finished with error during test: %s", task.exception(), exc_info=task.exception())
+            else:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    teardown_errors.append(exc)
+    if teardown_errors:
+        log.warning("mock_consumer teardown errors: %s", teardown_errors)
+        raise teardown_errors[0]

@@ -305,6 +305,7 @@ class MockConsumer:
         self._positions: Dict[int, int] = {}
         self._exhausted: set = set()
         self._buffer: deque = deque()
+        self._deferred_checkpoints: Dict[str, str] = {}  # shard_id → sequence
 
     @property
     def stream(self) -> MemoryStream:
@@ -340,15 +341,25 @@ class MockConsumer:
         return self
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        await self.checkpointer.close()
+        await self.close()
 
     def __aiter__(self) -> AsyncIterator[Any]:
         return self
+
+    async def _flush_deferred_checkpoints(self) -> None:
+        """Commit deferred checkpoints (implicit ack from previous iteration)."""
+        for shard_id, seq in self._deferred_checkpoints.items():
+            await self.checkpointer.checkpoint(shard_id, seq)
+        self._deferred_checkpoints.clear()
 
     async def __anext__(self) -> Any:
         # Drain buffer from a previous multi-item parse (aggregated records)
         if self._buffer:
             return self._buffer.popleft()
+
+        # Commit deferred checkpoints from previous iteration (implicit ack)
+        if self._deferred_checkpoints:
+            await self._flush_deferred_checkpoints()
 
         stream = self.stream
 
@@ -370,7 +381,7 @@ class MockConsumer:
                         continue
 
                     seq, data, partition_key = record
-                    await self.checkpointer.checkpoint(shard.shard_id, seq)
+                    self._deferred_checkpoints[shard.shard_id] = seq
 
                     items = list(self.processor.parse(data))
                     if items:
@@ -386,6 +397,8 @@ class MockConsumer:
                 await asyncio.sleep(self._poll_delay if self._poll_delay > 0 else 0)
 
     async def close(self) -> None:
+        if self._deferred_checkpoints:
+            await self._flush_deferred_checkpoints()
         await self.checkpointer.close()
 
 

@@ -670,48 +670,6 @@ class TestConsumer:
             assert [m["seq"] for m in consumed] == [0, 1, 2]
 
 
-def _make_mock_consumer(**kwargs):
-    """Create a Consumer with mocked internals for unit testing (no Docker)."""
-    defaults = {
-        "stream_name": "test-stream",
-        "endpoint_url": "http://localhost:4567",
-        "skip_describe_stream": True,
-        "idle_timeout": 0.5,
-    }
-    defaults.update(kwargs)
-
-    consumer = Consumer(**defaults)
-    consumer.stream_status = consumer.ACTIVE
-    consumer.shards = [{"ShardId": "shard-0"}]
-
-    # Mock fetch task as a no-op running task
-    consumer.fetch_task = asyncio.ensure_future(asyncio.sleep(3600))
-
-    return consumer
-
-
-@pytest.fixture
-async def mock_consumer():
-    """Fixture that creates mock consumers and guarantees cleanup even on assertion failure."""
-    consumers = []
-
-    def _factory(**kwargs):
-        consumer = _make_mock_consumer(**kwargs)
-        consumers.append(consumer)
-        return consumer
-
-    yield _factory
-
-    for c in consumers:
-        if c.fetch_task:
-            if not c.fetch_task.done():
-                c.fetch_task.cancel()
-            try:
-                await c.fetch_task
-            except (asyncio.CancelledError, Exception):
-                pass
-
-
 class TestConsumerReadySignal:
     """Unit tests for consumer ready signal (no Docker required)."""
 
@@ -934,8 +892,11 @@ class TestConsumerIdleTimeout:
         assert elapsed >= 0.25, f"Expected ~0.3s wait, got {elapsed:.3f}s"
 
     @pytest.mark.asyncio
-    async def test_checkpoints_processed_before_data(self, mock_consumer):
-        """Checkpoint items in queue should be processed transparently before returning data."""
+    async def test_checkpoints_deferred_before_data(self, mock_consumer):
+        """Checkpoint items in queue should be deferred, not executed immediately.
+
+        The checkpoint is committed on the *next* __anext__ call (implicit ack).
+        """
         consumer = mock_consumer()
         consumer.checkpointer = AsyncMock()
         consumer.checkpointer.checkpoint = AsyncMock()
@@ -946,6 +907,13 @@ class TestConsumerIdleTimeout:
 
         item = await consumer.__anext__()
         assert item == {"msg": "real"}
+        # Checkpoint is deferred, not yet committed
+        consumer.checkpointer.checkpoint.assert_not_awaited()
+
+        # Next __anext__ commits the deferred checkpoint
+        await consumer.queue.put({"msg": "next"})
+        item2 = await consumer.__anext__()
+        assert item2 == {"msg": "next"}
         consumer.checkpointer.checkpoint.assert_awaited_once_with("shard-0", "100")
 
     @pytest.mark.asyncio

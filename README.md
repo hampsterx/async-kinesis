@@ -715,3 +715,4 @@ python tests/resharding/resharding_test.py --scenario scale-up-small
 [ARN]: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference-arns.html
 [StreamARN]: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_StreamDescription.html#Streams-Type-StreamDescription-StreamARN
 [StreamName]: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_StreamDescription.html#Streams-Type-StreamDescription-StreamName
+# test

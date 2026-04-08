@@ -380,6 +380,7 @@ The consumer includes sophisticated shard management capabilities for handling K
 - **Sequential consumption**: Enforces reading parent shards before child shards to maintain data order
 - **Exhaustion tracking**: Tracks when parent shards are fully consumed to enable child consumption
 - **Smart allocation**: Only allocates child shards after their parents are exhausted or closed
+- **Expired parent detection**: Recognises parent shards removed by AWS after retention expiry and allows their children to be allocated immediately
 
 ### Closed Shard Handling
 - **Graceful closure**: Properly handles shards that reach end-of-life (`NextShardIterator` returns `null`)

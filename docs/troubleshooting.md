@@ -284,6 +284,24 @@ if producer._queue.qsize() > producer._max_queue_size * 0.8:
 
 ## Resharding Problems
 
+### Problem: All shards skipped with "parent not exhausted" after shard expiry
+
+If all your shards have a `ParentShardId` but the parent shards have expired and are no longer returned by `list_shards`, the consumer would previously skip every shard indefinitely. This is now fixed.
+
+**Symptoms:**
+```text
+DEBUG:kinesis.consumer:Skipping child shard shardId-000000000373 - parent not exhausted
+DEBUG:kinesis.consumer:Skipping child shard shardId-000000000374 - parent not exhausted
+```
+
+**Cause:** Parent shards closed and exceeded the stream's retention period, so AWS no longer includes them in `list_shards` responses. The consumer couldn't mark them as exhausted because they were never observed.
+
+**Solution:** Upgrade to a recent release. The consumer now detects parent shard IDs that are referenced but absent from the shard list, treating them as expired. You can verify via `get_shard_status()`:
+```python
+status = consumer.get_shard_status()
+print(f"Expired parents: {status['expired_parents']}")
+```
+
 ### Problem: Consumer not processing new shards after resharding
 
 **Solutions:**

@@ -592,6 +592,46 @@ class TestConsumer:
             assert "can_allocate" in shard_detail
 
     @pytest.mark.asyncio
+    async def test_consumer_expired_parent_shards(self, endpoint_url):
+        """Test that child shards are allocatable when parent has expired from shard list (GH-68)."""
+        consumer = Consumer(
+            stream_name="test-expired-parents",
+            endpoint_url=endpoint_url,
+        )
+
+        # Simulate shards where all parents have expired (no longer in list_shards response)
+        mock_shards = [
+            {
+                "ShardId": "shardId-000000000373",
+                "ParentShardId": "shardId-000000000100",
+                "SequenceNumberRange": {"StartingSequenceNumber": "100"},
+            },
+            {
+                "ShardId": "shardId-000000000374",
+                "ParentShardId": "shardId-000000000100",
+                "SequenceNumberRange": {"StartingSequenceNumber": "200"},
+            },
+            {
+                "ShardId": "shardId-000000000375",
+                "ParentShardId": "shardId-000000000101",
+                "SequenceNumberRange": {"StartingSequenceNumber": "300"},
+            },
+        ]
+
+        consumer._build_shard_topology(mock_shards)
+
+        # Parents not in shard list should be tracked as expired
+        assert len(consumer._expired_parent_shards) == 2
+        assert "shardId-000000000100" in consumer._expired_parent_shards
+        assert "shardId-000000000101" in consumer._expired_parent_shards
+        assert len(consumer._parent_shards) == 0
+
+        # All children should be allocatable since their parents expired
+        assert consumer._should_allocate_shard("shardId-000000000373")
+        assert consumer._should_allocate_shard("shardId-000000000374")
+        assert consumer._should_allocate_shard("shardId-000000000375")
+
+    @pytest.mark.asyncio
     async def test_consumer_resharding_detection(self, endpoint_url):
         """Test detection of resharding events."""
         consumer = Consumer(
@@ -661,13 +701,15 @@ class TestConsumer:
                 async with timeout(10):
                     async for message in consumer:
                         consumed.append(message)
-                        if len(consumed) >= 3:
+                        # Stop once we have the 3 seq records
+                        if sum(1 for m in consumed if "seq" in m) >= 3:
                             break
             except asyncio.TimeoutError:
                 pass
 
-            assert len(consumed) == 3
-            assert [m["seq"] for m in consumed] == [0, 1, 2]
+            seq_records = [m for m in consumed if "seq" in m]
+            assert len(seq_records) == 3
+            assert [m["seq"] for m in seq_records] == [0, 1, 2]
 
 
 class TestConsumerReadySignal:

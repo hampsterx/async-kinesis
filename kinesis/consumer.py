@@ -126,6 +126,7 @@ class Consumer(Base):
         self._closed_shards = set()  # Track shards that have been closed
         self._shard_topology = {}  # Track parent-child relationships
         self._parent_shards = set()  # Track shards that are parents
+        self._expired_parent_shards = set()  # Parent shard IDs no longer in the shard list
         self._child_shards = set()  # Track shards that are children
         self._exhausted_parents = set()  # Track parent shards that are fully consumed
         self._deallocated_shards: set = set()  # Shards already deallocated (skip stale sentinels)
@@ -658,11 +659,14 @@ class Consumer(Base):
                     self._shard_topology[shard_id] = {"children": set(), "parent": None}
                 self._shard_topology[shard_id]["parent"] = parent_shard_id
 
-        # Parent shards are those that have children OR are referenced as parents
-        # but might not be in the current shard list (if they're already closed)
+        # Parent shards are those referenced as parents AND still present in the shard list
         self._parent_shards = parent_shard_ids & all_shard_ids
+        # Parent shard IDs that are referenced but no longer exist (expired/removed by AWS)
+        self._expired_parent_shards = parent_shard_ids - all_shard_ids
 
         log.debug(f"Shard topology: {len(self._parent_shards)} parents, {len(self._child_shards)} children")
+        if self._expired_parent_shards:
+            log.debug(f"Expired parent shards (no longer in shard list): {self._expired_parent_shards}")
         if self._parent_shards:
             log.debug(f"Parent shards: {self._parent_shards}")
         if self._child_shards:
@@ -681,6 +685,9 @@ class Consumer(Base):
         if shard_id in self._child_shards:
             parent_id = self._shard_topology.get(shard_id, {}).get("parent")
             if parent_id:
+                # Expired parents are gone from AWS shard list; child is safe to consume
+                if parent_id in self._expired_parent_shards:
+                    return True
                 # Parent must be exhausted (closed) before we can consume child
                 return parent_id in self._exhausted_parents or parent_id in self._closed_shards
 
@@ -754,6 +761,7 @@ class Consumer(Base):
             "parent_shards": len(self._parent_shards),
             "child_shards": len(self._child_shards),
             "exhausted_parents": len(self._exhausted_parents),
+            "expired_parents": len(self._expired_parent_shards),
             "resharding_in_progress": self.is_resharding_likely_in_progress(),
             "topology": {
                 "parent_child_map": {k: list(v["children"]) for k, v in self._shard_topology.items() if v["children"]},

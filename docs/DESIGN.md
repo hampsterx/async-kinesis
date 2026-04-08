@@ -19,6 +19,7 @@ The consumer uses an async task-based design optimized for handling multiple sha
 
 - **Topology tracking**: Maintains parent-child relationships from AWS shard metadata
 - **Exhaustion handling**: Tracks when parent shards are fully consumed to enable child consumption
+- **Expired parent detection**: Automatically recognises parent shards that have been removed from the shard list by AWS (retention expired) and allows their children to be allocated immediately
 - **Closed shard detection**: Gracefully handles shards that reach end-of-life during resharding
 - **Error recovery**: Automatic retry with exponential backoff for connection failures and expired iterators
 

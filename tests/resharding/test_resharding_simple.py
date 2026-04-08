@@ -324,17 +324,14 @@ class MockReshardingTest:
         for shard in independent_shards:
             assert consumer._should_allocate_shard(shard["ShardId"]) == True
 
-        # Test with orphaned child (parent not in current shard list)
+        # Test with orphaned child (parent not in current shard list - expired by AWS)
         orphaned_scenario = [{"ShardId": "shard-child-orphan", "ParentShardId": "shard-parent-missing"}]
         consumer._build_shard_topology(orphaned_scenario)
         assert len(consumer._child_shards) == 1
         assert len(consumer._parent_shards) == 0  # Parent not in current list
+        assert len(consumer._expired_parent_shards) == 1  # Parent tracked as expired
 
-        # Orphaned child should not be allocatable (parent not exhausted)
-        assert consumer._should_allocate_shard("shard-child-orphan") == False
-
-        # But if we mark the missing parent as exhausted, child should become allocatable
-        consumer._exhausted_parents.add("shard-parent-missing")
+        # Orphaned child should be allocatable (parent expired/removed by AWS)
         assert consumer._should_allocate_shard("shard-child-orphan") == True
 
         logger.info("✅ Edge cases handled correctly")

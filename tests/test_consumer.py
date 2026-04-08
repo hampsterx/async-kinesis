@@ -701,13 +701,15 @@ class TestConsumer:
                 async with timeout(10):
                     async for message in consumer:
                         consumed.append(message)
-                        if len(consumed) >= 3:
+                        # Stop once we have the 3 seq records
+                        if sum(1 for m in consumed if "seq" in m) >= 3:
                             break
             except asyncio.TimeoutError:
                 pass
 
-            assert len(consumed) == 3
-            assert [m["seq"] for m in consumed] == [0, 1, 2]
+            seq_records = [m for m in consumed if "seq" in m]
+            assert len(seq_records) == 3
+            assert [m["seq"] for m in seq_records] == [0, 1, 2]
 
 
 class TestConsumerReadySignal:

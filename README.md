@@ -647,7 +647,7 @@ with patch("myapp.Producer", MockProducer):
 
 ### Local Testing
 
-Uses LocalStack for integration testing:
+Uses kinesalite (Docker Compose) and Floci (CI) for integration testing:
 
 ```bash
 # Run full test suite via Docker
@@ -693,7 +693,7 @@ Comprehensive resharding test suite available:
 # Unit tests (no AWS required)
 python tests/resharding/test_resharding_simple.py
 
-# Integration tests (requires LocalStack)
+# Integration tests (requires Floci or LocalStack)
 python tests/resharding/test_resharding_integration.py
 
 # Production testing (requires AWS)

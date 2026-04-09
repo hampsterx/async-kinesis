@@ -362,9 +362,9 @@ class TestIntegration:
 
     @pytest.mark.asyncio
     async def test_consumer_iterator_types_integration(self, test_stream, endpoint_url):
-        # Skip test for LocalStack/kinesalite due to LATEST iterator timing issues
+        # Skip for local emulators due to LATEST iterator timing sensitivity
         if any(host in endpoint_url for host in ["localhost", "kinesis:", "localstack"]):
-            pytest.skip("LocalStack/kinesalite timing issues with LATEST iterator")
+            pytest.skip("Local emulator timing issues with LATEST iterator")
         """Test different iterator types in integration scenario."""
         # Produce some initial messages
         async with Producer(
@@ -439,9 +439,9 @@ class TestIntegration:
     @pytest.mark.asyncio
     async def test_producer_consumer_with_stream_arn(self, random_stream_name, endpoint_url):
         """Test producer and consumer with stream ARN instead of name (PR #39)."""
-        # Skip for LocalStack as it may not support ARN addressing
+        # Skip for local emulators as they may not support ARN addressing
         if any(host in endpoint_url for host in ["localhost", "kinesis:", "localstack"]):
-            pytest.skip("LocalStack may not fully support ARN addressing")
+            pytest.skip("Local emulator does not support ARN addressing")
 
         # Create a mock ARN for the stream
         stream_arn = f"arn:aws:kinesis:us-east-1:123456789012:stream/{random_stream_name}"

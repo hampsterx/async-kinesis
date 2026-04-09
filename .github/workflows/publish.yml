@@ -14,13 +14,9 @@ jobs:
 
     services:
       kinesis:
-        image: localstack/localstack:3.8
+        image: hectorvent/floci:1.4.0
         ports:
           - 4566:4566
-        env:
-          SERVICES: kinesis
-          KINESIS_ERROR_PROBABILITY: 0.0
-          DEBUG: 1
 
       redis:
         image: redis:latest
@@ -57,11 +53,9 @@ jobs:
 
     - name: Wait for services
       run: |
-        # Give services time to start
-        sleep 20
-        # Wait for LocalStack port to be available (skip health check due to S3 errors)
-        timeout 120 bash -c 'until nc -z localhost 4566; do echo "Waiting for localstack port..."; sleep 3; done'
-        echo "LocalStack port is ready"
+        # Floci starts in <100ms; wait for port to be available
+        timeout 30 bash -c 'until nc -z localhost 4566; do echo "Waiting for Floci..."; sleep 1; done'
+        echo "Floci is ready"
         # Wait for Redis
         timeout 60 bash -c 'until redis-cli -h localhost ping; do echo "Waiting for redis..."; sleep 2; done'
         echo "Redis is ready"

@@ -181,7 +181,7 @@ async with Producer(stream_name="test") as producer:
 
 **With Metrics:**
 ```python
-from kinesis import Producer, PrometheusMetricsCollector
+from kinesis import Consumer, Producer, PrometheusMetricsCollector
 
 # Enable Prometheus metrics (optional)
 metrics = PrometheusMetricsCollector(namespace="my_app")
@@ -189,6 +189,11 @@ metrics = PrometheusMetricsCollector(namespace="my_app")
 async with Producer(stream_name="test", metrics_collector=metrics) as producer:
     await producer.put({'my': 'data'})
     # Metrics are automatically collected: throughput, errors, batch sizes, etc.
+
+async with Consumer(stream_name="test", metrics_collector=metrics) as consumer:
+    async for record in consumer:
+        # Emits records/bytes received, checkpoint success/failure, iterator age, errors, etc.
+        handle(record)
 ```
 
 ## Configuration

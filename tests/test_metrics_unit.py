@@ -1,19 +1,25 @@
 """Unit tests for metrics functionality."""
 
+import asyncio
 import time
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from aiohttp import ClientConnectionError
+from botocore.exceptions import ClientError
 
 from kinesis import (
     InMemoryMetricsCollector,
+    MemoryCheckPointer,
     MetricType,
     NoOpMetricsCollector,
     get_metrics_collector,
     reset_metrics_collector,
     set_metrics_collector,
 )
+from kinesis.consumer import ShardStats
 from kinesis.metrics import Timer
+from kinesis.utils import Throttler
 
 
 class TestNoOpMetricsCollector:
@@ -198,3 +204,364 @@ class TestMetricTypeEnum:
             assert name.islower() or "_" in name
             # Should not have spaces
             assert " " not in name
+
+
+async def _drain_pending_shard_fetch(consumer):
+    """Cancel any in-flight shard fetch task left behind by fetch()."""
+    for shard in consumer.shards or []:
+        task = shard.get("fetch")
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+            shard["fetch"] = None
+
+
+def _shard_labels(shard_id, stream_name="test-stream"):
+    return f"shard_id={shard_id},stream_name={stream_name}"
+
+
+class TestConsumerMetricsWiring:
+    """Verify Consumer accepts metrics_collector and wires it correctly."""
+
+    @pytest.mark.asyncio
+    async def test_consumer_accepts_metrics_collector(self, mock_consumer):
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        assert consumer.metrics is collector
+
+    @pytest.mark.asyncio
+    async def test_consumer_defaults_to_global_collector(self, mock_consumer):
+        reset_metrics_collector()
+        consumer = mock_consumer()
+        assert isinstance(consumer.metrics, NoOpMetricsCollector)
+
+
+class TestConsumerFetchEmits:
+    """Exercise fetch() emit sites with a synthetic result dict."""
+
+    @staticmethod
+    def _prime_shard_with_result(consumer, result, shard_id="shard-0"):
+        fetch_future = asyncio.Future()
+        fetch_future.set_result(result)
+        consumer.shards = [
+            {
+                "ShardId": shard_id,
+                "ShardIterator": "curr-iter",
+                "fetch": fetch_future,
+                "throttler": Throttler(rate_limit=1000, period=1),
+                "stats": ShardStats(),
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_fetch_increments_records_and_bytes_per_enqueued_row(self, mock_consumer):
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+        await consumer.checkpointer.allocate("shard-0")
+        consumer.refresh_shards = AsyncMock()
+        consumer.get_records = AsyncMock(return_value=None)
+
+        records = [
+            {"SequenceNumber": "1", "Data": b'{"id": 1}'},  # 9 bytes
+            {"SequenceNumber": "2", "Data": b'{"id": 22}'},  # 10 bytes
+        ]
+        self._prime_shard_with_result(
+            consumer,
+            {"Records": records, "NextShardIterator": "next-iter"},
+        )
+
+        await consumer.fetch()
+
+        key_base = _shard_labels("shard-0")
+        assert collector.counters[f"consumer_records_received_total{{{key_base}}}"] == 2
+        assert collector.counters[f"consumer_bytes_received_total{{{key_base}}}"] == 19
+
+        # Queue size gauge emitted once records were enqueued
+        assert "consumer_queue_size{stream_name=test-stream}" in collector.gauges
+
+        await _drain_pending_shard_fetch(consumer)
+
+    @pytest.mark.asyncio
+    async def test_fetch_emits_iterator_age_when_millis_behind_present(self, mock_consumer):
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+        await consumer.checkpointer.allocate("shard-0")
+        consumer.refresh_shards = AsyncMock()
+        consumer.get_records = AsyncMock(return_value=None)
+
+        self._prime_shard_with_result(
+            consumer,
+            {
+                "Records": [],
+                "NextShardIterator": "next-iter",
+                "MillisBehindLatest": 54321,
+            },
+        )
+
+        await consumer.fetch()
+
+        key = f"consumer_iterator_age_milliseconds{{{_shard_labels('shard-0')}}}"
+        assert collector.gauges[key] == 54321
+
+        await _drain_pending_shard_fetch(consumer)
+
+    @pytest.mark.asyncio
+    async def test_fetch_skips_iterator_age_when_field_absent(self, mock_consumer):
+        """Kinesalite / unpatched floci omit MillisBehindLatest. Emit must no-op."""
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+        await consumer.checkpointer.allocate("shard-0")
+        consumer.refresh_shards = AsyncMock()
+        consumer.get_records = AsyncMock(return_value=None)
+
+        self._prime_shard_with_result(
+            consumer,
+            {"Records": [], "NextShardIterator": "next-iter"},
+        )
+
+        await consumer.fetch()
+
+        iterator_age_keys = [k for k in collector.gauges if k.startswith("consumer_iterator_age_milliseconds")]
+        assert iterator_age_keys == []
+
+        await _drain_pending_shard_fetch(consumer)
+
+    @pytest.mark.asyncio
+    async def test_fetch_counts_only_successfully_enqueued_rows(self, mock_consumer):
+        """Rows that time out mid-batch must not be counted (avoid double-count on retry)."""
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+        await consumer.checkpointer.allocate("shard-0")
+        consumer.refresh_shards = AsyncMock()
+        consumer.get_records = AsyncMock(return_value=None)
+
+        records = [
+            {"SequenceNumber": "1", "Data": b'{"id": 1}'},
+            {"SequenceNumber": "2", "Data": b'{"id": 2}'},
+            {"SequenceNumber": "3", "Data": b'{"id": 3}'},
+        ]
+        self._prime_shard_with_result(
+            consumer,
+            {"Records": records, "NextShardIterator": "next-iter"},
+        )
+
+        # Patch the queue's put directly so first put succeeds, subsequent puts
+        # raise asyncio.TimeoutError (matches what asyncio.wait_for would surface
+        # on a real timeout). Patching put rather than asyncio.wait_for keeps the
+        # test stable if other wait_for sites are added inside fetch().
+        real_put = consumer.queue.put
+        put_calls = {"n": 0}
+
+        async def flaky_put(item):
+            put_calls["n"] += 1
+            if put_calls["n"] >= 2:
+                raise asyncio.TimeoutError()
+            await real_put(item)
+
+        consumer.queue.put = flaky_put
+
+        await consumer.fetch()
+
+        key_base = _shard_labels("shard-0")
+        # Only the first row got enqueued before the timeout broke the loop.
+        assert collector.counters.get(f"consumer_records_received_total{{{key_base}}}") == 1
+        assert collector.counters.get(f"consumer_bytes_received_total{{{key_base}}}") == 9
+
+        await _drain_pending_shard_fetch(consumer)
+
+
+class TestConsumerGetRecordsErrors:
+    """CONSUMER_ERRORS emits from get_records error paths with correct error_type."""
+
+    @staticmethod
+    def _shard(shard_id="shard-0"):
+        return {
+            "ShardId": shard_id,
+            "ShardIterator": "curr-iter",
+            "throttler": Throttler(rate_limit=1000, period=1),
+            "stats": ShardStats(),
+        }
+
+    @pytest.mark.asyncio
+    async def test_connection_error_emits_connection_label(self, mock_consumer):
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.client = MagicMock()
+        consumer.client.get_records = AsyncMock(side_effect=ClientConnectionError("boom"))
+        consumer.get_conn = AsyncMock()
+
+        await consumer.get_records(self._shard())
+
+        key = f"consumer_errors_total{{error_type=connection,{_shard_labels('shard-0')}}}"
+        assert collector.counters[key] == 1
+
+    @pytest.mark.asyncio
+    async def test_timeout_emits_timeout_label(self, mock_consumer):
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.client = MagicMock()
+        consumer.client.get_records = AsyncMock(side_effect=asyncio.TimeoutError())
+
+        # Monkeypatch asyncio.sleep inside the except block to avoid 3s wait.
+        orig_sleep = asyncio.sleep
+
+        async def fast_sleep(_):
+            await orig_sleep(0)
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(asyncio, "sleep", fast_sleep)
+            await consumer.get_records(self._shard())
+
+        key = f"consumer_errors_total{{error_type=timeout,{_shard_labels('shard-0')}}}"
+        assert collector.counters[key] == 1
+
+    @pytest.mark.asyncio
+    async def test_client_error_emits_raw_code_label(self, mock_consumer):
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        err = ClientError(
+            {"Error": {"Code": "ProvisionedThroughputExceededException", "Message": "throttled"}},
+            "GetRecords",
+        )
+        consumer.client = MagicMock()
+        consumer.client.get_records = AsyncMock(side_effect=err)
+
+        orig_sleep = asyncio.sleep
+
+        async def fast_sleep(_):
+            await orig_sleep(0)
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(asyncio, "sleep", fast_sleep)
+            await consumer.get_records(self._shard())
+
+        key = (
+            "consumer_errors_total{" f"error_type=ProvisionedThroughputExceededException,{_shard_labels('shard-0')}" "}"
+        )
+        assert collector.counters[key] == 1
+
+    @pytest.mark.asyncio
+    async def test_unknown_exception_emits_unknown_label(self, mock_consumer):
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.client = MagicMock()
+        consumer.client.get_records = AsyncMock(side_effect=RuntimeError("surprise"))
+
+        orig_sleep = asyncio.sleep
+
+        async def fast_sleep(_):
+            await orig_sleep(0)
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(asyncio, "sleep", fast_sleep)
+            await consumer.get_records(self._shard())
+
+        key = f"consumer_errors_total{{error_type=unknown,{_shard_labels('shard-0')}}}"
+        assert collector.counters[key] == 1
+
+
+class TestConsumerCheckpointMetrics:
+    @pytest.mark.asyncio
+    async def test_maybe_checkpoint_success(self, mock_consumer):
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.checkpointer = AsyncMock()
+
+        await consumer._maybe_checkpoint("shard-0", "seq-1")
+
+        key = f"consumer_checkpoint_success_total{{{_shard_labels('shard-0')}}}"
+        assert collector.counters[key] == 1
+        assert f"consumer_checkpoint_failure_total{{{_shard_labels('shard-0')}}}" not in collector.counters
+
+    @pytest.mark.asyncio
+    async def test_maybe_checkpoint_failure(self, mock_consumer):
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.checkpointer = AsyncMock()
+        consumer.checkpointer.checkpoint.side_effect = RuntimeError("backend down")
+
+        with pytest.raises(RuntimeError):
+            await consumer._maybe_checkpoint("shard-0", "seq-1")
+
+        key = f"consumer_checkpoint_failure_total{{{_shard_labels('shard-0')}}}"
+        assert collector.counters[key] == 1
+        assert f"consumer_checkpoint_success_total{{{_shard_labels('shard-0')}}}" not in collector.counters
+
+    @pytest.mark.asyncio
+    async def test_flush_pending_checkpoints_success(self, mock_consumer):
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.checkpointer = AsyncMock()
+        consumer._pending_checkpoints = {"shard-0": "seq-1", "shard-1": "seq-9"}
+
+        await consumer._flush_pending_checkpoints()
+
+        assert collector.counters[f"consumer_checkpoint_success_total{{{_shard_labels('shard-0')}}}"] == 1
+        assert collector.counters[f"consumer_checkpoint_success_total{{{_shard_labels('shard-1')}}}"] == 1
+
+
+class TestStreamMetrics:
+    @pytest.mark.asyncio
+    async def test_refresh_shards_emits_active_and_closed_gauges(self, mock_consumer):
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer._last_shard_refresh = 0  # Force refresh
+        consumer.skip_describe_stream = False
+        consumer.use_list_shards = False
+        consumer._closed_shards = {"shard-closed"}
+
+        consumer.get_stream_description = AsyncMock(
+            return_value={
+                "StreamStatus": consumer.ACTIVE,
+                "Shards": [
+                    {"ShardId": "shard-0"},
+                    {"ShardId": "shard-1"},
+                    {"ShardId": "shard-closed"},
+                ],
+            }
+        )
+
+        await consumer.refresh_shards()
+
+        assert collector.gauges["stream_shards_active{stream_name=test-stream}"] == 2
+        assert collector.gauges["stream_shards_closed{stream_name=test-stream}"] == 1
+
+    @pytest.mark.asyncio
+    async def test_resharding_detected_emits_counter(self, mock_consumer):
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer._last_shard_refresh = 0
+        consumer.skip_describe_stream = False
+        consumer.use_list_shards = False
+
+        # Existing parent, new child appears → resharding event.
+        consumer.shards = [
+            {"ShardId": "parent-0", "SequenceNumberRange": {"StartingSequenceNumber": "1"}},
+        ]
+        consumer.get_stream_description = AsyncMock(
+            return_value={
+                "StreamStatus": consumer.ACTIVE,
+                "Shards": [
+                    {
+                        "ShardId": "parent-0",
+                        "SequenceNumberRange": {"StartingSequenceNumber": "1"},
+                    },
+                    {
+                        "ShardId": "child-0",
+                        "ParentShardId": "parent-0",
+                        "SequenceNumberRange": {"StartingSequenceNumber": "100"},
+                    },
+                ],
+            }
+        )
+
+        await consumer.refresh_shards()
+
+        assert collector.counters["stream_resharding_events_total{stream_name=test-stream}"] == 1

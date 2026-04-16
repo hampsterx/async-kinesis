@@ -32,6 +32,29 @@ print(metrics.get_metrics())
 # {'producer_records_sent_total{stream_name=my-stream}': 1.0, ...}
 ```
 
+### Consumer Example
+
+```python
+from kinesis import Consumer, InMemoryMetricsCollector
+
+metrics = InMemoryMetricsCollector()
+
+async with Consumer(
+    stream_name="my-stream",
+    metrics_collector=metrics
+) as consumer:
+    async for record in consumer:
+        handle(record)
+
+# Per-shard counters of records and bytes successfully enqueued.
+print(metrics.counters)
+# {'consumer_records_received_total{shard_id=shardId-000000000000,stream_name=my-stream}': 42, ...}
+```
+
+Running multiple consumers in the same process? Pass an explicit collector to each. The
+global collector set via `set_metrics_collector()` is shared across every consumer that
+doesn't supply its own, which is usually not what you want for multi-stream observability.
+
 ### Prometheus Integration
 
 ```bash
@@ -89,14 +112,17 @@ async with Producer(stream_name="my-stream") as producer:
 
 | Metric | Type | Description | Labels |
 |--------|------|-------------|---------|
-| `consumer_records_received_total` | Counter | Total records received | `stream_name`, `shard_id` |
-| `consumer_bytes_received_total` | Counter | Total bytes received | `stream_name`, `shard_id` |
-| `consumer_errors_total` | Counter | Total consumer errors | `stream_name`, `shard_id`, `error_type` |
-| `consumer_checkpoint_success_total` | Counter | Successful checkpoints | `stream_name`, `shard_id` |
-| `consumer_checkpoint_failure_total` | Counter | Failed checkpoints | `stream_name`, `shard_id` |
-| `consumer_lag_records` | Gauge | Consumer lag in records | `stream_name`, `shard_id` |
-| `consumer_processing_time_seconds` | Histogram | Record processing time | `stream_name`, `shard_id` |
-| `consumer_iterator_age_milliseconds` | Gauge | Iterator age (lag indicator) | `stream_name`, `shard_id` |
+| `consumer_records_received_total` | Counter | Records successfully enqueued to the consumer queue (raw Kinesis rows, pre-deaggregation). Rows dropped mid-batch by a queue timeout are not counted. | `stream_name`, `shard_id` |
+| `consumer_bytes_received_total` | Counter | Bytes of `Data` for rows counted by `consumer_records_received_total`. | `stream_name`, `shard_id` |
+| `consumer_errors_total` | Counter | Errors in `get_records`. `error_type` is `connection`, `timeout`, `unknown`, or the raw AWS error code (e.g. `ProvisionedThroughputExceededException`, `ExpiredIteratorException`, `InternalFailure`). | `stream_name`, `shard_id`, `error_type` |
+| `consumer_checkpoint_success_total` | Counter | Checkpointer backend calls that returned successfully. | `stream_name`, `shard_id` |
+| `consumer_checkpoint_failure_total` | Counter | Checkpointer backend calls that raised. | `stream_name`, `shard_id` |
+| `consumer_iterator_age_milliseconds` | Gauge | `MillisBehindLatest` from the last `GetRecords` response. Only emitted when the backend populates the field. | `stream_name`, `shard_id` |
+| `consumer_queue_size` | Gauge | Consumer internal queue depth after the enqueue pass. | `stream_name` |
+| `consumer_lag_records` | Gauge | *Planned* - not currently emitted. | `stream_name`, `shard_id` |
+| `consumer_processing_time_seconds` | Histogram | *Planned* - not currently emitted. | `stream_name`, `shard_id` |
+
+`consumer_errors_total` uses raw AWS error codes rather than semantic labels. `ProvisionedThroughputExceededException` and `ExpiredIteratorException` are recovery events, not failures; alert on `connection`, `unknown`, and `InternalFailure` instead.
 
 ### Stream Metrics
 
@@ -244,8 +270,8 @@ rate(my_service_producer_records_sent_total[5m])
 # Producer error rate
 rate(my_service_producer_errors_total[5m])
 
-# Consumer lag
-my_service_consumer_lag_records
+# Consumer iterator age (lag indicator)
+my_service_consumer_iterator_age_milliseconds
 
 # Resharding events
 increase(my_service_stream_resharding_events_total[1h])
@@ -263,11 +289,11 @@ groups:
         annotations:
           summary: "High error rate in Kinesis producer"
 
-      - alert: HighConsumerLag
-        expr: my_service_consumer_lag_records > 10000
+      - alert: HighConsumerIteratorAge
+        expr: my_service_consumer_iterator_age_milliseconds > 60000
         for: 10m
         annotations:
-          summary: "Consumer lag exceeds 10k records"
+          summary: "Consumer is more than 60s behind the shard tip"
 
       - alert: ReshardingDetected
         expr: increase(my_service_stream_resharding_events_total[5m]) > 0

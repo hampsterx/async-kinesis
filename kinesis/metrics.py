@@ -29,9 +29,11 @@ class MetricType(Enum):
     CONSUMER_ERRORS = "consumer_errors_total"
     CONSUMER_CHECKPOINT_SUCCESS = "consumer_checkpoint_success_total"
     CONSUMER_CHECKPOINT_FAILURE = "consumer_checkpoint_failure_total"
+    CONSUMER_ITERATOR_AGE = "consumer_iterator_age_milliseconds"
+    CONSUMER_QUEUE_SIZE = "consumer_queue_size"
+    # Defined but not yet emitted — see docs/metrics.md.
     CONSUMER_LAG = "consumer_lag_records"
     CONSUMER_PROCESSING_TIME = "consumer_processing_time_seconds"
-    CONSUMER_ITERATOR_AGE = "consumer_iterator_age_milliseconds"
 
     # Stream metrics
     STREAM_SHARDS_ACTIVE = "stream_shards_active"

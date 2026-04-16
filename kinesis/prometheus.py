@@ -143,6 +143,23 @@ class PrometheusMetricsCollector(MetricsCollector):
             registry=self.registry,
         )
 
+        self._metrics[MetricType.CONSUMER_ITERATOR_AGE] = Gauge(
+            name="consumer_iterator_age_milliseconds",
+            documentation="Age of the iterator in milliseconds",
+            namespace=self.namespace,
+            labelnames=["stream_name", "shard_id"],
+            registry=self.registry,
+        )
+
+        self._metrics[MetricType.CONSUMER_QUEUE_SIZE] = Gauge(
+            name="consumer_queue_size",
+            documentation="Current size of the consumer queue",
+            namespace=self.namespace,
+            labelnames=["stream_name"],
+            registry=self.registry,
+        )
+
+        # Defined but not yet emitted — registered for forward compatibility.
         self._metrics[MetricType.CONSUMER_LAG] = Gauge(
             name="consumer_lag_records",
             documentation="Consumer lag in number of records",
@@ -157,14 +174,6 @@ class PrometheusMetricsCollector(MetricsCollector):
             namespace=self.namespace,
             labelnames=["stream_name", "shard_id"],
             buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
-            registry=self.registry,
-        )
-
-        self._metrics[MetricType.CONSUMER_ITERATOR_AGE] = Gauge(
-            name="consumer_iterator_age_milliseconds",
-            documentation="Age of the iterator in milliseconds",
-            namespace=self.namespace,
-            labelnames=["stream_name", "shard_id"],
             registry=self.registry,
         )
 

@@ -293,10 +293,15 @@ class MockConsumer:
         create_stream_shards: int = 1,
         timestamp=None,
         poll_delay: float = 0,
+        metrics_collector=None,
         **kwargs: Any,
     ) -> None:
+        from .metrics import get_metrics_collector
+
         self.stream_name = stream_name
         self.processor = processor if processor else JsonProcessor()
+        # Stored for parity with Consumer; MockConsumer does not emit metrics itself.
+        self.metrics = metrics_collector if metrics_collector else get_metrics_collector()
         self.checkpointer = checkpointer if checkpointer else MemoryCheckPointer()
         self.iterator_type = iterator_type
         self._create_stream = create_stream

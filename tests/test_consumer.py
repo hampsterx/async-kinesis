@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from kinesis import Consumer, MemoryCheckPointer, Producer, exceptions
+from kinesis import Consumer, InMemoryMetricsCollector, MemoryCheckPointer, Producer, exceptions
+from kinesis.metrics import MetricType
 from kinesis.processors import JsonProcessor
 from kinesis.timeout_compat import timeout
 
@@ -66,6 +67,56 @@ class TestConsumer:
                 pass
 
         assert len(consumed_messages) > 0
+
+    @pytest.mark.asyncio
+    async def test_consumer_metrics_round_trip(self, test_stream, endpoint_url):
+        """Consumer emits records/bytes received counters and queue size gauge after a round trip."""
+        collector = InMemoryMetricsCollector()
+
+        async with Producer(stream_name=test_stream, endpoint_url=endpoint_url) as producer:
+            for i in range(3):
+                await producer.put({"message": f"m-{i}"})
+            await producer.flush()
+
+        async with Consumer(
+            stream_name=test_stream,
+            endpoint_url=endpoint_url,
+            sleep_time_no_records=0.1,
+            metrics_collector=collector,
+        ) as consumer:
+            consumed = []
+            try:
+                async with timeout(5):
+                    async for message in consumer:
+                        consumed.append(message)
+                        if len(consumed) >= 3:
+                            break
+            except asyncio.TimeoutError:
+                pass
+
+        records_keys = [k for k in collector.counters if k.startswith("consumer_records_received_total")]
+        bytes_keys = [k for k in collector.counters if k.startswith("consumer_bytes_received_total")]
+        queue_keys = [k for k in collector.gauges if k.startswith("consumer_queue_size")]
+
+        assert records_keys, f"expected consumer_records_received_total, got {list(collector.counters)}"
+        # 3 distinct JSON puts → 3 Kinesis rows. Exact match guards against double-counting on retry.
+        assert sum(collector.counters[k] for k in records_keys) == 3
+        # Bytes are the serialized Data field; derive the expected size from whichever
+        # JSON backend the serializer actually used (ujson is compact, stdlib has spaces).
+        expected_per_record = sum(len(item.data) for item in JsonProcessor().add_item({"message": "m-0"}))
+        assert sum(collector.counters[k] for k in bytes_keys) == 3 * expected_per_record
+        assert queue_keys
+
+        # Iterator age: only assert if the backend reported MillisBehindLatest as
+        # proper milliseconds. Floci < 1.6 (approx) populates the field with a
+        # record count, not an age, so skip this assertion until CI pins a patched image.
+        iterator_age_keys = [k for k in collector.gauges if k.startswith("consumer_iterator_age_milliseconds")]
+        if not iterator_age_keys:
+            pytest.skip(
+                "Backend did not report MillisBehindLatest with millisecond semantics "
+                "(e.g. kinesalite omits it; floci PR #444 not yet released)."
+            )
+        assert all(collector.gauges[k] >= 0 for k in iterator_age_keys)
 
     @pytest.mark.asyncio
     async def test_consumer_checkpointing(self, test_stream, endpoint_url):

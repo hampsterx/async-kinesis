@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError
 
 from .base import Base
 from .checkpointers import CheckPointer, MemoryCheckPointer
+from .metrics import MetricsCollector, MetricType, get_metrics_collector
 from .processors import JsonProcessor, Processor
 from .utils import Throttler
 
@@ -58,6 +59,7 @@ class Consumer(Base):
         idle_timeout: float = 2.0,
         timestamp: Optional[datetime] = None,
         checkpoint_interval: Optional[float] = None,
+        metrics_collector: Optional[MetricsCollector] = None,
     ) -> None:
 
         super(Consumer, self).__init__(
@@ -130,6 +132,9 @@ class Consumer(Base):
         self._child_shards = set()  # Track shards that are children
         self._exhausted_parents = set()  # Track parent shards that are fully consumed
         self._deallocated_shards: set = set()  # Shards already deallocated (skip stale sentinels)
+
+        # Metrics collector
+        self.metrics = metrics_collector if metrics_collector else get_metrics_collector()
 
     def __aiter__(self) -> AsyncIterator[Any]:
         return self
@@ -277,15 +282,33 @@ class Consumer(Base):
                     result = shard["fetch"].result()
 
                     if not result:
+                        # Emit queue gauge so backpressure stays observable while
+                        # get_records is failing/retrying (otherwise it freezes at
+                        # the last successful fetch's value).
+                        self.metrics.gauge(
+                            MetricType.CONSUMER_QUEUE_SIZE,
+                            self.queue.qsize(),
+                            {"stream_name": self.stream_name},
+                        )
                         shard["fetch"] = None
                         continue
 
                     records = result["Records"]
 
+                    millis_behind = result.get("MillisBehindLatest")
+                    if millis_behind is not None:
+                        self.metrics.gauge(
+                            MetricType.CONSUMER_ITERATOR_AGE,
+                            millis_behind,
+                            {"stream_name": self.stream_name, "shard_id": shard["ShardId"]},
+                        )
+
                     if records:
                         log.debug("Shard {} got {} records".format(shard["ShardId"], len(records)))
 
                         total_items = 0
+                        enqueued_rows = 0
+                        enqueued_bytes = 0
                         last_enqueued_sequence = None
                         for row in result["Records"]:
                             item_count = 0
@@ -304,7 +327,14 @@ class Consumer(Base):
                                 break
                             if item_count > 0:
                                 last_enqueued_sequence = row["SequenceNumber"]
+                                enqueued_rows += 1
+                                enqueued_bytes += len(row["Data"])
                             total_items += item_count
+
+                        if enqueued_rows:
+                            shard_labels = {"stream_name": self.stream_name, "shard_id": shard["ShardId"]}
+                            self.metrics.increment(MetricType.CONSUMER_RECORDS_RECEIVED, enqueued_rows, shard_labels)
+                            self.metrics.increment(MetricType.CONSUMER_BYTES_RECEIVED, enqueued_bytes, shard_labels)
 
                         # Get approx minutes behind..
                         last_arrival = records[-1].get("ApproximateArrivalTimestamp")
@@ -358,6 +388,12 @@ class Consumer(Base):
                         )
                         await asyncio.sleep(self.sleep_time_no_records)
 
+                    self.metrics.gauge(
+                        MetricType.CONSUMER_QUEUE_SIZE,
+                        self.queue.qsize(),
+                        {"stream_name": self.stream_name},
+                    )
+
                     if not result["NextShardIterator"]:
                         # Shard is closed - this is normal during resharding
                         shard_id = shard["ShardId"]
@@ -383,7 +419,7 @@ class Consumer(Base):
                             # Flush interval-buffered checkpoint for this shard
                             if shard_id in self._pending_checkpoints:
                                 seq = self._pending_checkpoints[shard_id]
-                                await self.checkpointer.checkpoint(shard_id, seq)
+                                await self._checkpoint_with_metrics(shard_id, seq)
                                 if self._pending_checkpoints.get(shard_id) == seq:
                                     del self._pending_checkpoints[shard_id]
 
@@ -435,13 +471,28 @@ class Consumer(Base):
                 return result
 
             except ClientConnectionError:
+                self.metrics.increment(
+                    MetricType.CONSUMER_ERRORS,
+                    1,
+                    {"stream_name": self.stream_name, "shard_id": shard["ShardId"], "error_type": "connection"},
+                )
                 await self.get_conn()
             except TimeoutError as e:
+                self.metrics.increment(
+                    MetricType.CONSUMER_ERRORS,
+                    1,
+                    {"stream_name": self.stream_name, "shard_id": shard["ShardId"], "error_type": "timeout"},
+                )
                 log.warning("Timeout {}. sleeping..".format(e))
                 await asyncio.sleep(3)
 
             except ClientError as e:
                 code = e.response["Error"]["Code"]
+                self.metrics.increment(
+                    MetricType.CONSUMER_ERRORS,
+                    1,
+                    {"stream_name": self.stream_name, "shard_id": shard["ShardId"], "error_type": code},
+                )
                 if code == "ProvisionedThroughputExceededException":
                     log.warning("{} hit ProvisionedThroughputExceededException".format(shard["ShardId"]))
                     shard["stats"].throttled()
@@ -485,6 +536,11 @@ class Consumer(Base):
                     await asyncio.sleep(3)
 
             except Exception as e:
+                self.metrics.increment(
+                    MetricType.CONSUMER_ERRORS,
+                    1,
+                    {"stream_name": self.stream_name, "shard_id": shard["ShardId"], "error_type": "unknown"},
+                )
                 log.warning("Unknown error {}. sleeping..".format(e))
                 await asyncio.sleep(3)
 
@@ -552,6 +608,7 @@ class Consumer(Base):
                 new_child_shards = discovered_shards & self._child_shards
                 if new_child_shards:
                     log.info(f"Resharding detected: new child shards {new_child_shards}")
+                    self.metrics.increment(MetricType.STREAM_RESHARDING_EVENTS, 1, {"stream_name": self.stream_name})
 
             # Find shards that no longer exist (though this is rare)
             missing_shards = current_shard_ids - new_shard_ids
@@ -586,6 +643,13 @@ class Consumer(Base):
             self._last_shard_refresh = current_time
 
             log.debug(f"Shard refresh complete. Total shards: {len(self.shards)}")
+
+            known_ids = {s["ShardId"] for s in self.shards}
+            closed_count = len(known_ids & self._closed_shards)
+            active_count = len(self.shards) - closed_count
+            stream_labels = {"stream_name": self.stream_name}
+            self.metrics.gauge(MetricType.STREAM_SHARDS_ACTIVE, active_count, stream_labels)
+            self.metrics.gauge(MetricType.STREAM_SHARDS_CLOSED, closed_count, stream_labels)
 
         except Exception as e:
             log.warning(f"Failed to refresh shards: {e}")
@@ -852,11 +916,21 @@ class Consumer(Base):
         """Non-blocking check whether consumer has obtained shard iterators."""
         return self._ready.is_set()
 
+    async def _checkpoint_with_metrics(self, shard_id: str, sequence: str) -> None:
+        """Call checkpointer.checkpoint and emit success/failure metrics."""
+        cp_labels = {"stream_name": self.stream_name, "shard_id": shard_id}
+        try:
+            await self.checkpointer.checkpoint(shard_id, sequence)
+            self.metrics.increment(MetricType.CONSUMER_CHECKPOINT_SUCCESS, 1, cp_labels)
+        except Exception:
+            self.metrics.increment(MetricType.CONSUMER_CHECKPOINT_FAILURE, 1, cp_labels)
+            raise
+
     async def _maybe_checkpoint(self, shard_id: str, sequence: str):
         """Commit a checkpoint, either immediately or via interval buffer."""
         if self.checkpoint_interval is None:
             # No debouncing — checkpoint immediately
-            await self.checkpointer.checkpoint(shard_id, sequence)
+            await self._checkpoint_with_metrics(shard_id, sequence)
             return
 
         # Buffer for background flush
@@ -891,7 +965,7 @@ class Consumer(Base):
             seq = self._pending_checkpoints.get(shard_id)
             if seq is None:
                 continue
-            await self.checkpointer.checkpoint(shard_id, seq)
+            await self._checkpoint_with_metrics(shard_id, seq)
             # Only delete if the value hasn't been superseded during the await
             if self._pending_checkpoints.get(shard_id) == seq:
                 del self._pending_checkpoints[shard_id]

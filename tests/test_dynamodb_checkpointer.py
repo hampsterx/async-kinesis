@@ -308,14 +308,8 @@ class TestDynamoDBCheckPointer:
         await checkpointer.manual_checkpoint()
 
         assert mock_dynamodb["table"].update_item.called
-        assert (
-            collector.counters["consumer_checkpoint_success_total{shard_id=shard-001,stream_name=test-stream}"]
-            == 1
-        )
-        assert (
-            collector.counters["consumer_checkpoint_success_total{shard_id=shard-002,stream_name=test-stream}"]
-            == 1
-        )
+        assert collector.counters["consumer_checkpoint_success_total{shard_id=shard-001,stream_name=test-stream}"] == 1
+        assert collector.counters["consumer_checkpoint_success_total{shard_id=shard-002,stream_name=test-stream}"] == 1
 
     @pytest.mark.asyncio
     async def test_checkpoint_failure_emits_metric(self, mock_dynamodb):
@@ -334,10 +328,7 @@ class TestDynamoDBCheckPointer:
         with pytest.raises(Exception, match="does not own it"):
             await checkpointer._checkpoint("shard-001", "seq-123")
 
-        assert (
-            collector.counters["consumer_checkpoint_failure_total{shard_id=shard-001,stream_name=test-stream}"]
-            == 1
-        )
+        assert collector.counters["consumer_checkpoint_failure_total{shard_id=shard-001,stream_name=test-stream}"] == 1
         assert not any(k.startswith("consumer_checkpoint_success_") for k in collector.counters)
 
     @pytest.mark.asyncio

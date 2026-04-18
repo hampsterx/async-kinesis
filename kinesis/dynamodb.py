@@ -256,9 +256,7 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
 
                 except ClientError as e:
                     if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                        raise Exception(
-                            f"{self.get_ref()} tried to checkpoint {shard_id} but does not own it"
-                        ) from e
+                        raise Exception(f"{self.get_ref()} tried to checkpoint {shard_id} but does not own it") from e
                     else:
                         raise
         except Exception:

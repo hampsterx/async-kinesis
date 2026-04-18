@@ -300,9 +300,12 @@ class MockConsumer:
 
         self.stream_name = stream_name
         self.processor = processor if processor else JsonProcessor()
-        # Stored for parity with Consumer; MockConsumer does not emit metrics itself.
+        # Stored for parity with Consumer; MockConsumer does not emit metrics itself,
+        # but a bound checkpointer (e.g. MemoryCheckPointer) emits via bind_metrics.
         self.metrics = metrics_collector if metrics_collector else get_metrics_collector()
         self.checkpointer = checkpointer if checkpointer else MemoryCheckPointer()
+        if hasattr(self.checkpointer, "bind_metrics"):
+            self.checkpointer.bind_metrics(self.metrics, {"stream_name": self.stream_name})
         self.iterator_type = iterator_type
         self._create_stream = create_stream
         self._create_stream_shards = create_stream_shards

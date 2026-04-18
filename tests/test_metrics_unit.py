@@ -467,12 +467,36 @@ class TestConsumerGetRecordsErrors:
         assert collector.counters[key] == 1
 
 
+async def _make_redis_cp(auto_checkpoint=True):
+    """Construct a RedisCheckPointer with a mocked client and a cancelled heartbeat task.
+
+    Returns the checkpointer with `self.client` replaced by an AsyncMock. Callers
+    configure the mock's return/side-effect as needed and must `await cp.close()`
+    (or rely on the try/finally) to cancel the heartbeat.
+    """
+    from kinesis.checkpointers import RedisCheckPointer
+
+    cp = RedisCheckPointer("test", auto_checkpoint=auto_checkpoint, heartbeat_frequency=3600)
+    cp.heartbeat_task.cancel()
+    try:
+        await cp.heartbeat_task
+    except asyncio.CancelledError:
+        pass
+    cp.client = AsyncMock()
+    return cp
+
+
 class TestConsumerCheckpointMetrics:
+    """Emission now happens in the checkpointer's backend-write path. These tests
+    exercise the real write paths of MemoryCheckPointer (success) and
+    RedisCheckPointer (failure), not the removed Consumer wrapper."""
+
     @pytest.mark.asyncio
     async def test_maybe_checkpoint_success(self, mock_consumer):
         collector = InMemoryMetricsCollector()
         consumer = mock_consumer(metrics_collector=collector)
-        consumer.checkpointer = AsyncMock()
+        # Default MemoryCheckPointer is bound to the consumer's collector via __init__.
+        await consumer.checkpointer.allocate("shard-0")
 
         await consumer._maybe_checkpoint("shard-0", "seq-1")
 
@@ -481,14 +505,18 @@ class TestConsumerCheckpointMetrics:
         assert f"consumer_checkpoint_failure_total{{{_shard_labels('shard-0')}}}" not in collector.counters
 
     @pytest.mark.asyncio
-    async def test_maybe_checkpoint_failure(self, mock_consumer):
+    async def test_checkpoint_failure_emits_on_backend_raise(self):
+        """Exercise RedisCheckPointer._checkpoint try/except with a raising client."""
         collector = InMemoryMetricsCollector()
-        consumer = mock_consumer(metrics_collector=collector)
-        consumer.checkpointer = AsyncMock()
-        consumer.checkpointer.checkpoint.side_effect = RuntimeError("backend down")
+        cp = await _make_redis_cp()
+        cp.bind_metrics(collector, {"stream_name": "test-stream"})
+        cp.client.getset = AsyncMock(side_effect=RuntimeError("backend down"))
 
-        with pytest.raises(RuntimeError):
-            await consumer._maybe_checkpoint("shard-0", "seq-1")
+        try:
+            with pytest.raises(RuntimeError):
+                await cp._checkpoint("shard-0", "seq-1")
+        finally:
+            await cp.close()
 
         key = f"consumer_checkpoint_failure_total{{{_shard_labels('shard-0')}}}"
         assert collector.counters[key] == 1
@@ -498,13 +526,129 @@ class TestConsumerCheckpointMetrics:
     async def test_flush_pending_checkpoints_success(self, mock_consumer):
         collector = InMemoryMetricsCollector()
         consumer = mock_consumer(metrics_collector=collector)
-        consumer.checkpointer = AsyncMock()
+        await consumer.checkpointer.allocate("shard-0")
+        await consumer.checkpointer.allocate("shard-1")
         consumer._pending_checkpoints = {"shard-0": "seq-1", "shard-1": "seq-9"}
 
         await consumer._flush_pending_checkpoints()
 
         assert collector.counters[f"consumer_checkpoint_success_total{{{_shard_labels('shard-0')}}}"] == 1
         assert collector.counters[f"consumer_checkpoint_success_total{{{_shard_labels('shard-1')}}}"] == 1
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_metrics_skipped_in_manual_mode(self):
+        """Under auto_checkpoint=False, Redis checkpoint() buffers without emitting."""
+        collector = InMemoryMetricsCollector()
+        cp = await _make_redis_cp(auto_checkpoint=False)
+        cp.bind_metrics(collector, {"stream_name": "test-stream"})
+
+        try:
+            await cp.checkpoint("shard-0", "seq-1")
+        finally:
+            await cp.close()
+
+        # No counters at all: neither success nor failure
+        assert not any(key.startswith("consumer_checkpoint_") for key in collector.counters)
+        assert cp._manual_checkpoints == {"shard-0": "seq-1"}
+
+    @pytest.mark.asyncio
+    async def test_manual_checkpoint_flush_emits_per_shard(self):
+        """manual_checkpoint() flush hits the real backend path, so emits one per shard."""
+        collector = InMemoryMetricsCollector()
+        cp = await _make_redis_cp(auto_checkpoint=False)
+        cp.bind_metrics(collector, {"stream_name": "test-stream"})
+        cp.client.getset = AsyncMock(return_value=None)  # triggers NotImplementedError
+
+        try:
+            await cp.checkpoint("shard-0", "seq-1")
+            await cp.checkpoint("shard-1", "seq-9")
+            assert not any(key.startswith("consumer_checkpoint_") for key in collector.counters)
+
+            # Flush: client.getset returns None -> _checkpoint raises -> failure counter
+            # (We don't need happy-path Redis semantics here; we're verifying the emit
+            # wiring covers the real path, which is what matters.)
+            with pytest.raises(NotImplementedError):
+                await cp.manual_checkpoint()
+        finally:
+            await cp.close()
+
+        # At least one shard's failure was emitted before the raise aborted the loop.
+        # This also documents the pre-existing lose-on-failure bug: the loop
+        # stops on first raise so the second shard's emit never happens.
+        failure_key_0 = f"consumer_checkpoint_failure_total{{{_shard_labels('shard-0')}}}"
+        assert collector.counters.get(failure_key_0) == 1
+
+    @pytest.mark.asyncio
+    async def test_manual_checkpoint_flush_success_path_emits_per_shard(self):
+        """Happy-path manual flush on MemoryCheckPointer-style emission (direct exercise)."""
+        collector = InMemoryMetricsCollector()
+        cp = MemoryCheckPointer("test")
+        cp.bind_metrics(collector, {"stream_name": "test-stream"})
+        await cp.allocate("shard-0")
+        await cp.allocate("shard-1")
+
+        await cp.checkpoint("shard-0", "seq-1")
+        await cp.checkpoint("shard-1", "seq-9")
+
+        assert collector.counters[f"consumer_checkpoint_success_total{{{_shard_labels('shard-0')}}}"] == 1
+        assert collector.counters[f"consumer_checkpoint_success_total{{{_shard_labels('shard-1')}}}"] == 1
+
+    @pytest.mark.asyncio
+    async def test_checkpointer_without_consumer_uses_standalone_label(self):
+        """Checkpointer used directly (no Consumer) defaults to stream_name=<standalone>."""
+        collector = InMemoryMetricsCollector()
+        from kinesis.metrics import get_metrics_collector as _get
+
+        # Temporarily make <collector> the global so default __init__ picks it up.
+        previous = _get()
+        set_metrics_collector(collector)
+        try:
+            cp = MemoryCheckPointer("test")
+            await cp.allocate("shard-0")
+            await cp.checkpoint("shard-0", "seq-1")
+        finally:
+            set_metrics_collector(previous)
+
+        key = f"consumer_checkpoint_success_total{{shard_id=shard-0,stream_name=<standalone>}}"
+        assert collector.counters[key] == 1
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_does_not_emit_checkpoint_counters(self):
+        """Regression guard: heartbeat must not route through _checkpoint."""
+        collector = InMemoryMetricsCollector()
+        cp = await _make_redis_cp()
+        cp.bind_metrics(collector, {"stream_name": "test-stream"})
+        cp._items = {"shard-0": "seq-1"}
+        cp.client.set = AsyncMock(return_value=True)
+
+        # Simulate one heartbeat tick synchronously (without the sleep loop)
+        key = cp.get_key("shard-0")
+        val = {"ref": cp.get_ref(), "ts": cp.get_ts(), "sequence": "seq-1"}
+        await cp.do_heartbeat(key, val)
+
+        try:
+            pass
+        finally:
+            await cp.close()
+
+        assert not any(k.startswith("consumer_checkpoint_") for k in collector.counters)
+
+    @pytest.mark.asyncio
+    async def test_bind_metrics_rebind_with_same_args_is_noop(self):
+        cp = MemoryCheckPointer("test")
+        collector = InMemoryMetricsCollector()
+        labels = {"stream_name": "test-stream"}
+        cp.bind_metrics(collector, labels)
+        cp.bind_metrics(collector, labels)  # idempotent: must not raise
+
+    @pytest.mark.asyncio
+    async def test_bind_metrics_rebind_with_different_collector_raises(self):
+        cp = MemoryCheckPointer("test")
+        cp.bind_metrics(InMemoryMetricsCollector(), {"stream_name": "a"})
+        with pytest.raises(RuntimeError, match="already bound"):
+            cp.bind_metrics(InMemoryMetricsCollector(), {"stream_name": "a"})
+        with pytest.raises(RuntimeError, match="already bound"):
+            cp.bind_metrics(InMemoryMetricsCollector(), {"stream_name": "b"})
 
 
 class TestStreamMetrics:

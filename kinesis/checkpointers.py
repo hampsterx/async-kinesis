@@ -5,7 +5,11 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Protocol, Tuple, Union
 
+from .metrics import MetricsCollector, MetricType, get_metrics_collector
+
 log = logging.getLogger(__name__)
+
+STANDALONE_STREAM_LABEL = "<standalone>"
 
 
 class CheckPointer(Protocol):
@@ -72,12 +76,42 @@ class CheckPointer(Protocol):
         """
         ...
 
+    # NOTE: bind_metrics is intentionally NOT part of the Protocol. Adding it
+    # would break static type-checking for exotic user checkpointers. Consumer
+    # uses hasattr() to wire metrics only on implementations that provide it
+    # (which BaseCheckPointer and its subclasses do). Exotic checkpointers opt
+    # out of checkpoint-success/failure metrics; they can add bind_metrics if
+    # they want to participate.
+
 
 class BaseCheckPointer:
     def __init__(self, name: str = "", id: Optional[Union[str, int]] = None) -> None:
         self._id: Union[str, int] = id if id else os.getpid()
         self._name: str = name
         self._items: Dict[str, Any] = {}
+        self.metrics: MetricsCollector = get_metrics_collector()
+        self._metrics_labels: Dict[str, str] = {"stream_name": STANDALONE_STREAM_LABEL}
+        self._metrics_bound: bool = False
+
+    def bind_metrics(self, collector: MetricsCollector, labels: Dict[str, str]) -> None:
+        if self._metrics_bound:
+            if self.metrics is collector and self._metrics_labels == labels:
+                return
+            raise RuntimeError(
+                "Checkpointer already bound to a different metrics collector or labels. "
+                "Sharing a checkpointer across consumers is not supported."
+            )
+        self.metrics = collector
+        self._metrics_labels = dict(labels)
+        self._metrics_bound = True
+
+    def _emit_checkpoint_success(self, shard_id: str) -> None:
+        labels = {**self._metrics_labels, "shard_id": shard_id}
+        self.metrics.increment(MetricType.CONSUMER_CHECKPOINT_SUCCESS, 1, labels)
+
+    def _emit_checkpoint_failure(self, shard_id: str) -> None:
+        labels = {**self._metrics_labels, "shard_id": shard_id}
+        self.metrics.increment(MetricType.CONSUMER_CHECKPOINT_FAILURE, 1, labels)
 
     def get_id(self) -> Union[str, int]:
         return self._id
@@ -155,8 +189,13 @@ class MemoryCheckPointer(BaseCheckPointer):
         return True, self._items[shard_id]["sequence"]
 
     async def checkpoint(self, shard_id, sequence):
-        log.debug("{} checkpointed on {} @ {}".format(self.get_ref(), shard_id, sequence))
-        self._items[shard_id]["sequence"] = sequence
+        try:
+            log.debug("{} checkpointed on {} @ {}".format(self.get_ref(), shard_id, sequence))
+            self._items[shard_id]["sequence"] = sequence
+        except Exception:
+            self._emit_checkpoint_failure(shard_id)
+            raise
+        self._emit_checkpoint_success(shard_id)
 
 
 class RedisCheckPointer(BaseHeartbeatCheckPointer):
@@ -224,24 +263,30 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
             await self._checkpoint(shard_id, sequence)
 
     async def _checkpoint(self, shard_id, sequence):
+        try:
+            key = self.get_key(shard_id)
 
-        key = self.get_key(shard_id)
+            val = {"ref": self.get_ref(), "ts": self.get_ts(), "sequence": sequence}
 
-        val = {"ref": self.get_ref(), "ts": self.get_ts(), "sequence": sequence}
+            previous_val = await self.client.getset(key, json.dumps(val))
+            previous_val = json.loads(previous_val) if previous_val else None
 
-        previous_val = await self.client.getset(key, json.dumps(val))
-        previous_val = json.loads(previous_val) if previous_val else None
+            if not previous_val:
+                raise NotImplementedError(
+                    "{} checkpointed on {} but key did not exist?".format(self.get_ref(), shard_id)
+                )
 
-        if not previous_val:
-            raise NotImplementedError("{} checkpointed on {} but key did not exist?".format(self.get_ref(), shard_id))
+            if previous_val["ref"] != self.get_ref():
+                raise NotImplementedError(
+                    "{} checkpointed on {} but ref is different {}".format(self.get_ref(), shard_id, val["ref"])
+                )
 
-        if previous_val["ref"] != self.get_ref():
-            raise NotImplementedError(
-                "{} checkpointed on {} but ref is different {}".format(self.get_ref(), shard_id, val["ref"])
-            )
-
-        log.debug("{} checkpointed on {}@{}".format(self.get_ref(), shard_id, sequence))
-        self._items[shard_id] = sequence
+            log.debug("{} checkpointed on {}@{}".format(self.get_ref(), shard_id, sequence))
+            self._items[shard_id] = sequence
+        except Exception:
+            self._emit_checkpoint_failure(shard_id)
+            raise
+        self._emit_checkpoint_success(shard_id)
 
     async def deallocate(self, shard_id):
 

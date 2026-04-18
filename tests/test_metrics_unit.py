@@ -659,6 +659,19 @@ class TestConsumerCheckpointMetrics:
             cp.bind_metrics(InMemoryMetricsCollector(), {"shard_id": "shard-0"})
 
     @pytest.mark.asyncio
+    async def test_bind_metrics_missing_stream_name_raises_before_idempotent_rebind(self):
+        """Regression guard: the stream_name check must run before the
+        _metrics_bound short-circuit, so a malformed rebind can't slip past
+        the guard via the idempotent-same-args path."""
+        cp = MemoryCheckPointer("test")
+        collector = InMemoryMetricsCollector()
+        cp.bind_metrics(collector, {"stream_name": "test-stream"})  # first bind ok
+        with pytest.raises(ValueError, match="stream_name"):
+            cp.bind_metrics(collector, {})
+        with pytest.raises(ValueError, match="stream_name"):
+            cp.bind_metrics(collector, {"shard_id": "shard-0"})
+
+    @pytest.mark.asyncio
     async def test_prometheus_checkpoint_label_roundtrip(self):
         """End-to-end label-shape check: bind → emit → PrometheusCounter.labels()
         must succeed for both a real stream_name and the standalone sentinel.

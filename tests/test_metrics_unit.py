@@ -609,7 +609,7 @@ class TestConsumerCheckpointMetrics:
         finally:
             set_metrics_collector(previous)
 
-        key = f"consumer_checkpoint_success_total{{shard_id=shard-0,stream_name=<standalone>}}"
+        key = "consumer_checkpoint_success_total{shard_id=shard-0,stream_name=<standalone>}"
         assert collector.counters[key] == 1
 
     @pytest.mark.asyncio
@@ -649,6 +649,60 @@ class TestConsumerCheckpointMetrics:
             cp.bind_metrics(InMemoryMetricsCollector(), {"stream_name": "a"})
         with pytest.raises(RuntimeError, match="already bound"):
             cp.bind_metrics(InMemoryMetricsCollector(), {"stream_name": "b"})
+
+    @pytest.mark.asyncio
+    async def test_bind_metrics_without_stream_name_raises(self):
+        cp = MemoryCheckPointer("test")
+        with pytest.raises(ValueError, match="stream_name"):
+            cp.bind_metrics(InMemoryMetricsCollector(), {})
+        with pytest.raises(ValueError, match="stream_name"):
+            cp.bind_metrics(InMemoryMetricsCollector(), {"shard_id": "shard-0"})
+
+    @pytest.mark.asyncio
+    async def test_prometheus_checkpoint_label_roundtrip(self):
+        """End-to-end label-shape check: bind → emit → PrometheusCounter.labels()
+        must succeed for both a real stream_name and the standalone sentinel.
+
+        Regression guard: Prometheus registers labelnames=["stream_name","shard_id"]
+        (see kinesis/prometheus.py). If the checkpointer ever omits a label or adds
+        an unexpected one at emit time, prometheus_client raises and the test fails.
+        """
+        prometheus_client = pytest.importorskip("prometheus_client")
+        from kinesis import PrometheusMetricsCollector
+
+        registry = prometheus_client.CollectorRegistry()
+        collector = PrometheusMetricsCollector(registry=registry)
+
+        # Case 1: Consumer-wired stream label
+        cp1 = MemoryCheckPointer("test-wired")
+        cp1.bind_metrics(collector, {"stream_name": "my-stream"})
+        await cp1.allocate("shard-0")
+        await cp1.checkpoint("shard-0", "seq-1")
+
+        # Case 2: Standalone sentinel (no bind)
+        from kinesis.checkpointers import STANDALONE_STREAM_LABEL
+
+        previous = get_metrics_collector()
+        set_metrics_collector(collector)
+        try:
+            cp2 = MemoryCheckPointer("test-standalone")
+            await cp2.allocate("shard-1")
+            await cp2.checkpoint("shard-1", "seq-2")
+        finally:
+            set_metrics_collector(previous)
+
+        # Both label-shapes must be retrievable from the registry — proves
+        # prometheus_client accepted them without label-mismatch errors.
+        wired = registry.get_sample_value(
+            "async_kinesis_consumer_checkpoint_success_total",
+            {"stream_name": "my-stream", "shard_id": "shard-0"},
+        )
+        standalone = registry.get_sample_value(
+            "async_kinesis_consumer_checkpoint_success_total",
+            {"stream_name": STANDALONE_STREAM_LABEL, "shard_id": "shard-1"},
+        )
+        assert wired == 1.0
+        assert standalone == 1.0
 
 
 class TestStreamMetrics:

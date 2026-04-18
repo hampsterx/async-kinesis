@@ -19,6 +19,14 @@ class CheckPointer(Protocol):
     can resume from the correct position after a restart. They also provide
     shard-level locking so that multiple consumers don't process the same
     shard concurrently.
+
+    Metrics opt-in (optional): implementations that want to participate in
+    ``consumer_checkpoint_success_total`` / ``consumer_checkpoint_failure_total``
+    should also implement ``bind_metrics(collector, labels)`` and emit on their
+    real backend-write path (see ``BaseCheckPointer`` for the reference pattern).
+    The Consumer detects the method via ``hasattr`` and wires it at construction;
+    implementations without ``bind_metrics`` still work but produce no checkpoint
+    metrics.
     """
 
     async def allocate(self, shard_id: str) -> Tuple[bool, Optional[str]]:
@@ -94,6 +102,13 @@ class BaseCheckPointer:
         self._metrics_bound: bool = False
 
     def bind_metrics(self, collector: MetricsCollector, labels: Dict[str, str]) -> None:
+        # Fail fast: checkpoint metrics register labelnames=["stream_name", "shard_id"]
+        # (see PrometheusMetricsCollector). shard_id is added at emit time, so the
+        # caller must supply stream_name here. Without this check, a malformed bind
+        # would only surface later when Prometheus rejects the labelset at first emit,
+        # far from the wiring site.
+        if "stream_name" not in labels:
+            raise ValueError("bind_metrics requires a 'stream_name' label " f"(got keys: {sorted(labels.keys())!r})")
         if self._metrics_bound:
             if self.metrics is collector and self._metrics_labels == labels:
                 return

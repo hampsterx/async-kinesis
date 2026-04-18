@@ -221,48 +221,52 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
 
     async def _checkpoint(self, shard_id: str, sequence: str) -> None:
         """Internal checkpoint implementation."""
-        try:
-            if not self._initialized:
-                await self._initialize()
+        if not self._initialized:
+            await self._initialize()
 
-            key = self.get_key(shard_id)
+        key = self.get_key(shard_id)
 
-            async with self._session.resource("dynamodb", region_name=self.region_name) as dynamodb:
-                table = await dynamodb.Table(self.table_name)
+        async with self._session.resource("dynamodb", region_name=self.region_name) as dynamodb:
+            table = await dynamodb.Table(self.table_name)
 
-                try:
-                    # Update sequence number only if we own the shard
-                    await table.update_item(
-                        Key={"shard_id": key},
-                        UpdateExpression="SET #seq = :seq, #ts = :ts, #ttl = :ttl",
-                        ExpressionAttributeNames={
-                            "#seq": "sequence",
-                            "#ts": "ts",
-                            "#ttl": "ttl",
-                            "#ref": "ref",
-                        },
-                        ExpressionAttributeValues={
-                            ":seq": sequence,
-                            ":ts": self.get_ts(),
-                            ":ttl": self.get_ttl(),
-                            ":expected_ref": self.get_ref(),
-                        },
-                        ConditionExpression="#ref = :expected_ref",
-                        ReturnValues="ALL_NEW",
-                    )
+            # Emission is scoped to the update_item call only. Init errors and
+            # resource context enter/exit failures (e.g. aiobotocore teardown
+            # AssertionError documented in base.py) are not counted as checkpoint
+            # failures: init is an app-wide fault, and teardown happens after a
+            # successful write so the durable state is already persisted.
+            try:
+                # Update sequence number only if we own the shard
+                await table.update_item(
+                    Key={"shard_id": key},
+                    UpdateExpression="SET #seq = :seq, #ts = :ts, #ttl = :ttl",
+                    ExpressionAttributeNames={
+                        "#seq": "sequence",
+                        "#ts": "ts",
+                        "#ttl": "ttl",
+                        "#ref": "ref",
+                    },
+                    ExpressionAttributeValues={
+                        ":seq": sequence,
+                        ":ts": self.get_ts(),
+                        ":ttl": self.get_ttl(),
+                        ":expected_ref": self.get_ref(),
+                    },
+                    ConditionExpression="#ref = :expected_ref",
+                    ReturnValues="ALL_NEW",
+                )
+            except ClientError as e:
+                self._emit_checkpoint_failure(shard_id)
+                if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                    raise Exception(f"{self.get_ref()} tried to checkpoint {shard_id} but does not own it") from e
+                else:
+                    raise
+            except Exception:
+                self._emit_checkpoint_failure(shard_id)
+                raise
 
-                    log.debug(f"{self.get_ref()} checkpointed on {shard_id}@{sequence}")
-                    self._items[shard_id] = sequence
-
-                except ClientError as e:
-                    if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                        raise Exception(f"{self.get_ref()} tried to checkpoint {shard_id} but does not own it") from e
-                    else:
-                        raise
-        except Exception:
-            self._emit_checkpoint_failure(shard_id)
-            raise
-        self._emit_checkpoint_success(shard_id)
+            log.debug(f"{self.get_ref()} checkpointed on {shard_id}@{sequence}")
+            self._items[shard_id] = sequence
+            self._emit_checkpoint_success(shard_id)
 
     async def deallocate(self, shard_id: str) -> None:
         """Deallocate a shard."""

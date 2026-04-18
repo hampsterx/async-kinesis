@@ -12,9 +12,27 @@
   label set unchanged (`{stream_name, shard_id}`); checkpointers used without a
   Consumer appear under a new sentinel `stream_name="<standalone>"`.
 
+### Backwards compatibility
+- **Shared checkpointer across Consumers**: reusing a single `CheckPointer`
+  instance across multiple `Consumer`s with different `stream_name` or different
+  `metrics_collector` now raises `RuntimeError` at the second Consumer's
+  construction (from `BaseCheckPointer.bind_metrics`). Idempotent rebind with
+  matching args is still a no-op. If you relied on sharing a checkpointer, give
+  each Consumer its own instance.
+- **Metric cadence in manual mode**: `consumer_checkpoint_success_total` no
+  longer ticks on every per-shard `checkpoint()` call under `auto_checkpoint=False`.
+  It stays flat between `manual_checkpoint()` flushes and spikes in bursts on
+  flush. Dashboards using `rate(consumer_checkpoint_success_total[5m])` will
+  show quiet periods followed by spikes, which is the correct signal (durable
+  writes actually happen in bursts).
+- **New sentinel label value**: checkpointers constructed without a Consumer
+  default to `stream_name="<standalone>"` until `bind_metrics` is called.
+  Dashboards filtering on specific stream names are unaffected; wildcard
+  queries will see the new value.
+
 ### Internal
-- Removed `Consumer._checkpoint_with_metrics` (private, added in v2.5.0 four days
-  prior). Callers invoke `checkpointer.checkpoint()` directly; emission now lives
+- Removed `Consumer._checkpoint_with_metrics` (private, added in v2.5.0).
+  Callers invoke `checkpointer.checkpoint()` directly; emission now lives
   on `BaseCheckPointer` via `_emit_checkpoint_success` / `_emit_checkpoint_failure`.
 - Added `BaseCheckPointer.bind_metrics(collector, labels)` so Consumer can inject
   its `stream_name` label into the checkpointer's emissions at construction time.

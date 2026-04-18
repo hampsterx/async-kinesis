@@ -136,6 +136,11 @@ class Consumer(Base):
         # Metrics collector
         self.metrics = metrics_collector if metrics_collector else get_metrics_collector()
 
+        # Wire checkpointer to emit consumer_checkpoint_* counters with our stream_name.
+        # Optional: exotic user checkpointers conforming to the Protocol may not implement it.
+        if hasattr(self.checkpointer, "bind_metrics"):
+            self.checkpointer.bind_metrics(self.metrics, {"stream_name": self.stream_name})
+
     def __aiter__(self) -> AsyncIterator[Any]:
         return self
 
@@ -419,7 +424,7 @@ class Consumer(Base):
                             # Flush interval-buffered checkpoint for this shard
                             if shard_id in self._pending_checkpoints:
                                 seq = self._pending_checkpoints[shard_id]
-                                await self._checkpoint_with_metrics(shard_id, seq)
+                                await self.checkpointer.checkpoint(shard_id, seq)
                                 if self._pending_checkpoints.get(shard_id) == seq:
                                     del self._pending_checkpoints[shard_id]
 
@@ -916,21 +921,11 @@ class Consumer(Base):
         """Non-blocking check whether consumer has obtained shard iterators."""
         return self._ready.is_set()
 
-    async def _checkpoint_with_metrics(self, shard_id: str, sequence: str) -> None:
-        """Call checkpointer.checkpoint and emit success/failure metrics."""
-        cp_labels = {"stream_name": self.stream_name, "shard_id": shard_id}
-        try:
-            await self.checkpointer.checkpoint(shard_id, sequence)
-            self.metrics.increment(MetricType.CONSUMER_CHECKPOINT_SUCCESS, 1, cp_labels)
-        except Exception:
-            self.metrics.increment(MetricType.CONSUMER_CHECKPOINT_FAILURE, 1, cp_labels)
-            raise
-
     async def _maybe_checkpoint(self, shard_id: str, sequence: str):
         """Commit a checkpoint, either immediately or via interval buffer."""
         if self.checkpoint_interval is None:
             # No debouncing — checkpoint immediately
-            await self._checkpoint_with_metrics(shard_id, sequence)
+            await self.checkpointer.checkpoint(shard_id, sequence)
             return
 
         # Buffer for background flush
@@ -965,7 +960,7 @@ class Consumer(Base):
             seq = self._pending_checkpoints.get(shard_id)
             if seq is None:
                 continue
-            await self._checkpoint_with_metrics(shard_id, seq)
+            await self.checkpointer.checkpoint(shard_id, seq)
             # Only delete if the value hasn't been superseded during the await
             if self._pending_checkpoints.get(shard_id) == seq:
                 del self._pending_checkpoints[shard_id]

@@ -229,6 +229,11 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
         async with self._session.resource("dynamodb", region_name=self.region_name) as dynamodb:
             table = await dynamodb.Table(self.table_name)
 
+            # Emission is scoped to the update_item call only. Init errors and
+            # resource context enter/exit failures (e.g. aiobotocore teardown
+            # AssertionError documented in base.py) are not counted as checkpoint
+            # failures: init is an app-wide fault, and teardown happens after a
+            # successful write so the durable state is already persisted.
             try:
                 # Update sequence number only if we own the shard
                 await table.update_item(
@@ -249,15 +254,19 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
                     ConditionExpression="#ref = :expected_ref",
                     ReturnValues="ALL_NEW",
                 )
-
-                log.debug(f"{self.get_ref()} checkpointed on {shard_id}@{sequence}")
-                self._items[shard_id] = sequence
-
             except ClientError as e:
+                self._emit_checkpoint_failure(shard_id)
                 if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
                     raise Exception(f"{self.get_ref()} tried to checkpoint {shard_id} but does not own it") from e
                 else:
                     raise
+            except Exception:
+                self._emit_checkpoint_failure(shard_id)
+                raise
+
+            log.debug(f"{self.get_ref()} checkpointed on {shard_id}@{sequence}")
+            self._items[shard_id] = sequence
+            self._emit_checkpoint_success(shard_id)
 
     async def deallocate(self, shard_id: str) -> None:
         """Deallocate a shard."""

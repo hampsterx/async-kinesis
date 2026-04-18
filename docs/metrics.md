@@ -115,14 +115,18 @@ async with Producer(stream_name="my-stream") as producer:
 | `consumer_records_received_total` | Counter | Records successfully enqueued to the consumer queue (raw Kinesis rows, pre-deaggregation). Rows dropped mid-batch by a queue timeout are not counted. | `stream_name`, `shard_id` |
 | `consumer_bytes_received_total` | Counter | Bytes of `Data` for rows counted by `consumer_records_received_total`. | `stream_name`, `shard_id` |
 | `consumer_errors_total` | Counter | Errors in `get_records`. `error_type` is `connection`, `timeout`, `unknown`, or the raw AWS error code (e.g. `ProvisionedThroughputExceededException`, `ExpiredIteratorException`, `InternalFailure`). | `stream_name`, `shard_id`, `error_type` |
-| `consumer_checkpoint_success_total` | Counter | Checkpointer backend calls that returned successfully. | `stream_name`, `shard_id` |
-| `consumer_checkpoint_failure_total` | Counter | Checkpointer backend calls that raised. | `stream_name`, `shard_id` |
+| `consumer_checkpoint_success_total` | Counter | Durable backend-persist operations that returned successfully. Under `auto_checkpoint=False`, only increments when `checkpointer.manual_checkpoint()` flushes, not on every per-shard checkpoint call (those buffer without writing). | `stream_name`, `shard_id` |
+| `consumer_checkpoint_failure_total` | Counter | Durable backend-persist operations that raised. Same manual-mode caveat as success. | `stream_name`, `shard_id` |
 | `consumer_iterator_age_milliseconds` | Gauge | `MillisBehindLatest` from the last `GetRecords` response. Only emitted when the backend populates the field. | `stream_name`, `shard_id` |
 | `consumer_queue_size` | Gauge | Consumer internal queue depth after the enqueue pass. | `stream_name` |
 | `consumer_lag_records` | Gauge | *Planned* - not currently emitted. | `stream_name`, `shard_id` |
 | `consumer_processing_time_seconds` | Histogram | *Planned* - not currently emitted. | `stream_name`, `shard_id` |
 
 `consumer_errors_total` uses raw AWS error codes rather than semantic labels. `ProvisionedThroughputExceededException` and `ExpiredIteratorException` are recovery events, not failures; alert on `connection`, `unknown`, and `InternalFailure` instead.
+
+**Checkpoint counter semantics**: `consumer_checkpoint_*` counters track the underlying backend write (Redis `SET`, DynamoDB `UpdateItem`, memory dict write), not the Consumer's per-iteration checkpoint call. Under `auto_checkpoint=False` (Redis/DynamoDB manual mode), these counters stay flat between `manual_checkpoint()` flushes and then increment in bursts when the user flushes. Dashboards using `rate(consumer_checkpoint_success_total[5m])` will show quiet periods followed by spikes, which is the correct signal: durable writes actually happen in bursts.
+
+**Standalone usage**: A checkpointer used without a Consumer (e.g. a worker orchestrating its own `manual_checkpoint()`) defaults to `stream_name="<standalone>"` until `checkpointer.bind_metrics(collector, {"stream_name": "..."})` is called. The sentinel is visible in dashboards; use it to distinguish consumer-wired emissions from direct-use ones.
 
 ### Stream Metrics
 

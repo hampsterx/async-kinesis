@@ -288,20 +288,48 @@ class TestDynamoDBCheckPointer:
 
     @pytest.mark.asyncio
     async def test_manual_checkpoint(self, mock_dynamodb):
-        """Test manual checkpointing mode."""
+        """Test manual checkpointing mode + metrics emission on backend write."""
+        from kinesis import InMemoryMetricsCollector
+
+        collector = InMemoryMetricsCollector()
         checkpointer = DynamoDBCheckPointer("test-app", auto_checkpoint=False)
+        checkpointer.bind_metrics(collector, {"stream_name": "test-stream"})
         await checkpointer._initialize()
 
-        # Manual checkpoint should not call DynamoDB immediately
+        # Manual mode: checkpoint() buffers, does NOT call DynamoDB or emit metrics.
         await checkpointer.checkpoint("shard-001", "seq-123")
+        await checkpointer.checkpoint("shard-002", "seq-456")
 
         assert not mock_dynamodb["table"].update_item.called
-        assert checkpointer._manual_checkpoints["shard-001"] == "seq-123"
+        assert checkpointer._manual_checkpoints == {"shard-001": "seq-123", "shard-002": "seq-456"}
+        assert not any(k.startswith("consumer_checkpoint_") for k in collector.counters)
 
-        # Manual checkpoint should update DynamoDB
+        # manual_checkpoint() drives real backend writes and emits one success per shard.
         await checkpointer.manual_checkpoint()
 
         assert mock_dynamodb["table"].update_item.called
+        assert collector.counters["consumer_checkpoint_success_total{shard_id=shard-001,stream_name=test-stream}"] == 1
+        assert collector.counters["consumer_checkpoint_success_total{shard_id=shard-002,stream_name=test-stream}"] == 1
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_failure_emits_metric(self, mock_dynamodb):
+        """ConditionalCheckFailedException (lost ownership) counts as a failure."""
+        from kinesis import InMemoryMetricsCollector
+
+        collector = InMemoryMetricsCollector()
+        checkpointer = DynamoDBCheckPointer("test-app")
+        checkpointer.bind_metrics(collector, {"stream_name": "test-stream"})
+        await checkpointer._initialize()
+
+        mock_dynamodb["table"].update_item.side_effect = ClientError(
+            {"Error": {"Code": "ConditionalCheckFailedException"}}, "UpdateItem"
+        )
+
+        with pytest.raises(Exception, match="does not own it"):
+            await checkpointer._checkpoint("shard-001", "seq-123")
+
+        assert collector.counters["consumer_checkpoint_failure_total{shard_id=shard-001,stream_name=test-stream}"] == 1
+        assert not any(k.startswith("consumer_checkpoint_success_") for k in collector.counters)
 
     @pytest.mark.asyncio
     async def test_close(self, mock_dynamodb):

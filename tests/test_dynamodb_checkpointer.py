@@ -312,6 +312,36 @@ class TestDynamoDBCheckPointer:
         assert collector.counters["consumer_checkpoint_success_total{shard_id=shard-002,stream_name=test-stream}"] == 1
 
     @pytest.mark.asyncio
+    async def test_manual_checkpoint_retains_buffer_on_mid_loop_failure(self, mock_dynamodb):
+        """A mid-loop exception leaves the unflushed shards in the buffer so
+        the caller can retry on the next manual_checkpoint() call."""
+        checkpointer = DynamoDBCheckPointer("test-app", auto_checkpoint=False)
+        await checkpointer._initialize()
+
+        await checkpointer.checkpoint("shard-001", "seq-123")
+        await checkpointer.checkpoint("shard-002", "seq-456")
+
+        # First update_item succeeds, second raises a transient backend error.
+        mock_dynamodb["table"].update_item.side_effect = [
+            {},
+            RuntimeError("backend flake"),
+        ]
+
+        with pytest.raises(RuntimeError, match="backend flake"):
+            await checkpointer.manual_checkpoint()
+
+        # shard-001 was popped on success, shard-002 raised before pop and stays
+        # buffered for retry. If the clear-before-iterate bug regressed, both
+        # would have been dropped and this would fail.
+        assert checkpointer._manual_checkpoints == {"shard-002": "seq-456"}
+
+        # A subsequent successful flush drains the remaining entry.
+        mock_dynamodb["table"].update_item.side_effect = None
+        mock_dynamodb["table"].update_item.return_value = {}
+        await checkpointer.manual_checkpoint()
+        assert checkpointer._manual_checkpoints == {}
+
+    @pytest.mark.asyncio
     async def test_checkpoint_failure_emits_metric(self, mock_dynamodb):
         """ConditionalCheckFailedException (lost ownership) counts as a failure."""
         from kinesis import InMemoryMetricsCollector

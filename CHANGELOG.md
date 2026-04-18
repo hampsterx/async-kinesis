@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Fixed
+- `RedisCheckPointer.manual_checkpoint()` and `DynamoDBCheckPointer.manual_checkpoint()`
+  no longer drop buffered checkpoints on a mid-loop exception. Previously, both
+  cleared `_manual_checkpoints` before iterating, so if the backend raised for
+  shard N, the entries for shards N+1..end were evicted and never retried.
+  Shards are now popped individually after a successful backend write, so a
+  raise leaves the unflushed remainder buffered for the next flush. The shard
+  that tripped also stays buffered (it was not successfully persisted), so
+  callers that retry will re-attempt it alongside the rest. Fixes
+  [#76](https://github.com/hampsterx/async-kinesis/issues/76).
 - `consumer_checkpoint_success_total` / `_failure_total` now count actual backend
   persist operations. Previously, under `auto_checkpoint=False` (Redis / DynamoDB
   manual mode), the consumer-side wrapper incremented success on every

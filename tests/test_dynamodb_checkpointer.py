@@ -447,3 +447,88 @@ class TestDynamoDBCheckPointer:
         assert sequence is None
         # Verify get_item was called 3 times (max retries)
         assert mock_dynamodb["table"].get_item.call_count == 3
+
+    # ------------------------------------------------------------------
+    # endpoint_url propagation regression tests
+    #
+    # Historically, endpoint_url was only honoured during _initialize() (table
+    # discovery). Every subsequent per-operation session.resource / session.client
+    # call bypassed it and silently hit real AWS, breaking LocalStack / DynamoDB
+    # Local based dev and testing for any flow beyond startup. These tests assert
+    # that endpoint_url is threaded through each of the 5 remaining call sites.
+    # ------------------------------------------------------------------
+
+    ENDPOINT_URL = "http://localhost:4566"
+
+    def _assert_endpoint_url_in_last_resource_call(self, mock_session):
+        """session.resource(...) most recent call must include endpoint_url kwarg."""
+        assert mock_session.resource.called, "session.resource was not called"
+        _args, kwargs = mock_session.resource.call_args
+        assert (
+            kwargs.get("endpoint_url") == self.ENDPOINT_URL
+        ), f"expected endpoint_url={self.ENDPOINT_URL!r}, got kwargs={kwargs!r}"
+
+    def _assert_endpoint_url_in_last_client_call(self, mock_session):
+        """session.client(...) most recent call must include endpoint_url kwarg."""
+        assert mock_session.client.called, "session.client was not called"
+        _args, kwargs = mock_session.client.call_args
+        assert (
+            kwargs.get("endpoint_url") == self.ENDPOINT_URL
+        ), f"expected endpoint_url={self.ENDPOINT_URL!r}, got kwargs={kwargs!r}"
+
+    @pytest.mark.asyncio
+    async def test_endpoint_url_propagates_to_do_heartbeat(self, mock_dynamodb):
+        checkpointer = DynamoDBCheckPointer("test-app", endpoint_url=self.ENDPOINT_URL)
+        await checkpointer._initialize()
+        mock_dynamodb["session"].resource.reset_mock()
+
+        await checkpointer.do_heartbeat("shard-001", {"ref": "x", "ts": 1, "sequence": "s"})
+
+        self._assert_endpoint_url_in_last_resource_call(mock_dynamodb["session"])
+
+    @pytest.mark.asyncio
+    async def test_endpoint_url_propagates_to_checkpoint(self, mock_dynamodb):
+        checkpointer = DynamoDBCheckPointer("test-app", endpoint_url=self.ENDPOINT_URL)
+        await checkpointer._initialize()
+        mock_dynamodb["session"].resource.reset_mock()
+
+        mock_dynamodb["table"].update_item.return_value = {}
+        await checkpointer._checkpoint("shard-001", "seq-123")
+
+        self._assert_endpoint_url_in_last_resource_call(mock_dynamodb["session"])
+
+    @pytest.mark.asyncio
+    async def test_endpoint_url_propagates_to_deallocate(self, mock_dynamodb):
+        checkpointer = DynamoDBCheckPointer("test-app", endpoint_url=self.ENDPOINT_URL)
+        await checkpointer._initialize()
+        checkpointer._items["shard-001"] = "seq-123"
+        mock_dynamodb["session"].resource.reset_mock()
+
+        mock_dynamodb["table"].update_item.return_value = {}
+        await checkpointer.deallocate("shard-001")
+
+        self._assert_endpoint_url_in_last_resource_call(mock_dynamodb["session"])
+
+    @pytest.mark.asyncio
+    async def test_endpoint_url_propagates_to_allocate(self, mock_dynamodb):
+        checkpointer = DynamoDBCheckPointer("test-app", endpoint_url=self.ENDPOINT_URL)
+        await checkpointer._initialize()
+        mock_dynamodb["session"].resource.reset_mock()
+
+        mock_dynamodb["table"].put_item.return_value = {}
+        await checkpointer.allocate("shard-001")
+
+        self._assert_endpoint_url_in_last_resource_call(mock_dynamodb["session"])
+
+    @pytest.mark.asyncio
+    async def test_endpoint_url_propagates_to_create_table_ttl(self, mock_dynamodb):
+        """_create_table's TTL update uses session.client; a missed kwarg would be
+        hidden by the ClientError-is-logged-as-warning fallback, so assert explicitly."""
+        mock_dynamodb["table"].load.side_effect = ClientError(
+            {"Error": {"Code": "ResourceNotFoundException"}}, "DescribeTable"
+        )
+
+        checkpointer = DynamoDBCheckPointer("test-app", endpoint_url=self.ENDPOINT_URL, create_table=True)
+        await checkpointer._initialize()
+
+        self._assert_endpoint_url_in_last_client_call(mock_dynamodb["session"])

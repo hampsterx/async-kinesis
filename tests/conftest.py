@@ -22,7 +22,7 @@ from kinesis.testing import kinesis_backend, kinesis_consumer, kinesis_producer,
 load_dotenv()
 
 # Test configuration
-ENDPOINT_URL = os.environ.get("ENDPOINT_URL", "http://localhost:4567")
+ENDPOINT_URL = os.environ.get("ENDPOINT_URL", "http://localhost:4566")
 TESTING_USE_AWS_KINESIS = os.environ.get("TESTING_USE_AWS_KINESIS", "0") == "1"
 
 # Set up Redis port for docker-compose
@@ -44,7 +44,7 @@ _docker_available_cache = None
 
 
 def _is_endpoint_reachable(url):
-    """Check if the Docker test endpoint (kinesalite/localstack) is reachable."""
+    """Check if the Docker test endpoint (Floci/LocalStack) is reachable."""
     try:
         parsed = urlparse(url)
         if not parsed.hostname or not parsed.port:
@@ -105,7 +105,7 @@ async def test_stream(random_stream_name, endpoint_url):
     yield random_stream_name
 
     # Cleanup would go here if needed
-    # For now, kinesalite doesn't persist between runs
+    # For now, Floci doesn't persist between runs
 
 
 @pytest_asyncio.fixture
@@ -161,7 +161,7 @@ def _make_mock_consumer(**kwargs):
     """Create a Consumer with mocked internals for unit testing (no Docker)."""
     defaults = {
         "stream_name": "test-stream",
-        "endpoint_url": "http://localhost:4567",
+        "endpoint_url": "http://localhost:4566",
         "skip_describe_stream": True,
         "idle_timeout": 0.5,
     }

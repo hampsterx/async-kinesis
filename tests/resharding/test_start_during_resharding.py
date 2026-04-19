@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 class StartDuringReshardingTest:
     """Test starting operations during active resharding"""
 
-    def __init__(self, endpoint_url="http://localhost:4567"):
+    def __init__(self, endpoint_url="http://localhost:4566"):
         self.endpoint_url = endpoint_url
         self.test_streams = []
 

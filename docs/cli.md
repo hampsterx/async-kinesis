@@ -18,7 +18,7 @@ async-kinesis [OPTIONS] COMMAND [ARGS]...
 
 | Option | Env Var | Description |
 | --- | --- | --- |
-| `--endpoint-url` | `ENDPOINT_URL` | Kinesis endpoint URL (for LocalStack, kinesalite, etc.) |
+| `--endpoint-url` | `ENDPOINT_URL` | Kinesis endpoint URL (for LocalStack, Floci, etc.) |
 | `--region` | `AWS_DEFAULT_REGION` | AWS region name |
 | `-v, --verbose` | | Enable debug logging (shows library internals) |
 | `--version` | | Show version and exit |
@@ -39,7 +39,7 @@ async-kinesis list [--limit N]
 | --- | --- | --- |
 | `--limit` | 100 | Maximum number of streams to return |
 
-Handles both AWS (StreamSummaries with status/shard count/mode) and kinesalite (StreamNames-only) response formats.
+Handles both AWS (StreamSummaries with status/shard count/mode) and emulator (StreamNames-only) response formats.
 
 **Example:**
 ```
@@ -155,10 +155,10 @@ seq 5 | jq -c '{n: .}' | async-kinesis put my-stream
 async-kinesis put my-stream "plain text message" -p string
 ```
 
-## LocalStack / Kinesalite Usage
+## LocalStack / Floci Usage
 
 ```bash
-export ENDPOINT_URL=http://localhost:4566    # LocalStack
+export ENDPOINT_URL=http://localhost:4566    # LocalStack or Floci
 export AWS_DEFAULT_REGION=ap-southeast-2
 export AWS_ACCESS_KEY_ID=test
 export AWS_SECRET_ACCESS_KEY=test
@@ -171,5 +171,5 @@ async-kinesis tail test-stream -i TRIM_HORIZON -n 1
 Or pass the endpoint directly:
 
 ```bash
-async-kinesis --endpoint-url http://localhost:4567 list
+async-kinesis --endpoint-url http://localhost:4566 list
 ```

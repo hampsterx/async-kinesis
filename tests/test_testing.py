@@ -186,7 +186,7 @@ class TestMockProducer:
         MockKinesisBackend.create_stream("test")
         async with MockProducer(
             stream_name="test",
-            endpoint_url="http://localhost:4567",
+            endpoint_url="http://localhost:4566",
             region_name="us-east-1",
             buffer_time=1.0,
             put_rate_limit_per_shard=500,
@@ -312,7 +312,7 @@ class TestMockConsumer:
         stream.seal()
         async with MockConsumer(
             stream_name="test",
-            endpoint_url="http://localhost:4567",
+            endpoint_url="http://localhost:4566",
             region_name="us-east-1",
             max_queue_size=5000,
             sleep_time_no_records=5,

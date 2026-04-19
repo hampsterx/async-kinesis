@@ -2,7 +2,7 @@
 """
 Resharding Integration Test
 
-Tests resharding behavior using LocalStack with actual stream creation and consumption.
+Tests resharding behavior using Floci with actual stream creation and consumption.
 This simulates resharding by creating streams with different shard counts and testing
 our consumer's ability to handle the topology correctly.
 """
@@ -27,9 +27,9 @@ logger = logging.getLogger(__name__)
 
 
 class ReshardingIntegrationTest:
-    """Integration test for resharding scenarios using LocalStack"""
+    """Integration test for resharding scenarios using Floci"""
 
-    def __init__(self, endpoint_url="http://localhost:4567"):
+    def __init__(self, endpoint_url="http://localhost:4566"):
         self.endpoint_url = endpoint_url
         self.test_streams = []
 
@@ -364,14 +364,14 @@ async def main():
 
 
 if __name__ == "__main__":
-    # Check if LocalStack is available
+    # Check if the Kinesis emulator (Floci) is available
     try:
         import urllib.request
 
-        urllib.request.urlopen("http://localhost:4566/_localstack/health", timeout=2)
-        print("✅ LocalStack detected, running integration tests...")
+        urllib.request.urlopen("http://localhost:4566/", timeout=2)
+        print("✅ Floci detected, running integration tests...")
     except Exception:
-        print("⚠️ LocalStack not available. Start with: docker-compose up kinesis")
+        print("⚠️ Floci not available. Start with: docker-compose up kinesis")
         print("   Running tests anyway (may fail)...")
 
     success = asyncio.run(main())

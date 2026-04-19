@@ -312,7 +312,7 @@ class TestConsumerFetchEmits:
 
     @pytest.mark.asyncio
     async def test_fetch_skips_iterator_age_when_field_absent(self, mock_consumer):
-        """Kinesalite / unpatched floci omit MillisBehindLatest. Emit must no-op."""
+        """Backends that omit MillisBehindLatest must no-op (no iterator_age emission)."""
         collector = InMemoryMetricsCollector()
         consumer = mock_consumer(metrics_collector=collector)
         consumer.checkpointer = MemoryCheckPointer(name="test")

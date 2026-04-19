@@ -107,15 +107,8 @@ class TestConsumer:
         assert sum(collector.counters[k] for k in bytes_keys) == 3 * expected_per_record
         assert queue_keys
 
-        # Iterator age: only assert if the backend reported MillisBehindLatest as
-        # proper milliseconds. Floci < 1.6 (approx) populates the field with a
-        # record count, not an age, so skip this assertion until CI pins a patched image.
         iterator_age_keys = [k for k in collector.gauges if k.startswith("consumer_iterator_age_milliseconds")]
-        if not iterator_age_keys:
-            pytest.skip(
-                "Backend did not report MillisBehindLatest with millisecond semantics "
-                "(e.g. kinesalite omits it; floci PR #444 not yet released)."
-            )
+        assert iterator_age_keys, f"expected consumer_iterator_age_milliseconds, got {list(collector.gauges)}"
         assert all(collector.gauges[k] >= 0 for k in iterator_age_keys)
 
     @pytest.mark.asyncio

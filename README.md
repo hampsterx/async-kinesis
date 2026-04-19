@@ -144,7 +144,7 @@ async-kinesis tail my-stream -i TRIM_HORIZON -f json -n 5
 
 | Option | Env Var | Description |
 | --- | --- | --- |
-| `--endpoint-url` | `ENDPOINT_URL` | Kinesis endpoint (for LocalStack/kinesalite) |
+| `--endpoint-url` | `ENDPOINT_URL` | Kinesis endpoint (for LocalStack/Floci) |
 | `--region` | `AWS_DEFAULT_REGION` | AWS region |
 | `-v, --verbose` | | Enable debug logging |
 
@@ -652,7 +652,7 @@ with patch("myapp.Producer", MockProducer):
 
 ### Local Testing
 
-Uses kinesalite (Docker Compose) and Floci (CI) for integration testing:
+Uses Floci for integration testing (Docker Compose and CI):
 
 ```bash
 # Run full test suite via Docker

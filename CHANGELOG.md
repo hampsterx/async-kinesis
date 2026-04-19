@@ -72,6 +72,13 @@
 - Removed `Consumer._checkpoint_with_metrics` (private, added in v2.5.0).
   Callers invoke `checkpointer.checkpoint()` directly; emission now lives
   on `BaseCheckPointer` via `_emit_checkpoint_success` / `_emit_checkpoint_failure`.
+- CI and local docker-compose now run Floci 1.5.4 (was: Floci 1.4.0 in CI,
+  kinesalite in docker-compose). Local dev port is 4566 (was 4567 for kinesalite).
+  Re-enables the `test_producer_consumer_with_stream_arn` integration test
+  (Floci 1.5.2+ resolves stream names from `StreamARN`) and the
+  `consumer_iterator_age_milliseconds` assertion in
+  `test_consumer_metrics_round_trip` (Floci 1.5.4 returns time-based
+  `MillisBehindLatest`). No runtime behaviour change for library consumers.
 - Added `BaseCheckPointer.bind_metrics(collector, labels)` so Consumer can inject
   its `stream_name` label into the checkpointer's emissions at construction time.
   Intentionally not added to the `CheckPointer` Protocol to avoid breaking static

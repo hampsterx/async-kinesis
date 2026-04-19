@@ -39,10 +39,8 @@ log = logging.getLogger(__name__)
 
 load_dotenv()
 
-# https://github.com/mhart/kinesalite
-# ./node_modules/.bin/kinesalite --shardLimit 1000
-# see also docker-compose.yaml
-ENDPOINT_URL = os.environ.get("ENDPOINT_URL", "http://localhost:4567")
+# See docker-compose.yaml for the Floci service used as the test backend.
+ENDPOINT_URL = os.environ.get("ENDPOINT_URL", "http://localhost:4566")
 
 TESTING_USE_AWS_KINESIS = os.environ.get("TESTING_USE_AWS_KINESIS", "0") == "1"
 
@@ -524,7 +522,7 @@ class CheckpointTests(BaseKinesisTests):
 
 class KinesisTests(BaseKinesisTests):
     """
-    Kinesalite Tests
+    Tests against the Floci Kinesis emulator.
     """
 
     async def test_stream_does_not_exist(self):

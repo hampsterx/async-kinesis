@@ -94,7 +94,7 @@ async def list_streams(ctx, limit):
     async with _ClientHelper(endpoint_url=endpoint_url, region_name=region) as helper:
         response = await helper.client.list_streams(Limit=limit)
 
-        # AWS returns StreamSummaries; kinesalite returns only StreamNames
+        # AWS returns StreamSummaries; emulators (Floci, kinesalite) return only StreamNames
         summaries = response.get("StreamSummaries")
         if summaries is not None:
             if not summaries:
@@ -118,7 +118,7 @@ async def list_streams(ctx, limit):
             if not names:
                 click.echo("No streams found.")
                 return
-            # Kinesalite / basic: just names, fetch details per stream
+            # Emulator fallback (names only): fetch details per stream
             headers = ["Name", "Status", "Shards"]
             rows = []
             for name in names:

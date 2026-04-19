@@ -293,14 +293,14 @@ Extra parameter: `poll_delay` (default `0`) — seconds between poll cycles when
 
 Replace infrastructure-dependent test setup with in-memory mocks:
 
-**Before (Docker + kinesalite):**
+**Before (Docker + emulator):**
 
 ```python
 @pytest_asyncio.fixture
 async def producer(random_stream_name):
     async with Producer(
         stream_name=random_stream_name,
-        endpoint_url="http://localhost:4567",
+        endpoint_url="http://localhost:4566",
         region_name="ap-southeast-2",
         create_stream=True,
     ) as prod:

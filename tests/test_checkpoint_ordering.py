@@ -463,7 +463,7 @@ class TestCheckpointInterval:
         with pytest.raises(ValueError, match="mutually exclusive"):
             Consumer(
                 stream_name="test-stream",
-                endpoint_url="http://localhost:4567",
+                endpoint_url="http://localhost:4566",
                 skip_describe_stream=True,
                 checkpoint_interval=5.0,
                 checkpointer=AsyncMock(auto_checkpoint=False),

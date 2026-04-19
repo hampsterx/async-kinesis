@@ -14,7 +14,7 @@ jobs:
 
     services:
       kinesis:
-        image: hectorvent/floci:1.4.0
+        image: hectorvent/floci:1.5.4
         ports:
           - 4566:4566
 

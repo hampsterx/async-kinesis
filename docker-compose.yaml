@@ -1,11 +1,10 @@
 services:
 
   kinesis:
-    image: instructure/kinesalite:latest
-    command: --port 4567 --shardLimit 10000
+    image: hectorvent/floci:1.5.4
     restart: always
     ports:
-      - 4567:4567
+      - 4566:4566
   redis:
     image: redis:latest
     restart: always
@@ -24,7 +23,7 @@ services:
        dockerfile: Dockerfile
      environment:
       - AWS_DEFAULT_REGION=ap-southeast-2
-      - ENDPOINT_URL=http://kinesis:4567
+      - ENDPOINT_URL=http://kinesis:4566
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - AWS_ACCESS_KEY_ID=test

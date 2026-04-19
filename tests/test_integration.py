@@ -439,11 +439,6 @@ class TestIntegration:
     @pytest.mark.asyncio
     async def test_producer_consumer_with_stream_arn(self, random_stream_name, endpoint_url):
         """Test producer and consumer with stream ARN instead of name (PR #39)."""
-        # Skip for local emulators as they may not support ARN addressing
-        if any(host in endpoint_url for host in ["localhost", "kinesis:", "localstack"]):
-            pytest.skip("Local emulator does not support ARN addressing")
-
-        # Create a mock ARN for the stream
         stream_arn = f"arn:aws:kinesis:us-east-1:123456789012:stream/{random_stream_name}"
 
         test_messages = [{"arn_test": i, "message": f"arn-message-{i}"} for i in range(3)]
@@ -458,37 +453,32 @@ class TestIntegration:
             pass  # Just create the stream
 
         # Now produce using ARN
-        try:
-            async with Producer(
-                stream_name=stream_arn,
-                endpoint_url=endpoint_url,
-                create_stream=False,  # Don't try to create with ARN
-            ) as producer:
-                for message in test_messages:
-                    await producer.put(message)
-                await producer.flush()
+        async with Producer(
+            stream_name=stream_arn,
+            endpoint_url=endpoint_url,
+            create_stream=False,  # Don't try to create with ARN
+        ) as producer:
+            for message in test_messages:
+                await producer.put(message)
+            await producer.flush()
 
-            # Consume using ARN
-            consumed_messages = []
-            async with Consumer(
-                stream_name=stream_arn,
-                endpoint_url=endpoint_url,
-                sleep_time_no_records=0.1,
-            ) as consumer:
-                try:
-                    async with timeout(5):
-                        async for message in consumer:
-                            consumed_messages.append(message)
-                            if len(consumed_messages) >= len(test_messages):
-                                break
-                except asyncio.TimeoutError:
-                    pass
+        # Consume using ARN
+        consumed_messages = []
+        async with Consumer(
+            stream_name=stream_arn,
+            endpoint_url=endpoint_url,
+            sleep_time_no_records=0.1,
+        ) as consumer:
+            try:
+                async with timeout(5):
+                    async for message in consumer:
+                        consumed_messages.append(message)
+                        if len(consumed_messages) >= len(test_messages):
+                            break
+            except asyncio.TimeoutError:
+                pass
 
-            assert len(consumed_messages) >= len(test_messages)
-
-        except Exception as e:
-            # ARN support might not work with LocalStack/testing environment
-            pytest.skip(f"ARN support test failed: {e}")
+        assert len(consumed_messages) >= len(test_messages)
 
     @pytest.mark.asyncio
     async def test_stream_arn_validation(self, endpoint_url):

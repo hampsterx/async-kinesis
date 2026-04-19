@@ -700,7 +700,7 @@ class TestProducerFlushLifecycle:
         """Create a Producer with mocked Kinesis client for unit testing."""
         defaults = {
             "stream_name": "test-stream",
-            "endpoint_url": "http://localhost:4567",
+            "endpoint_url": "http://localhost:4566",
             "skip_describe_stream": True,
             "buffer_time": 10,
         }

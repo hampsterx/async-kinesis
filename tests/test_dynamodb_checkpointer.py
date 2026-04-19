@@ -434,17 +434,17 @@ class TestDynamoDBCheckPointer:
         """session.resource(...) most recent call must include endpoint_url kwarg."""
         assert mock_session.resource.called, "session.resource was not called"
         _args, kwargs = mock_session.resource.call_args
-        assert kwargs.get("endpoint_url") == self.ENDPOINT_URL, (
-            f"expected endpoint_url={self.ENDPOINT_URL!r}, got kwargs={kwargs!r}"
-        )
+        assert (
+            kwargs.get("endpoint_url") == self.ENDPOINT_URL
+        ), f"expected endpoint_url={self.ENDPOINT_URL!r}, got kwargs={kwargs!r}"
 
     def _assert_endpoint_url_in_last_client_call(self, mock_session):
         """session.client(...) most recent call must include endpoint_url kwarg."""
         assert mock_session.client.called, "session.client was not called"
         _args, kwargs = mock_session.client.call_args
-        assert kwargs.get("endpoint_url") == self.ENDPOINT_URL, (
-            f"expected endpoint_url={self.ENDPOINT_URL!r}, got kwargs={kwargs!r}"
-        )
+        assert (
+            kwargs.get("endpoint_url") == self.ENDPOINT_URL
+        ), f"expected endpoint_url={self.ENDPOINT_URL!r}, got kwargs={kwargs!r}"
 
     @pytest.mark.asyncio
     async def test_endpoint_url_propagates_to_do_heartbeat(self, mock_dynamodb):
@@ -498,9 +498,7 @@ class TestDynamoDBCheckPointer:
             {"Error": {"Code": "ResourceNotFoundException"}}, "DescribeTable"
         )
 
-        checkpointer = DynamoDBCheckPointer(
-            "test-app", endpoint_url=self.ENDPOINT_URL, create_table=True
-        )
+        checkpointer = DynamoDBCheckPointer("test-app", endpoint_url=self.ENDPOINT_URL, create_table=True)
         await checkpointer._initialize()
 
         self._assert_endpoint_url_in_last_client_call(mock_dynamodb["session"])

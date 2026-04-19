@@ -3,13 +3,32 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Protocol, Tuple, Union
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
 
 from .metrics import MetricsCollector, MetricType, get_metrics_collector
 
 log = logging.getLogger(__name__)
 
 STANDALONE_STREAM_LABEL = "<standalone>"
+
+
+class CheckpointFlushError(Exception):
+    """Raised by ``manual_checkpoint()`` when one or more per-shard flushes fail.
+
+    ``manual_checkpoint()`` is best-effort: it attempts every buffered shard and
+    collects per-shard failures into ``.errors`` rather than aborting on the
+    first raise. Shards that raised remain in the buffer for the next flush;
+    shards that succeeded are popped.
+
+    ``.errors`` is a list of ``(shard_id, exception)`` tuples in the order the
+    shards were attempted. The original ``__cause__`` is set to the first
+    underlying exception so the traceback shows at least one real failure.
+    """
+
+    def __init__(self, errors: List[Tuple[str, BaseException]]):
+        self.errors = errors
+        shard_ids = ", ".join(shard_id for shard_id, _ in errors)
+        super().__init__(f"{len(errors)} shard(s) failed to checkpoint: {shard_ids}")
 
 
 class CheckPointer(Protocol):
@@ -270,16 +289,35 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
         await self._checkpoint(shard_id, sequence)
 
     async def manual_checkpoint(self):
-        # Pop per-shard on success so a mid-loop raise leaves the remaining
-        # shards buffered for retry on the next manual_checkpoint() call.
-        # Only pop if the buffered value still matches what we just flushed:
-        # a concurrent checkpoint() during the await may have buffered a newer
-        # sequence for the same shard, which must not be dropped.
+        """Flush all buffered manual checkpoints, best-effort.
+
+        Every buffered shard is attempted on each call. A shard whose flush
+        raises is left in the buffer (so a poison-pill shard does not block
+        the shards behind it from ever being flushed); shards that succeed
+        are popped. The success-path pop is guarded by a value-match check,
+        so a concurrent ``checkpoint()`` that buffered a newer sequence for
+        the same shard mid-flight is not silently dropped.
+
+        Raises:
+            CheckpointFlushError: if one or more shards raised. The compound
+                exception carries the per-shard failures in ``.errors``.
+                Per-shard ``consumer_checkpoint_failure_total`` counters are
+                emitted from inside ``_checkpoint`` as each flush fails, so
+                callers should monitor that metric for alerting rather than
+                parsing the exception.
+        """
+        errors: List[Tuple[str, BaseException]] = []
         for shard_id in list(self._manual_checkpoints):
             sequence = self._manual_checkpoints[shard_id]
-            await self._checkpoint(shard_id, sequence)
+            try:
+                await self._checkpoint(shard_id, sequence)
+            except Exception as exc:
+                errors.append((shard_id, exc))
+                continue
             if self._manual_checkpoints.get(shard_id) == sequence:
                 self._manual_checkpoints.pop(shard_id, None)
+        if errors:
+            raise CheckpointFlushError(errors) from errors[0][1]
 
     async def _checkpoint(self, shard_id, sequence):
         try:

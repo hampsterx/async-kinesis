@@ -313,8 +313,10 @@ class TestDynamoDBCheckPointer:
 
     @pytest.mark.asyncio
     async def test_manual_checkpoint_retains_buffer_on_mid_loop_failure(self, mock_dynamodb):
-        """A mid-loop exception leaves the unflushed shards in the buffer so
-        the caller can retry on the next manual_checkpoint() call."""
+        """A per-shard flush raise leaves only the failing shard in the buffer
+        so the caller can retry on the next manual_checkpoint() call."""
+        from kinesis import CheckpointFlushError
+
         checkpointer = DynamoDBCheckPointer("test-app", auto_checkpoint=False)
         await checkpointer._initialize()
 
@@ -327,8 +329,11 @@ class TestDynamoDBCheckPointer:
             RuntimeError("backend flake"),
         ]
 
-        with pytest.raises(RuntimeError, match="backend flake"):
+        with pytest.raises(CheckpointFlushError) as exc_info:
             await checkpointer.manual_checkpoint()
+
+        assert [shard_id for shard_id, _ in exc_info.value.errors] == ["shard-002"]
+        assert isinstance(exc_info.value.errors[0][1], RuntimeError)
 
         # shard-001 was popped on success, shard-002 raised before pop and stays
         # buffered for retry. If the clear-before-iterate bug regressed, both
@@ -340,6 +345,57 @@ class TestDynamoDBCheckPointer:
         mock_dynamodb["table"].update_item.return_value = {}
         await checkpointer.manual_checkpoint()
         assert checkpointer._manual_checkpoints == {}
+
+    @pytest.mark.asyncio
+    async def test_manual_checkpoint_continues_past_head_failure(self, mock_dynamodb):
+        """Issue #79: a shard that fails at the head of the buffer must not
+        block healthy shards behind it from being flushed. Poison-pill fix."""
+        from kinesis import CheckpointFlushError
+
+        checkpointer = DynamoDBCheckPointer("test-app", auto_checkpoint=False)
+        await checkpointer._initialize()
+
+        await checkpointer.checkpoint("shard-001", "seq-123")
+        await checkpointer.checkpoint("shard-002", "seq-456")
+
+        # shard-001 raises (poison), shard-002 succeeds. Without the fix the
+        # loop would abort on shard-001 and never attempt shard-002.
+        mock_dynamodb["table"].update_item.side_effect = [
+            RuntimeError("poison"),
+            {},
+        ]
+
+        with pytest.raises(CheckpointFlushError) as exc_info:
+            await checkpointer.manual_checkpoint()
+
+        assert [shard_id for shard_id, _ in exc_info.value.errors] == ["shard-001"]
+
+        # shard-001 still buffered, shard-002 was attempted and popped.
+        assert checkpointer._manual_checkpoints == {"shard-001": "seq-123"}
+
+    @pytest.mark.asyncio
+    async def test_manual_checkpoint_collects_all_failures(self, mock_dynamodb):
+        """When every shard fails, CheckpointFlushError.errors lists every
+        failure in insertion order; the buffer is unchanged."""
+        from kinesis import CheckpointFlushError
+
+        checkpointer = DynamoDBCheckPointer("test-app", auto_checkpoint=False)
+        await checkpointer._initialize()
+
+        await checkpointer.checkpoint("shard-001", "seq-123")
+        await checkpointer.checkpoint("shard-002", "seq-456")
+
+        mock_dynamodb["table"].update_item.side_effect = [
+            RuntimeError("first"),
+            RuntimeError("second"),
+        ]
+
+        with pytest.raises(CheckpointFlushError) as exc_info:
+            await checkpointer.manual_checkpoint()
+
+        assert [shard_id for shard_id, _ in exc_info.value.errors] == ["shard-001", "shard-002"]
+        assert [str(exc) for _, exc in exc_info.value.errors] == ["first", "second"]
+        assert checkpointer._manual_checkpoints == {"shard-001": "seq-123", "shard-002": "seq-456"}
 
     @pytest.mark.asyncio
     async def test_checkpoint_failure_emits_metric(self, mock_dynamodb):

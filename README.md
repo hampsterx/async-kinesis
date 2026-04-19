@@ -59,8 +59,8 @@ async-kinesis describe my-stream
 - [Checkpointers](#checkpointers)
 - [Processors](#processors-aggregator--serializer)
 - [Benchmark/Example](#benchmarkexample)
-- [Development & Testing](#development--testing)
 - [Testing](#testing)
+- [Contributing](#contributing)
 - [Documentation](#documentation)
 
 ## Key Features

@@ -35,7 +35,7 @@ Critical rules:
 
 ## Package Layout
 
-```
+```text
 kinesis/
   base.py            # Shared async client setup and aiobotocore lifecycle
   producer.py        # Producer: batching, aggregation, flush
@@ -90,10 +90,7 @@ Running tests: see `CONTRIBUTING.md` § Running Tests for exact commands.
 
 ## Linting and Formatting
 
-- Line length: 120 (black, isort, flake8 all aligned)
-- Flake8 ignores: `E203,W503,E712,E402,F401,F841,F541,E501,E722`
-- Pre-commit hooks run `black`, `isort`, `autoflake`, `flake8` automatically. Install once with `pre-commit install`.
-- Do not commit code that fails `pre-commit run --all-files`.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) § Code Style for linting, formatting, and pre-commit rules.
 
 ---
 

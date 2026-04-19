@@ -11,6 +11,9 @@ log = logging.getLogger(__name__)
 
 STANDALONE_STREAM_LABEL = "<standalone>"
 
+class CheckpointError(Exception):
+    pass
+
 
 class CheckpointFlushError(Exception):
     """Raised by ``manual_checkpoint()`` when one or more per-shard flushes fail.

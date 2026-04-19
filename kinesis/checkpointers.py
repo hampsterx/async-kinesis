@@ -187,7 +187,12 @@ class BaseHeartbeatCheckPointer(BaseCheckPointer):
 
     async def close(self):
         log.debug("Cancelling heartbeat task..")
+
         self.heartbeat_task.cancel()
+        try:
+            await self.heartbeat_task
+        except asyncio.CancelledError:
+            pass
 
         await super().close()
 
@@ -196,7 +201,7 @@ class BaseHeartbeatCheckPointer(BaseCheckPointer):
             await asyncio.sleep(self.heartbeat_frequency)
 
             # todo: don't heartbeat if checkpoint already updated it recently
-            for shard_id, sequence in self._items.items():
+            for shard_id, sequence in list(self._items.items()):
                 key = self.get_key(shard_id)
                 val = {"ref": self.get_ref(), "ts": self.get_ts(), "sequence": sequence}
                 log.debug("Heartbeating {}@{}".format(shard_id, sequence))
@@ -329,13 +334,15 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
             previous_val = json.loads(previous_val) if previous_val else None
 
             if not previous_val:
-                raise NotImplementedError(
+                raise CheckpointError(
                     "{} checkpointed on {} but key did not exist?".format(self.get_ref(), shard_id)
                 )
 
             if previous_val["ref"] != self.get_ref():
-                raise NotImplementedError(
-                    "{} checkpointed on {} but ref is different {}".format(self.get_ref(), shard_id, val["ref"])
+                raise CheckpointError(
+                    "{} checkpointed on {} but ref is different {}".format(
+                        self.get_ref(), shard_id, previous_val["ref"]
+                    )
                 )
 
             log.debug("{} checkpointed on {}@{}".format(self.get_ref(), shard_id, sequence))

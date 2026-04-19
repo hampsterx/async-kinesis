@@ -635,6 +635,36 @@ class TestConsumerCheckpointMetrics:
             await cp.close()
 
     @pytest.mark.asyncio
+    async def test_manual_checkpoint_flush_preserves_concurrent_newer_sequence(self):
+        """If checkpoint(shard, newer_seq) runs while manual_checkpoint is awaiting
+        the backend write for shard@older_seq, the newer buffered sequence must not
+        be popped (otherwise we'd silently lose it and process records twice)."""
+        cp = await _make_redis_cp(auto_checkpoint=False)
+
+        original_checkpoint = cp._checkpoint
+
+        async def interposing_checkpoint(shard_id, sequence):
+            # Simulate a concurrent checkpoint() landing during the in-flight flush:
+            # it overwrites the buffered entry with a newer sequence.
+            if shard_id == "shard-0" and sequence == "seq-1":
+                cp._manual_checkpoints["shard-0"] = "seq-2"
+            return await original_checkpoint(shard_id, sequence)
+
+        previous_val = '{"ref": "' + cp.get_ref() + '", "ts": 0, "sequence": "seq-prev"}'
+        cp.client.getset = AsyncMock(return_value=previous_val)
+        cp._checkpoint = interposing_checkpoint
+
+        try:
+            await cp.checkpoint("shard-0", "seq-1")
+            await cp.manual_checkpoint()
+
+            # seq-2 was buffered during the await; the conditional pop must have
+            # spared it. A subsequent flush will drain it on the next call.
+            assert cp._manual_checkpoints == {"shard-0": "seq-2"}
+        finally:
+            await cp.close()
+
+    @pytest.mark.asyncio
     async def test_manual_checkpoint_flush_success_path_emits_per_shard(self):
         """Happy-path manual flush on MemoryCheckPointer-style emission (direct exercise)."""
         collector = InMemoryMetricsCollector()

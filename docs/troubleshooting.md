@@ -277,8 +277,10 @@ async def parallel_puts(producer, records):
 
 4. **Monitor queue size:**
 ```python
-# Check if queue is full (blocking puts)
-if producer._queue.qsize() > producer._max_queue_size * 0.8:
+# Check if the in-memory put queue is filling up (blocking puts).
+# `producer.queue` is the asyncio.Queue created from `max_queue_size`,
+# so use `.maxsize` (asyncio.Queue's standard attribute) for the threshold.
+if producer.queue.qsize() > producer.queue.maxsize * 0.8:
     print("Warning: Queue nearly full, consider increasing max_queue_size")
 ```
 
@@ -322,11 +324,12 @@ async with Consumer(stream_name="test") as consumer:
         print(f"Parent {parent} has children: {children}")
 ```
 
-2. **Force shard refresh:**
+2. **Trigger shard refresh:**
 ```python
-# Manually trigger shard discovery (usually not needed)
-consumer._resharding_manager._last_refresh = 0
-await consumer._resharding_manager.refresh_shards()
+# The consumer auto-refreshes shards on a 60s interval. Calling refresh_shards()
+# directly is a no-op if the throttle window has not yet elapsed (the interval
+# is currently a private constant; there is no public API to bypass it).
+await consumer.refresh_shards()
 ```
 
 3. **Monitor resharding events:**
@@ -456,7 +459,7 @@ logging.getLogger('botocore').setLevel(logging.INFO)
 # Producer metrics
 async def monitor_producer(producer):
     while True:
-        queue_size = producer._queue.qsize()
+        queue_size = producer.queue.qsize()
         print(f"Producer queue size: {queue_size}")
         await asyncio.sleep(10)
 

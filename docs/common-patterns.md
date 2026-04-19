@@ -82,7 +82,13 @@ async def log_processor():
 
 ## Event Streaming
 
-Build event-driven architectures with multiple event types:
+Build event-driven architectures with multiple event types.
+
+> **Install note:** `MsgpackProcessor` requires the `msgpack` extra. Install
+> with `pip install async-kinesis[msgpack]`. Without it, the import succeeds
+> (the missing dependency is swallowed in `kinesis/serializers.py`), but the
+> first call to `producer.put()` or consumer iteration raises `NameError:
+> name 'msgpack' is not defined`.
 
 ```python
 import logging
@@ -175,14 +181,23 @@ async def handle_payment_processed(data):
 
 ## IoT Data Collection
 
-Collect and process high-volume IoT sensor data:
+Collect and process high-volume IoT sensor data.
+
+> **Processor choice:** This example uses `JsonProcessor` so each record can
+> carry its own `partition_key`. Records with the same `sensor_id` will hash
+> to the same shard (preserving per-sensor ordering); different sensor IDs
+> may share a shard depending on hash distribution. For higher throughput at
+> the cost of per-record routing, consider `KPLJsonProcessor`
+> (install with `pip install async-kinesis[kpl]`); note KPL aggregation does
+> **not** support custom `partition_key` on `producer.put()`, all records in an
+> aggregated batch share the batch's partition key.
 
 ```python
 import asyncio
 import logging
 import random
 from datetime import datetime
-from kinesis import Producer, Consumer, KPLJsonProcessor
+from kinesis import Producer, Consumer, JsonProcessor
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -191,7 +206,10 @@ logger = logging.getLogger(__name__)
 async def iot_sensors():
     async with Producer(
         stream_name="iot-sensor-data",
-        processor=KPLJsonProcessor(),  # KPL aggregation for high volume
+        # JsonProcessor (SimpleAggregator) supports custom partition keys.
+        # KPLJsonProcessor would aggregate more efficiently but does NOT
+        # accept a custom partition_key (KPLAggregator.add_item() raises).
+        processor=JsonProcessor(),
         put_rate_limit_per_shard=500,  # Conservative rate to avoid throttling
         create_stream=True,
         create_stream_shards=4  # Multiple shards for parallel processing
@@ -228,7 +246,7 @@ async def iot_processor():
 
     async with Consumer(
         stream_name="iot-sensor-data",
-        processor=KPLJsonProcessor(),
+        processor=JsonProcessor(),  # Must match the producer's processor
         max_shard_consumers=4  # Process all shards in parallel
     ) as consumer:
 
@@ -570,7 +588,14 @@ class StreamMonitor:
             last_report = time.time()
 
             while True:
-                # Get shard status
+                # Get shard status. Fields available:
+                #   total_shards, active_shards, closed_shards, allocated_shards,
+                #   parent_shards, child_shards, exhausted_parents, expired_parents,
+                #   resharding_in_progress, topology, shard_details
+                # Lag is not in this dict. The consumer emits
+                # MetricType.CONSUMER_ITERATOR_AGE (millis behind) to a configured
+                # metrics_collector; CloudWatch also exposes
+                # GetRecords.IteratorAgeMilliseconds on the stream.
                 status = consumer.get_shard_status()
 
                 # Log shard health
@@ -578,17 +603,22 @@ class StreamMonitor:
                 logger.info(f"Total shards: {status['total_shards']}")
                 logger.info(f"Active shards: {status['active_shards']}")
                 logger.info(f"Closed shards: {status['closed_shards']}")
-                logger.info(f"Behind shards: {status.get('behind_shards', 0)}")
+                logger.info(f"Allocated to this consumer: {status['allocated_shards']}")
 
                 # Check for resharding
-                if status['parent_shards'] > 0:
-                    logger.warning(f"Resharding detected! Parent shards: {status['parent_shards']}")
+                if status['resharding_in_progress'] or status['parent_shards'] > 0:
+                    logger.warning(
+                        f"Resharding in progress. Parents: {status['parent_shards']}, "
+                        f"children: {status['child_shards']}, "
+                        f"expired parents: {status['expired_parents']}"
+                    )
 
-                # Monitor consumer lag
+                # Per-shard details (allocation and topology, not lag)
                 for shard in status['shard_details']:
-                    if shard.get('behind_latest'):
-                        lag = shard.get('records_behind', 'unknown')
-                        logger.warning(f"Shard {shard['shard_id']} is behind by {lag} records")
+                    if shard['is_closed']:
+                        logger.info(f"Shard {shard['shard_id']} is closed")
+                    elif not shard['is_allocated']:
+                        logger.debug(f"Shard {shard['shard_id']} not allocated to this consumer")
 
                 # Performance metrics
                 elapsed = time.time() - self.metrics["start_time"]
@@ -653,6 +683,5 @@ async def run_monitoring():
 
 ## Next Steps
 
-- Review the [Performance Tuning Guide](./performance-tuning.md) for optimization tips
 - See [Troubleshooting Guide](./troubleshooting.md) for common issues
 - Check [Architecture Details](./DESIGN.md) for deep technical understanding

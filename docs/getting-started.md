@@ -15,7 +15,7 @@ This guide will walk you through setting up and using async-kinesis for the firs
 ## Prerequisites
 
 Before you begin, you should have:
-- Python 3.9 or higher installed
+- Python 3.10 or higher installed (matches `setup.py` `python_requires`)
 - Basic understanding of Python's async/await
 - An AWS account (free tier is sufficient for testing)
 - AWS credentials configured (we'll show you how)
@@ -119,22 +119,42 @@ if __name__ == "__main__":
 
 ## Complete Working Example
 
-Here's a complete example that demonstrates producer and consumer working together:
+Here's a complete example that demonstrates producer and consumer working together.
+
+Two ordering rules that the example below makes explicit:
+
+1. **Create the stream before the consumer starts.** If the consumer reaches
+   `async with Consumer(...)` before the stream exists, it raises. The producer's
+   `create_stream=True` only takes effect on enter, so launching both with
+   `asyncio.gather` is racy.
+2. **With `iterator_type="LATEST"`, wait for the consumer to be ready before
+   producing.** `LATEST` reads from records arriving *after* the iterator is
+   obtained. If the producer publishes first, those events are silently missed.
+   `Consumer.wait_ready()` blocks until shard iterators are in place.
 
 ```python
 import asyncio
-import json
 from datetime import datetime
 from kinesis import Producer, Consumer
 
-async def produce_events():
-    """Simulate producing user events"""
-    async with Producer(
-        stream_name="user-events",
-        create_stream=True,
-        create_stream_shards=2  # Use 2 shards for parallel processing
-    ) as producer:
+STREAM_NAME = "user-events"
 
+
+async def setup_stream():
+    """Pre-create the stream so the consumer doesn't race against creation."""
+    async with Producer(
+        stream_name=STREAM_NAME,
+        create_stream=True,
+        create_stream_shards=2,  # 2 shards for parallel processing
+    ):
+        pass  # entering the context creates the stream; exit is a no-op here
+
+
+async def produce_events(ready: asyncio.Event):
+    """Wait until the consumer is ready, then publish."""
+    await ready.wait()
+
+    async with Producer(stream_name=STREAM_NAME) as producer:
         users = ["alice", "bob", "charlie", "diana"]
         actions = ["login", "purchase", "view_item", "logout"]
 
@@ -144,50 +164,44 @@ async def produce_events():
                 "user_id": user,
                 "action": actions[i % len(actions)],
                 "timestamp": datetime.now().isoformat(),
-                "value": i * 10
+                "value": i * 10,
             }
-
-            # Use user_id as partition key to ensure all events
-            # for a user go to the same shard (maintaining order)
+            # Use user_id as partition key so all of a user's events
+            # land on the same shard (maintaining order).
             await producer.put(event, partition_key=user)
             print(f"Sent event: {event['user_id']} - {event['action']}")
-
-            # Small delay to simulate real-time events
             await asyncio.sleep(0.5)
 
-async def process_events():
-    """Process user events as they arrive"""
-    async with Consumer(
-        stream_name="user-events",
-        iterator_type="LATEST"  # Start from new messages only
-    ) as consumer:
 
-        print("Consumer started, waiting for events...")
+async def process_events(ready: asyncio.Event):
+    """Start the consumer and signal readiness once shard iterators are in place."""
+    async with Consumer(
+        stream_name=STREAM_NAME,
+        iterator_type="LATEST",  # Only events arriving after we're ready
+    ) as consumer:
+        await consumer.wait_ready()  # safe to produce after this
+        ready.set()
+        print("Consumer ready, waiting for events...")
 
         async for event in consumer:
-            # Process the event
             user = event["user_id"]
             action = event["action"]
             value = event.get("value", 0)
-
             print(f"Processing: {user} performed {action} (value: ${value})")
 
-            # Simulate some processing work
             if action == "purchase":
-                print(f"  💰 Recording purchase of ${value} for {user}")
+                print(f"  Recording purchase of ${value} for {user}")
             elif action == "login":
-                print(f"  👤 User {user} logged in")
+                print(f"  User {user} logged in")
+
 
 async def main():
-    """Run producer and consumer concurrently"""
-    # Start both producer and consumer at the same time
-    await asyncio.gather(
-        produce_events(),
-        process_events()
-    )
+    await setup_stream()  # create stream first
+    ready = asyncio.Event()
+    await asyncio.gather(produce_events(ready), process_events(ready))
+
 
 if __name__ == "__main__":
-    # Run for 30 seconds then stop
     try:
         asyncio.run(asyncio.wait_for(main(), timeout=30))
     except asyncio.TimeoutError:

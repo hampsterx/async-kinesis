@@ -49,24 +49,30 @@ async with Consumer(
 
 ### Multiple Consumer Groups
 
+Each consumer group needs its **own** DynamoDB table. The table key is `shard_id`
+only (see `kinesis/dynamodb.py`); there is no `name`/group namespace in the
+primary key, so two groups pointed at the same table would contend for the
+same rows and corrupt each other's leases and checkpoints.
+
 ```python
-# Analytics consumer group
+# Analytics consumer group: gets its own table (kinesis-checkpoints-analytics)
 analytics_consumer = Consumer(
     stream_name="events",
-    checkpointer=DynamoDBCheckPointer(
-        name="analytics",
-        table_name="kinesis-checkpoints"  # Share table across groups
-    )
+    checkpointer=DynamoDBCheckPointer(name="analytics"),
 )
 
-# Archival consumer group
+# Archival consumer group: separate table (kinesis-checkpoints-archival)
 archival_consumer = Consumer(
     stream_name="events",
-    checkpointer=DynamoDBCheckPointer(
-        name="archival",
-        table_name="kinesis-checkpoints"  # Same table, different app name
-    )
+    checkpointer=DynamoDBCheckPointer(name="archival"),
 )
+```
+
+If you need a custom table name per group, set `table_name` distinctly:
+
+```python
+DynamoDBCheckPointer(name="analytics", table_name="checkpoints-analytics-prod")
+DynamoDBCheckPointer(name="archival",  table_name="checkpoints-archival-prod")
 ```
 
 ## Configuration Options
@@ -244,7 +250,10 @@ For a stream with 10 shards and 5 consumers:
            batch = []
    ```
 
-3. **Share tables** across related applications to reduce operational overhead
+3. **Use one table per consumer group**. Sharing a table across groups is unsafe:
+   the primary key is `shard_id` only, so groups would overwrite each other's
+   leases. Reduce overhead by sharing other infrastructure (IAM, monitoring),
+   not the checkpoint table itself.
 
 ## Migration from Redis
 

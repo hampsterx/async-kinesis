@@ -138,7 +138,11 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
 
         # Enable TTL on the ttl field
         try:
-            async with self._session.client("dynamodb", region_name=self.region_name) as client:
+            async with self._session.client(
+                "dynamodb",
+                endpoint_url=self.endpoint_url,
+                region_name=self.region_name,
+            ) as client:
                 await client.update_time_to_live(
                     TableName=self.table_name,
                     TimeToLiveSpecification={
@@ -172,7 +176,11 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
 
         value["ttl"] = self.get_ttl()
 
-        async with self._session.resource("dynamodb", region_name=self.region_name) as dynamodb:
+        async with self._session.resource(
+            "dynamodb",
+            endpoint_url=self.endpoint_url,
+            region_name=self.region_name,
+        ) as dynamodb:
             table = await dynamodb.Table(self.table_name)
 
             try:
@@ -226,7 +234,11 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
 
         key = self.get_key(shard_id)
 
-        async with self._session.resource("dynamodb", region_name=self.region_name) as dynamodb:
+        async with self._session.resource(
+            "dynamodb",
+            endpoint_url=self.endpoint_url,
+            region_name=self.region_name,
+        ) as dynamodb:
             table = await dynamodb.Table(self.table_name)
 
             # Emission is scoped to the update_item call only. Init errors and
@@ -276,7 +288,11 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
         key = self.get_key(shard_id)
         sequence = self._items.get(shard_id)
 
-        async with self._session.resource("dynamodb", region_name=self.region_name) as dynamodb:
+        async with self._session.resource(
+            "dynamodb",
+            endpoint_url=self.endpoint_url,
+            region_name=self.region_name,
+        ) as dynamodb:
             table = await dynamodb.Table(self.table_name)
 
             # Clear ownership but keep sequence number
@@ -310,7 +326,11 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
         for retry in range(max_retries):
             ts = self.get_ts()
 
-            async with self._session.resource("dynamodb", region_name=self.region_name) as dynamodb:
+            async with self._session.resource(
+                "dynamodb",
+                endpoint_url=self.endpoint_url,
+                region_name=self.region_name,
+            ) as dynamodb:
                 table = await dynamodb.Table(self.table_name)
 
                 # First, try to create a new record

@@ -59,8 +59,8 @@ async-kinesis describe my-stream
 - [Checkpointers](#checkpointers)
 - [Processors](#processors-aggregator--serializer)
 - [Benchmark/Example](#benchmarkexample)
-- [Development & Testing](#development--testing)
 - [Testing](#testing)
+- [Contributing](#contributing)
 - [Documentation](#documentation)
 
 ## Key Features
@@ -648,63 +648,10 @@ with patch("myapp.Producer", MockProducer):
 
 📖 **[Full Testing Guide](./docs/testing.md)** — fixtures, helpers, `patch()` examples, migration from Docker
 
-## Development & Testing
+## Contributing
 
-### Local Testing
-
-Uses Floci for integration testing (Docker Compose and CI):
-
-```bash
-# Run full test suite via Docker
-docker-compose up --abort-on-container-exit --exit-code-from test
-
-# Local development setup
-docker-compose up kinesis redis
-pip install -r test-requirements.txt
-pytest
-```
-
-### Code Quality
-
-This project uses automated code formatting and linting:
-
-```bash
-# Install development tools
-pip install -r test-requirements.txt
-
-# Run formatting and linting
-black .
-isort .
-flake8 .
-
-# Or use pre-commit hooks
-pre-commit install
-pre-commit run --all-files
-```
-
-### AWS Integration Tests
-
-Some tests require actual AWS Kinesis. Create `.env` file:
-
-```
-TESTING_USE_AWS_KINESIS=1
-```
-
-### Resharding Tests
-
-Comprehensive resharding test suite available:
-
-```bash
-# Unit tests (no AWS required)
-python tests/resharding/test_resharding_simple.py
-
-# Integration tests (requires Floci or LocalStack)
-python tests/resharding/test_resharding_integration.py
-
-# Production testing (requires AWS)
-python tests/resharding/resharding_test.py --scenario scale-up-small
-```
-
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, running tests, and PR guidelines.
+Operating rules for AI coding agents and deeper architecture notes: [AGENTS.md](./AGENTS.md).
 
 ## Documentation
 

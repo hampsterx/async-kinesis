@@ -552,8 +552,9 @@ class TestConsumerCheckpointMetrics:
         assert cp._manual_checkpoints == {"shard-0": "seq-1"}
 
     @pytest.mark.asyncio
-    async def test_manual_checkpoint_flush_emits_per_shard(self):
-        """manual_checkpoint() flush hits the real backend path, so emits one per shard."""
+    async def test_manual_checkpoint_flush_retains_buffer_on_failure(self):
+        """Mid-loop raise leaves remaining buffered shards for retry, and emits the
+        failure metric for the shard that actually tripped."""
         collector = InMemoryMetricsCollector()
         cp = await _make_redis_cp(auto_checkpoint=False)
         cp.bind_metrics(collector, {"stream_name": "test-stream"})
@@ -564,19 +565,104 @@ class TestConsumerCheckpointMetrics:
             await cp.checkpoint("shard-1", "seq-9")
             assert not any(key.startswith("consumer_checkpoint_") for key in collector.counters)
 
-            # Flush: client.getset returns None -> _checkpoint raises -> failure counter
-            # (We don't need happy-path Redis semantics here; we're verifying the emit
-            # wiring covers the real path, which is what matters.)
             with pytest.raises(NotImplementedError):
                 await cp.manual_checkpoint()
+
+            # shard-0 raised before being popped, shard-1 was never attempted.
+            # Both remain buffered so the caller can retry on the next flush.
+            assert cp._manual_checkpoints == {"shard-0": "seq-1", "shard-1": "seq-9"}
         finally:
             await cp.close()
 
-        # At least one shard's failure was emitted before the raise aborted the loop.
-        # This also documents the pre-existing lose-on-failure bug: the loop
-        # stops on first raise so the second shard's emit never happens.
+        # The failure that tripped the loop is observable via the metric.
         failure_key_0 = f"consumer_checkpoint_failure_total{{{_shard_labels('shard-0')}}}"
         assert collector.counters.get(failure_key_0) == 1
+        # Shards that never got attempted do not emit a failure counter.
+        failure_key_1 = f"consumer_checkpoint_failure_total{{{_shard_labels('shard-1')}}}"
+        assert failure_key_1 not in collector.counters
+
+    @pytest.mark.asyncio
+    async def test_manual_checkpoint_flush_partial_failure_retains_failed_shard(self):
+        """When the first shard succeeds and the second raises, only the failed
+        shard stays buffered; the successful shard is popped."""
+        collector = InMemoryMetricsCollector()
+        cp = await _make_redis_cp(auto_checkpoint=False)
+        cp.bind_metrics(collector, {"stream_name": "test-stream"})
+
+        # First call succeeds (returns previous val matching our ref), second raises.
+        previous_val = '{"ref": "' + cp.get_ref() + '", "ts": 0, "sequence": "seq-prev"}'
+        cp.client.getset = AsyncMock(side_effect=[previous_val, RuntimeError("flake")])
+
+        try:
+            await cp.checkpoint("shard-0", "seq-1")
+            await cp.checkpoint("shard-1", "seq-9")
+
+            with pytest.raises(RuntimeError):
+                await cp.manual_checkpoint()
+
+            # shard-0 was flushed and popped; shard-1 raised before pop, stays buffered.
+            assert cp._manual_checkpoints == {"shard-1": "seq-9"}
+        finally:
+            await cp.close()
+
+        assert collector.counters[f"consumer_checkpoint_success_total{{{_shard_labels('shard-0')}}}"] == 1
+        assert collector.counters[f"consumer_checkpoint_failure_total{{{_shard_labels('shard-1')}}}"] == 1
+
+    @pytest.mark.asyncio
+    async def test_manual_checkpoint_flush_retries_remaining_on_next_call(self):
+        """After a flush fails mid-loop, a subsequent manual_checkpoint() call
+        re-attempts the entries that were left in the buffer."""
+        collector = InMemoryMetricsCollector()
+        cp = await _make_redis_cp(auto_checkpoint=False)
+        cp.bind_metrics(collector, {"stream_name": "test-stream"})
+
+        previous_val = '{"ref": "' + cp.get_ref() + '", "ts": 0, "sequence": "seq-prev"}'
+        # First flush: shard-0 raises. Second flush: both shards succeed.
+        cp.client.getset = AsyncMock(side_effect=[RuntimeError("flake"), previous_val, previous_val])
+
+        try:
+            await cp.checkpoint("shard-0", "seq-1")
+            await cp.checkpoint("shard-1", "seq-9")
+
+            with pytest.raises(RuntimeError):
+                await cp.manual_checkpoint()
+            assert set(cp._manual_checkpoints) == {"shard-0", "shard-1"}
+
+            # Second flush drains the buffer.
+            await cp.manual_checkpoint()
+            assert cp._manual_checkpoints == {}
+        finally:
+            await cp.close()
+
+    @pytest.mark.asyncio
+    async def test_manual_checkpoint_flush_preserves_concurrent_newer_sequence(self):
+        """If checkpoint(shard, newer_seq) runs while manual_checkpoint is awaiting
+        the backend write for shard@older_seq, the newer buffered sequence must not
+        be popped (otherwise we'd silently lose it and process records twice)."""
+        cp = await _make_redis_cp(auto_checkpoint=False)
+
+        original_checkpoint = cp._checkpoint
+
+        async def interposing_checkpoint(shard_id, sequence):
+            # Simulate a concurrent checkpoint() landing during the in-flight flush:
+            # it overwrites the buffered entry with a newer sequence.
+            if shard_id == "shard-0" and sequence == "seq-1":
+                cp._manual_checkpoints["shard-0"] = "seq-2"
+            return await original_checkpoint(shard_id, sequence)
+
+        previous_val = '{"ref": "' + cp.get_ref() + '", "ts": 0, "sequence": "seq-prev"}'
+        cp.client.getset = AsyncMock(return_value=previous_val)
+        cp._checkpoint = interposing_checkpoint
+
+        try:
+            await cp.checkpoint("shard-0", "seq-1")
+            await cp.manual_checkpoint()
+
+            # seq-2 was buffered during the await; the conditional pop must have
+            # spared it. A subsequent flush will drain it on the next call.
+            assert cp._manual_checkpoints == {"shard-0": "seq-2"}
+        finally:
+            await cp.close()
 
     @pytest.mark.asyncio
     async def test_manual_checkpoint_flush_success_path_emits_per_shard(self):

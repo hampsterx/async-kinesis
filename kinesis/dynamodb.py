@@ -211,13 +211,19 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
         await self._checkpoint(shard_id, sequence)
 
     async def manual_checkpoint(self) -> None:
-        """Flush all manual checkpoints to DynamoDB."""
-        items = [(k, v) for k, v in self._manual_checkpoints.items()]
+        """Flush all manual checkpoints to DynamoDB.
 
-        self._manual_checkpoints = {}
-
-        for shard_id, sequence in items:
+        Pops per-shard on success so a mid-loop raise leaves the remaining
+        shards buffered for retry on the next manual_checkpoint() call.
+        Only pop if the buffered value still matches what we just flushed:
+        a concurrent checkpoint() during the await may have buffered a newer
+        sequence for the same shard, which must not be dropped.
+        """
+        for shard_id in list(self._manual_checkpoints):
+            sequence = self._manual_checkpoints[shard_id]
             await self._checkpoint(shard_id, sequence)
+            if self._manual_checkpoints.get(shard_id) == sequence:
+                self._manual_checkpoints.pop(shard_id, None)
 
     async def _checkpoint(self, shard_id: str, sequence: str) -> None:
         """Internal checkpoint implementation."""

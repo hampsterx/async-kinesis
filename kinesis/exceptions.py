@@ -24,3 +24,7 @@ class UnknownException(Exception):
 
 class ValidationError(Exception):
     pass
+
+
+class CheckpointStateConflict(Exception):
+    pass

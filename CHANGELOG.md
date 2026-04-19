@@ -4,6 +4,16 @@
 
 ### Fixed
 - `RedisCheckPointer.manual_checkpoint()` and `DynamoDBCheckPointer.manual_checkpoint()`
+  are now best-effort: every buffered shard is attempted on each call, and
+  per-shard failures are collected rather than aborting on the first raise.
+  Previously, a shard that repeatedly failed at the head of the buffer (lost
+  lease, persistent backend error, malformed sequence) would block every shard
+  behind it from ever being flushed, because dict iteration is insertion-ordered.
+  Failing shards still stay buffered for retry; successful shards are popped.
+  When one or more shards fail, the call raises a new `CheckpointFlushError`
+  carrying the per-shard failures in `.errors`. Fixes
+  [#79](https://github.com/hampsterx/async-kinesis/issues/79).
+- `RedisCheckPointer.manual_checkpoint()` and `DynamoDBCheckPointer.manual_checkpoint()`
   no longer drop buffered checkpoints on a mid-loop exception. Previously, both
   cleared `_manual_checkpoints` before iterating, so if the backend raised for
   shard N, the entries for shards N+1..end were evicted and never retried.
@@ -12,6 +22,13 @@
   that tripped also stays buffered (it was not successfully persisted), so
   callers that retry will re-attempt it alongside the rest. Fixes
   [#76](https://github.com/hampsterx/async-kinesis/issues/76).
+
+### Added
+- `CheckpointFlushError` exception, exported from the top-level `kinesis`
+  package. Raised by `manual_checkpoint()` when one or more per-shard flushes
+  fail. Carries `.errors: list[tuple[str, BaseException]]` in attempt order;
+  `__cause__` is set to the first underlying exception so tracebacks still
+  show a real failure.
 - `consumer_checkpoint_success_total` / `_failure_total` now count actual backend
   persist operations. Previously, under `auto_checkpoint=False` (Redis / DynamoDB
   manual mode), the consumer-side wrapper incremented success on every
@@ -22,6 +39,13 @@
   Consumer appear under a new sentinel `stream_name="<standalone>"`.
 
 ### Backwards compatibility
+- **`manual_checkpoint()` exception type**: callers that caught the inner
+  exception type directly (e.g. `except RuntimeError:`, `except ClientError:`)
+  will no longer match, because the call now wraps per-shard failures in
+  `CheckpointFlushError`. Catch `CheckpointFlushError` and inspect `.errors`
+  for per-shard detail, or broaden to `except Exception:` if the distinction
+  does not matter. `CheckpointFlushError` subclasses `Exception`, so existing
+  `except Exception:` clauses continue to work.
 - **Shared checkpointer across Consumers** (`BaseCheckPointer` subclasses only):
   reusing a single `MemoryCheckPointer` / `RedisCheckPointer` / `DynamoDBCheckPointer`
   instance across multiple `Consumer`s with different `stream_name` or different

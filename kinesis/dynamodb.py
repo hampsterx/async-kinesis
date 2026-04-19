@@ -8,9 +8,9 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from .checkpointers import BaseHeartbeatCheckPointer
+from .checkpointers import BaseHeartbeatCheckPointer, CheckpointFlushError
 
 log = logging.getLogger(__name__)
 
@@ -219,19 +219,35 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
         await self._checkpoint(shard_id, sequence)
 
     async def manual_checkpoint(self) -> None:
-        """Flush all manual checkpoints to DynamoDB.
+        """Flush all buffered manual checkpoints to DynamoDB, best-effort.
 
-        Pops per-shard on success so a mid-loop raise leaves the remaining
-        shards buffered for retry on the next manual_checkpoint() call.
-        Only pop if the buffered value still matches what we just flushed:
-        a concurrent checkpoint() during the await may have buffered a newer
-        sequence for the same shard, which must not be dropped.
+        Every buffered shard is attempted on each call. A shard whose flush
+        raises is left in the buffer (so a poison-pill shard does not block
+        the shards behind it from ever being flushed); shards that succeed
+        are popped. The success-path pop is guarded by a value-match check,
+        so a concurrent ``checkpoint()`` that buffered a newer sequence for
+        the same shard mid-flight is not silently dropped.
+
+        Raises:
+            CheckpointFlushError: if one or more shards raised. The compound
+                exception carries the per-shard failures in ``.errors``.
+                Per-shard ``consumer_checkpoint_failure_total`` counters are
+                emitted from inside ``_checkpoint`` as each flush fails, so
+                callers should monitor that metric for alerting rather than
+                parsing the exception.
         """
+        errors: List[Tuple[str, BaseException]] = []
         for shard_id in list(self._manual_checkpoints):
             sequence = self._manual_checkpoints[shard_id]
-            await self._checkpoint(shard_id, sequence)
+            try:
+                await self._checkpoint(shard_id, sequence)
+            except Exception as exc:
+                errors.append((shard_id, exc))
+                continue
             if self._manual_checkpoints.get(shard_id) == sequence:
                 self._manual_checkpoints.pop(shard_id, None)
+        if errors:
+            raise CheckpointFlushError(errors) from errors[0][1]
 
     async def _checkpoint(self, shard_id: str, sequence: str) -> None:
         """Internal checkpoint implementation."""

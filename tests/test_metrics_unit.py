@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiohttp import ClientConnectionError
-from botocore.exceptions import ClientError
+from botocore.exceptions import (
+    ClientError,
+    ConnectionClosedError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 
 from kinesis import (
     CheckpointFlushError,
@@ -334,6 +339,111 @@ class TestConsumerFetchEmits:
         await _drain_pending_shard_fetch(consumer)
 
     @pytest.mark.asyncio
+    async def test_fetch_reemits_last_iterator_age_on_error_branch(self, mock_consumer):
+        """After a successful fetch caches MillisBehindLatest, a subsequent failed
+        fetch (get_records returned None) must re-emit the cached value so the
+        gauge stays observable during error spikes."""
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+        await consumer.checkpointer.allocate("shard-0")
+        consumer.refresh_shards = AsyncMock()
+        consumer.get_records = AsyncMock(return_value=None)
+
+        # 1) First fetch succeeds and caches MillisBehindLatest on the shard.
+        self._prime_shard_with_result(
+            consumer,
+            {"Records": [], "NextShardIterator": "next-iter-1", "MillisBehindLatest": 12345},
+        )
+        await consumer.fetch()
+
+        key = f"consumer_iterator_age_milliseconds{{{_shard_labels('shard-0')}}}"
+        assert collector.gauges[key] == 12345
+
+        await _drain_pending_shard_fetch(consumer)
+
+        # 2) Second fetch errors out (result is None via the same mechanism as a
+        # connection/timeout failure). The gauge must still be emitted with the
+        # cached value so Prometheus doesn't treat it as stale.
+        collector.gauges.clear()  # isolate the error-branch emission
+        fetch_future = asyncio.Future()
+        fetch_future.set_result(None)
+        consumer.shards[0]["fetch"] = fetch_future
+        consumer.shards[0]["ShardIterator"] = "curr-iter"
+
+        await consumer.fetch()
+
+        assert collector.gauges[key] == 12345  # cached value re-emitted unchanged
+
+        await _drain_pending_shard_fetch(consumer)
+
+    @pytest.mark.asyncio
+    async def test_fetch_invalidates_cached_iterator_age_when_field_disappears(self, mock_consumer):
+        """If a later successful fetch omits MillisBehindLatest (backend stopped
+        supplying it), the cache must be cleared so the error branch no longer
+        re-emits the old value."""
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+        await consumer.checkpointer.allocate("shard-0")
+        consumer.refresh_shards = AsyncMock()
+        consumer.get_records = AsyncMock(return_value=None)
+
+        # 1) Prime cache with a successful fetch carrying MillisBehindLatest.
+        self._prime_shard_with_result(
+            consumer,
+            {"Records": [], "NextShardIterator": "iter-1", "MillisBehindLatest": 777},
+        )
+        await consumer.fetch()
+        assert consumer.shards[0].get("LastMillisBehindLatest") == 777
+
+        await _drain_pending_shard_fetch(consumer)
+
+        # 2) Successful fetch without the field should clear the cache.
+        fetch_future = asyncio.Future()
+        fetch_future.set_result({"Records": [], "NextShardIterator": "iter-2"})
+        consumer.shards[0]["fetch"] = fetch_future
+        consumer.shards[0]["ShardIterator"] = "iter-1"
+        await consumer.fetch()
+        assert "LastMillisBehindLatest" not in consumer.shards[0]
+
+        await _drain_pending_shard_fetch(consumer)
+
+        # 3) Error branch must not re-emit the now-invalidated value.
+        collector.gauges.clear()
+        fetch_future = asyncio.Future()
+        fetch_future.set_result(None)
+        consumer.shards[0]["fetch"] = fetch_future
+        consumer.shards[0]["ShardIterator"] = "iter-2"
+        await consumer.fetch()
+
+        iterator_age_keys = [k for k in collector.gauges if k.startswith("consumer_iterator_age_milliseconds")]
+        assert iterator_age_keys == []
+
+        await _drain_pending_shard_fetch(consumer)
+
+    @pytest.mark.asyncio
+    async def test_fetch_error_branch_skips_iterator_age_when_no_cache(self, mock_consumer):
+        """Error branch must not emit iterator_age with a fabricated zero when we
+        never had a successful fetch (avoids misleading ``MillisBehindLatest=0``
+        during startup connection failures)."""
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+        await consumer.checkpointer.allocate("shard-0")
+        consumer.refresh_shards = AsyncMock()
+        consumer.get_records = AsyncMock(return_value=None)
+
+        self._prime_shard_with_result(consumer, None)  # error branch
+
+        await consumer.fetch()
+
+        iterator_age_keys = [k for k in collector.gauges if k.startswith("consumer_iterator_age_milliseconds")]
+        assert iterator_age_keys == []
+
+        await _drain_pending_shard_fetch(consumer)
+
+    @pytest.mark.asyncio
     async def test_fetch_counts_only_successfully_enqueued_rows(self, mock_consumer):
         """Rows that time out mid-batch must not be counted (avoid double-count on retry)."""
         collector = InMemoryMetricsCollector()
@@ -401,6 +511,65 @@ class TestConsumerGetRecordsErrors:
         await consumer.get_records(self._shard())
 
         key = f"consumer_errors_total{{error_type=connection,{_shard_labels('shard-0')}}}"
+        assert collector.counters[key] == 1
+
+    @pytest.mark.asyncio
+    async def test_botocore_connection_closed_emits_connection_label(self, mock_consumer):
+        """Real AWS commonly raises botocore ConnectionClosedError when an idle
+        keep-alive connection is dropped mid-response. Prior to #73 fix this fell
+        through to the catch-all and got mislabeled as error_type=unknown."""
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.client = MagicMock()
+        consumer.client.get_records = AsyncMock(
+            side_effect=ConnectionClosedError(endpoint_url="https://kinesis.us-east-1.amazonaws.com/")
+        )
+        consumer.get_conn = AsyncMock()
+
+        await consumer.get_records(self._shard())
+
+        key = f"consumer_errors_total{{error_type=connection,{_shard_labels('shard-0')}}}"
+        assert collector.counters[key] == 1
+        # Must rebuild client, not just sleep — same remediation as ClientConnectionError
+        consumer.get_conn.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_botocore_endpoint_connection_error_emits_connection_label(self, mock_consumer):
+        """botocore.EndpointConnectionError (DNS/TCP failure before request is sent)."""
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.client = MagicMock()
+        consumer.client.get_records = AsyncMock(
+            side_effect=EndpointConnectionError(endpoint_url="https://kinesis.us-east-1.amazonaws.com/")
+        )
+        consumer.get_conn = AsyncMock()
+
+        await consumer.get_records(self._shard())
+
+        key = f"consumer_errors_total{{error_type=connection,{_shard_labels('shard-0')}}}"
+        assert collector.counters[key] == 1
+        consumer.get_conn.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_botocore_read_timeout_emits_timeout_label(self, mock_consumer):
+        """botocore.ReadTimeoutError lands in the timeout bucket, not unknown."""
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.client = MagicMock()
+        consumer.client.get_records = AsyncMock(
+            side_effect=ReadTimeoutError(endpoint_url="https://kinesis.us-east-1.amazonaws.com/")
+        )
+
+        orig_sleep = asyncio.sleep
+
+        async def fast_sleep(_):
+            await orig_sleep(0)
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(asyncio, "sleep", fast_sleep)
+            await consumer.get_records(self._shard())
+
+        key = f"consumer_errors_total{{error_type=timeout,{_shard_labels('shard-0')}}}"
         assert collector.counters[key] == 1
 
     @pytest.mark.asyncio

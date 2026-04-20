@@ -6,7 +6,12 @@ from typing import Any, AsyncIterator, Dict, Optional
 
 from aiobotocore.session import AioSession
 from aiohttp import ClientConnectionError
-from botocore.exceptions import ClientError
+from botocore.exceptions import (
+    ClientError,
+    ConnectionClosedError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 
 from .base import Base
 from .checkpointers import CheckPointer, MemoryCheckPointer
@@ -295,6 +300,17 @@ class Consumer(Base):
                             self.queue.qsize(),
                             {"stream_name": self.stream_name},
                         )
+                        # Re-emit last-known iterator age so the gauge doesn't go
+                        # silent during error spikes (the exact window where
+                        # monitoring matters most). Value is stale by definition;
+                        # pair with consumer_errors_total rate to detect it.
+                        last_millis = shard.get("LastMillisBehindLatest")
+                        if last_millis is not None:
+                            self.metrics.gauge(
+                                MetricType.CONSUMER_ITERATOR_AGE,
+                                last_millis,
+                                {"stream_name": self.stream_name, "shard_id": shard["ShardId"]},
+                            )
                         shard["fetch"] = None
                         continue
 
@@ -302,11 +318,16 @@ class Consumer(Base):
 
                     millis_behind = result.get("MillisBehindLatest")
                     if millis_behind is not None:
+                        shard["LastMillisBehindLatest"] = millis_behind
                         self.metrics.gauge(
                             MetricType.CONSUMER_ITERATOR_AGE,
                             millis_behind,
                             {"stream_name": self.stream_name, "shard_id": shard["ShardId"]},
                         )
+                    else:
+                        # Backend stopped supplying iterator age; drop the cache so
+                        # future error branches don't keep re-emitting a stale value.
+                        shard.pop("LastMillisBehindLatest", None)
 
                     if records:
                         log.debug("Shard {} got {} records".format(shard["ShardId"], len(records)))
@@ -475,14 +496,17 @@ class Consumer(Base):
                 shard["stats"].succeded()
                 return result
 
-            except ClientConnectionError:
+            except (ClientConnectionError, ConnectionClosedError, EndpointConnectionError) as e:
+                # botocore wraps idle keep-alive drops and DNS/TCP failures as
+                # BotoCoreError subclasses; they previously fell to the catch-all.
                 self.metrics.increment(
                     MetricType.CONSUMER_ERRORS,
                     1,
                     {"stream_name": self.stream_name, "shard_id": shard["ShardId"], "error_type": "connection"},
                 )
+                log.warning("Connection error {}. rebuilding client..".format(e))
                 await self.get_conn()
-            except TimeoutError as e:
+            except (TimeoutError, ReadTimeoutError) as e:
                 self.metrics.increment(
                     MetricType.CONSUMER_ERRORS,
                     1,

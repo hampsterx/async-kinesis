@@ -217,7 +217,7 @@ class TestHeartbeatRobustness:
             seen.append(key)
             # Mid-tick: simulate concurrent deallocate() popping another shard.
             cp._items.pop("shard-1", None)
-            if len(seen) == 2:
+            if {"shard-0", "shard-1"}.issubset(seen):
                 both_seen.set()
 
         cp.do_heartbeat = mutating_heartbeat
@@ -234,7 +234,10 @@ class TestHeartbeatRobustness:
             except asyncio.CancelledError:
                 pass
 
-        assert len(seen) == 2, f"iteration aborted early (missing fix?): {seen}"
+        # Extra shard-0 observations from subsequent ticks before cancel are
+        # fine; we only care that the first tick processed both snapshot
+        # entries instead of raising RuntimeError mid-iteration.
+        assert {"shard-0", "shard-1"}.issubset(seen), f"iteration aborted early (missing fix?): {seen}"
 
     @pytest.mark.asyncio
     async def test_close_deallocates_when_heartbeat_crashed(self):

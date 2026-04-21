@@ -184,3 +184,84 @@ class TestBaseCheckpointContract:
 
         assert cp._manual_checkpoints == {"shard-0": "seq-2"}
         assert cp.writes == {"shard-0": "seq-1"}
+
+
+class TestHeartbeatRobustness:
+    """Issue #81: heartbeat iteration and close() must survive concurrent
+    mutation / task death so shards don't leak."""
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_survives_concurrent_items_mutation(self):
+        """Without list(self._items.items()), a concurrent deallocate()-style
+        pop during the awaited do_heartbeat raises
+        RuntimeError: dictionary changed size during iteration.
+
+        Doesn't claim to stop stale writes on de-allocated shards: that's a
+        separate ownership-race problem (see PLAN_ISSUE_80). Only guards the
+        iteration itself.
+        """
+        cp = FakeHeartbeatCheckPointer()
+        # Drain the auto-started heartbeat task; we drive our own below.
+        cp.heartbeat_task.cancel()
+        try:
+            await cp.heartbeat_task
+        except asyncio.CancelledError:
+            pass
+
+        cp._items = {"shard-0": "seq-0", "shard-1": "seq-1"}
+        cp.heartbeat_frequency = 0
+        both_seen = asyncio.Event()
+        seen = []
+
+        async def mutating_heartbeat(key, value):
+            seen.append(key)
+            # Mid-tick: simulate concurrent deallocate() popping another shard.
+            cp._items.pop("shard-1", None)
+            if len(seen) == 2:
+                both_seen.set()
+
+        cp.do_heartbeat = mutating_heartbeat
+
+        task = asyncio.create_task(cp.heartbeat())
+        try:
+            # Without the list() snapshot, the iterator raises after the first
+            # tick body pops shard-1 and both_seen never fires.
+            await asyncio.wait_for(both_seen.wait(), timeout=1.0)
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        assert len(seen) == 2, f"iteration aborted early (missing fix?): {seen}"
+
+    @pytest.mark.asyncio
+    async def test_close_deallocates_when_heartbeat_crashed(self):
+        """If the heartbeat task died with a non-Cancel exception before
+        close() was called, close() must still deallocate every shard.
+        Guards against the PR #83 shape that awaited the task but only
+        swallowed CancelledError.
+        """
+
+        class CrashingHeartbeatCheckPointer(FakeHeartbeatCheckPointer):
+            async def heartbeat(self):
+                raise RuntimeError("heartbeat dead")
+
+        cp = CrashingHeartbeatCheckPointer()
+        await cp.allocate("shard-0")
+        await cp.allocate("shard-1")
+        assert cp._items == {"shard-0": None, "shard-1": None}
+
+        # Let the task run and die.
+        for _ in range(20):
+            await asyncio.sleep(0)
+            if cp.heartbeat_task.done():
+                break
+        assert cp.heartbeat_task.done()
+
+        # Without the broad `except Exception` in close(), awaiting the crashed
+        # task re-raises RuntimeError and super().close() never runs.
+        await cp.close()
+
+        assert cp._items == {}

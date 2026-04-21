@@ -489,9 +489,23 @@ class Consumer(Base):
         async with shard["throttler"]:
             # log.debug("get_records shard={}".format(shard['ShardId']))
 
+            # Snapshot the client. _get_reconn_helper() (base.py) sets
+            # self.client = None while rebuilding the aiobotocore client, and
+            # the throttler's async-with above is an await point: self.client
+            # can flip to None during it. Read once so the check and the call
+            # below are atomic with respect to the shared attribute. Without
+            # this, concurrent shards land in the catch-all with
+            # AttributeError("'NoneType' object has no attribute 'get_records'")
+            # and pollute error_type=unknown; the triggering connection error
+            # was already counted on the shard that initiated the reconnect.
+            client = self.client
+            if client is None:
+                log.debug("client rebuild in progress, skipping get_records on %s", shard["ShardId"])
+                return None
+
             try:
 
-                result = await self.client.get_records(ShardIterator=shard["ShardIterator"], Limit=self.record_limit)
+                result = await client.get_records(ShardIterator=shard["ShardIterator"], Limit=self.record_limit)
 
                 shard["stats"].succeded()
                 return result

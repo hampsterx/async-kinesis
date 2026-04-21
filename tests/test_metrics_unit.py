@@ -636,6 +636,61 @@ class TestConsumerGetRecordsErrors:
         key = f"consumer_errors_total{{error_type=unknown,{_shard_labels('shard-0')}}}"
         assert collector.counters[key] == 1
 
+    @pytest.mark.asyncio
+    async def test_none_client_skips_without_raising_or_counting_error(self, mock_consumer):
+        """When _get_reconn_helper has set self.client = None on one shard's
+        connection error, concurrent get_records dispatches from fetch() must
+        return None quietly rather than hit the catch-all with
+        AttributeError("'NoneType' object has no attribute 'get_records'") and
+        pollute error_type=unknown. Regression from 2.5.2 reported on #73."""
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.client = None  # simulate mid-reconnect state
+
+        result = await consumer.get_records(self._shard())
+
+        assert result is None
+        # No error metric should be emitted for the skipped-because-rebuilding
+        # case; the triggering connection error was already counted on the
+        # shard that initiated the reconnect.
+        assert not any(k.startswith("consumer_errors_total") for k in collector.counters), collector.counters
+
+    @pytest.mark.asyncio
+    async def test_client_nulled_during_throttler_await_does_not_raise(self, mock_consumer):
+        """Tighter race: self.client is valid on function entry but flips to
+        None while the throttler's __aenter__ is awaiting (e.g. another shard
+        triggered _get_reconn_helper in the meantime). The snapshot-and-check
+        inside the throttler block must catch this; without it, dereferencing
+        self.client later in the same method would AttributeError and pollute
+        error_type=unknown."""
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        consumer.client = MagicMock()
+        consumer.client.get_records = AsyncMock(return_value={"Records": [], "NextShardIterator": "next"})
+
+        shard = self._shard()
+
+        # Wrap the throttler so that during its acquire (an await point),
+        # consumer.client flips to None. Simulates _get_reconn_helper running
+        # on another task between function entry and the get_records call.
+        real_throttler = shard["throttler"]
+
+        class RaceThrottler:
+            async def __aenter__(self):
+                await real_throttler.__aenter__()
+                consumer.client = None
+                return self
+
+            async def __aexit__(self, *exc):
+                return await real_throttler.__aexit__(*exc)
+
+        shard["throttler"] = RaceThrottler()
+
+        result = await consumer.get_records(shard)
+
+        assert result is None
+        assert not any(k.startswith("consumer_errors_total") for k in collector.counters), collector.counters
+
 
 async def _make_redis_cp(auto_checkpoint=True):
     """Construct a RedisCheckPointer with a mocked client and a cancelled heartbeat task.

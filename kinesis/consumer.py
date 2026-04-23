@@ -518,8 +518,8 @@ class Consumer(Base):
                     1,
                     {"stream_name": self.stream_name, "shard_id": shard["ShardId"], "error_type": "connection"},
                 )
-                log.warning("Connection error {}. rebuilding client..".format(e))
-                await self.get_conn()
+                log.warning("Connection error {}. sleeping..".format(e))
+                await asyncio.sleep(3)
             except (TimeoutError, ReadTimeoutError) as e:
                 self.metrics.increment(
                     MetricType.CONSUMER_ERRORS,
@@ -571,8 +571,8 @@ class Consumer(Base):
                         shard.pop("ShardIterator", None)
 
                 elif code == "InternalFailure":
-                    log.warning("Received InternalFailure from Kinesis, rebuilding connection.. ")
-                    await self.get_conn()
+                    log.warning("Received InternalFailure from Kinesis, sleeping..")
+                    await asyncio.sleep(3)
 
                 else:
                     log.warning("ClientError {}. sleeping..".format(code))

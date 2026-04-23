@@ -508,10 +508,18 @@ class TestConsumerGetRecordsErrors:
         consumer.client.get_records = AsyncMock(side_effect=ClientConnectionError("boom"))
         consumer.get_conn = AsyncMock()
 
-        await consumer.get_records(self._shard())
+        orig_sleep = asyncio.sleep
+
+        async def fast_sleep(_):
+            await orig_sleep(0)
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(asyncio, "sleep", fast_sleep)
+            await consumer.get_records(self._shard())
 
         key = f"consumer_errors_total{{error_type=connection,{_shard_labels('shard-0')}}}"
         assert collector.counters[key] == 1
+        consumer.get_conn.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_botocore_connection_closed_emits_connection_label(self, mock_consumer):
@@ -526,16 +534,23 @@ class TestConsumerGetRecordsErrors:
         )
         consumer.get_conn = AsyncMock()
 
-        await consumer.get_records(self._shard())
+        orig_sleep = asyncio.sleep
+
+        async def fast_sleep(_):
+            await orig_sleep(0)
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(asyncio, "sleep", fast_sleep)
+            await consumer.get_records(self._shard())
 
         key = f"consumer_errors_total{{error_type=connection,{_shard_labels('shard-0')}}}"
         assert collector.counters[key] == 1
-        # Must rebuild client, not just sleep — same remediation as ClientConnectionError
-        consumer.get_conn.assert_awaited_once()
+        consumer.get_conn.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_botocore_endpoint_connection_error_emits_connection_label(self, mock_consumer):
-        """botocore.EndpointConnectionError (DNS/TCP failure before request is sent)."""
+        """botocore.EndpointConnectionError (DNS/TCP failure before request is sent)
+        should be counted as a connection error and return without rebuilding."""
         collector = InMemoryMetricsCollector()
         consumer = mock_consumer(metrics_collector=collector)
         consumer.client = MagicMock()
@@ -544,11 +559,18 @@ class TestConsumerGetRecordsErrors:
         )
         consumer.get_conn = AsyncMock()
 
-        await consumer.get_records(self._shard())
+        orig_sleep = asyncio.sleep
+
+        async def fast_sleep(_):
+            await orig_sleep(0)
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(asyncio, "sleep", fast_sleep)
+            await consumer.get_records(self._shard())
 
         key = f"consumer_errors_total{{error_type=connection,{_shard_labels('shard-0')}}}"
         assert collector.counters[key] == 1
-        consumer.get_conn.assert_awaited_once()
+        consumer.get_conn.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_botocore_read_timeout_emits_timeout_label(self, mock_consumer):
@@ -616,6 +638,31 @@ class TestConsumerGetRecordsErrors:
             "consumer_errors_total{" f"error_type=ProvisionedThroughputExceededException,{_shard_labels('shard-0')}" "}"
         )
         assert collector.counters[key] == 1
+
+    @pytest.mark.asyncio
+    async def test_internal_failure_no_longer_rebuilds(self, mock_consumer):
+        collector = InMemoryMetricsCollector()
+        consumer = mock_consumer(metrics_collector=collector)
+        err = ClientError(
+            {"Error": {"Code": "InternalFailure", "Message": "internal failure"}},
+            "GetRecords",
+        )
+        consumer.client = MagicMock()
+        consumer.client.get_records = AsyncMock(side_effect=err)
+        consumer.get_conn = AsyncMock()
+
+        orig_sleep = asyncio.sleep
+
+        async def fast_sleep(_):
+            await orig_sleep(0)
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(asyncio, "sleep", fast_sleep)
+            await consumer.get_records(self._shard())
+
+        key = f"consumer_errors_total{{error_type=InternalFailure,{_shard_labels('shard-0')}}}"
+        assert collector.counters[key] == 1
+        consumer.get_conn.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_unknown_exception_emits_unknown_label(self, mock_consumer):

@@ -28,6 +28,18 @@ from kinesis.metrics import Timer
 from kinesis.utils import Throttler
 
 
+@pytest.fixture
+def fast_asyncio_sleep(monkeypatch):
+    """Replace asyncio.sleep with a zero-delay awaitable for retry-path tests."""
+    orig_sleep = asyncio.sleep
+
+    async def fast_sleep(_):
+        await orig_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+    return fast_sleep
+
+
 class TestNoOpMetricsCollector:
     def test_all_operations_are_noop(self):
         """Test that NoOpMetricsCollector does nothing."""
@@ -501,28 +513,21 @@ class TestConsumerGetRecordsErrors:
         }
 
     @pytest.mark.asyncio
-    async def test_connection_error_emits_connection_label(self, mock_consumer):
+    async def test_connection_error_emits_connection_label(self, mock_consumer, fast_asyncio_sleep):
         collector = InMemoryMetricsCollector()
         consumer = mock_consumer(metrics_collector=collector)
         consumer.client = MagicMock()
         consumer.client.get_records = AsyncMock(side_effect=ClientConnectionError("boom"))
         consumer.get_conn = AsyncMock()
 
-        orig_sleep = asyncio.sleep
-
-        async def fast_sleep(_):
-            await orig_sleep(0)
-
-        with pytest.MonkeyPatch().context() as mp:
-            mp.setattr(asyncio, "sleep", fast_sleep)
-            await consumer.get_records(self._shard())
+        await consumer.get_records(self._shard())
 
         key = f"consumer_errors_total{{error_type=connection,{_shard_labels('shard-0')}}}"
         assert collector.counters[key] == 1
         consumer.get_conn.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_botocore_connection_closed_emits_connection_label(self, mock_consumer):
+    async def test_botocore_connection_closed_emits_connection_label(self, mock_consumer, fast_asyncio_sleep):
         """Real AWS commonly raises botocore ConnectionClosedError when an idle
         keep-alive connection is dropped mid-response. Prior to #73 fix this fell
         through to the catch-all and got mislabeled as error_type=unknown."""
@@ -534,21 +539,14 @@ class TestConsumerGetRecordsErrors:
         )
         consumer.get_conn = AsyncMock()
 
-        orig_sleep = asyncio.sleep
-
-        async def fast_sleep(_):
-            await orig_sleep(0)
-
-        with pytest.MonkeyPatch().context() as mp:
-            mp.setattr(asyncio, "sleep", fast_sleep)
-            await consumer.get_records(self._shard())
+        await consumer.get_records(self._shard())
 
         key = f"consumer_errors_total{{error_type=connection,{_shard_labels('shard-0')}}}"
         assert collector.counters[key] == 1
         consumer.get_conn.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_botocore_endpoint_connection_error_emits_connection_label(self, mock_consumer):
+    async def test_botocore_endpoint_connection_error_emits_connection_label(self, mock_consumer, fast_asyncio_sleep):
         """botocore.EndpointConnectionError (DNS/TCP failure before request is sent)
         should be counted as a connection error and return without rebuilding."""
         collector = InMemoryMetricsCollector()
@@ -559,21 +557,14 @@ class TestConsumerGetRecordsErrors:
         )
         consumer.get_conn = AsyncMock()
 
-        orig_sleep = asyncio.sleep
-
-        async def fast_sleep(_):
-            await orig_sleep(0)
-
-        with pytest.MonkeyPatch().context() as mp:
-            mp.setattr(asyncio, "sleep", fast_sleep)
-            await consumer.get_records(self._shard())
+        await consumer.get_records(self._shard())
 
         key = f"consumer_errors_total{{error_type=connection,{_shard_labels('shard-0')}}}"
         assert collector.counters[key] == 1
         consumer.get_conn.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_botocore_read_timeout_emits_timeout_label(self, mock_consumer):
+    async def test_botocore_read_timeout_emits_timeout_label(self, mock_consumer, fast_asyncio_sleep):
         """botocore.ReadTimeoutError lands in the timeout bucket, not unknown."""
         collector = InMemoryMetricsCollector()
         consumer = mock_consumer(metrics_collector=collector)
@@ -582,40 +573,25 @@ class TestConsumerGetRecordsErrors:
             side_effect=ReadTimeoutError(endpoint_url="https://kinesis.us-east-1.amazonaws.com/")
         )
 
-        orig_sleep = asyncio.sleep
-
-        async def fast_sleep(_):
-            await orig_sleep(0)
-
-        with pytest.MonkeyPatch().context() as mp:
-            mp.setattr(asyncio, "sleep", fast_sleep)
-            await consumer.get_records(self._shard())
+        await consumer.get_records(self._shard())
 
         key = f"consumer_errors_total{{error_type=timeout,{_shard_labels('shard-0')}}}"
         assert collector.counters[key] == 1
 
     @pytest.mark.asyncio
-    async def test_timeout_emits_timeout_label(self, mock_consumer):
+    async def test_timeout_emits_timeout_label(self, mock_consumer, fast_asyncio_sleep):
         collector = InMemoryMetricsCollector()
         consumer = mock_consumer(metrics_collector=collector)
         consumer.client = MagicMock()
         consumer.client.get_records = AsyncMock(side_effect=asyncio.TimeoutError())
 
-        # Monkeypatch asyncio.sleep inside the except block to avoid 3s wait.
-        orig_sleep = asyncio.sleep
-
-        async def fast_sleep(_):
-            await orig_sleep(0)
-
-        with pytest.MonkeyPatch().context() as mp:
-            mp.setattr(asyncio, "sleep", fast_sleep)
-            await consumer.get_records(self._shard())
+        await consumer.get_records(self._shard())
 
         key = f"consumer_errors_total{{error_type=timeout,{_shard_labels('shard-0')}}}"
         assert collector.counters[key] == 1
 
     @pytest.mark.asyncio
-    async def test_client_error_emits_raw_code_label(self, mock_consumer):
+    async def test_client_error_emits_raw_code_label(self, mock_consumer, fast_asyncio_sleep):
         collector = InMemoryMetricsCollector()
         consumer = mock_consumer(metrics_collector=collector)
         err = ClientError(
@@ -625,14 +601,7 @@ class TestConsumerGetRecordsErrors:
         consumer.client = MagicMock()
         consumer.client.get_records = AsyncMock(side_effect=err)
 
-        orig_sleep = asyncio.sleep
-
-        async def fast_sleep(_):
-            await orig_sleep(0)
-
-        with pytest.MonkeyPatch().context() as mp:
-            mp.setattr(asyncio, "sleep", fast_sleep)
-            await consumer.get_records(self._shard())
+        await consumer.get_records(self._shard())
 
         key = (
             "consumer_errors_total{" f"error_type=ProvisionedThroughputExceededException,{_shard_labels('shard-0')}" "}"
@@ -640,7 +609,7 @@ class TestConsumerGetRecordsErrors:
         assert collector.counters[key] == 1
 
     @pytest.mark.asyncio
-    async def test_internal_failure_no_longer_rebuilds(self, mock_consumer):
+    async def test_internal_failure_no_longer_rebuilds(self, mock_consumer, fast_asyncio_sleep):
         collector = InMemoryMetricsCollector()
         consumer = mock_consumer(metrics_collector=collector)
         err = ClientError(
@@ -651,34 +620,20 @@ class TestConsumerGetRecordsErrors:
         consumer.client.get_records = AsyncMock(side_effect=err)
         consumer.get_conn = AsyncMock()
 
-        orig_sleep = asyncio.sleep
-
-        async def fast_sleep(_):
-            await orig_sleep(0)
-
-        with pytest.MonkeyPatch().context() as mp:
-            mp.setattr(asyncio, "sleep", fast_sleep)
-            await consumer.get_records(self._shard())
+        await consumer.get_records(self._shard())
 
         key = f"consumer_errors_total{{error_type=InternalFailure,{_shard_labels('shard-0')}}}"
         assert collector.counters[key] == 1
         consumer.get_conn.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_unknown_exception_emits_unknown_label(self, mock_consumer):
+    async def test_unknown_exception_emits_unknown_label(self, mock_consumer, fast_asyncio_sleep):
         collector = InMemoryMetricsCollector()
         consumer = mock_consumer(metrics_collector=collector)
         consumer.client = MagicMock()
         consumer.client.get_records = AsyncMock(side_effect=RuntimeError("surprise"))
 
-        orig_sleep = asyncio.sleep
-
-        async def fast_sleep(_):
-            await orig_sleep(0)
-
-        with pytest.MonkeyPatch().context() as mp:
-            mp.setattr(asyncio, "sleep", fast_sleep)
-            await consumer.get_records(self._shard())
+        await consumer.get_records(self._shard())
 
         key = f"consumer_errors_total{{error_type=unknown,{_shard_labels('shard-0')}}}"
         assert collector.counters[key] == 1

@@ -571,7 +571,8 @@ class Consumer(Base):
                         shard.pop("ShardIterator", None)
 
                 elif code == "InternalFailure":
-                    log.warning("Received InternalFailure from Kinesis, sleeping..")
+                    message = e.response.get("Error", {}).get("Message", str(e))
+                    log.warning("Received InternalFailure from Kinesis: {}. sleeping..".format(message))
                     await asyncio.sleep(3)
 
                 else:

@@ -48,7 +48,6 @@ class TestDynamoDBCheckPointer:
             with patch("kinesis.dynamodb.aioboto3") as mock_aioboto3:
                 # Mock session
                 mock_session = MagicMock()
-                mock_session.close = AsyncMock()
                 mock_aioboto3.Session.return_value = mock_session
 
                 # Mock DynamoDB resource

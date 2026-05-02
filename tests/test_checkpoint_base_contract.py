@@ -186,6 +186,71 @@ class TestBaseCheckpointContract:
         assert cp.writes == {"shard-0": "seq-1"}
 
 
+class TestManualCheckpointConcurrency:
+    """Issue #80 hazard 2: two tasks calling ``manual_checkpoint()`` must not
+    double-flush the same buffered shard. The base-class lock around the
+    flush body serialises them; only the first flusher writes any given
+    shard's buffered sequence, the second observes a drained buffer."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_flushes_serialise_per_shard(self, cp):
+        """Two ``manual_checkpoint()`` coroutines see each shard written
+        exactly once across the pair, in a deterministic order pinned by an
+        ``asyncio.Event`` injected mid-flush.
+
+        Without the lock both flushers iterate the same buffer snapshot and
+        each calls ``_checkpoint(shard, seq)`` once, producing two writes
+        per shard. With the lock the second flusher waits, sees the
+        shard already popped, and writes nothing.
+        """
+
+        await cp.checkpoint("shard-0", "seq-1")
+        await cp.checkpoint("shard-1", "seq-2")
+
+        write_log: list = []
+        gate = asyncio.Event()
+        first_in_flight = asyncio.Event()
+
+        async def gated_checkpoint(shard_id: str, sequence: str) -> None:
+            write_log.append((shard_id, sequence))
+            cp.writes[shard_id] = sequence
+            cp._items[shard_id] = sequence
+            if not first_in_flight.is_set():
+                first_in_flight.set()
+                await gate.wait()
+            cp._emit_checkpoint_success(shard_id)
+
+        cp._checkpoint = gated_checkpoint  # type: ignore[method-assign]
+
+        flush_a = asyncio.create_task(cp.manual_checkpoint())
+        await first_in_flight.wait()
+        flush_b = asyncio.create_task(cp.manual_checkpoint())
+        # Yield enough times for flush_b to reach the lock and block on it.
+        for _ in range(5):
+            await asyncio.sleep(0)
+        gate.set()
+        await asyncio.gather(flush_a, flush_b)
+
+        assert sorted(write_log) == [("shard-0", "seq-1"), ("shard-1", "seq-2")]
+        assert cp._manual_checkpoints == {}
+        assert cp.writes == {"shard-0": "seq-1", "shard-1": "seq-2"}
+
+    @pytest.mark.asyncio
+    async def test_second_flusher_sees_drained_buffer(self, cp):
+        """A second ``manual_checkpoint()`` arriving after the first drains
+        the buffer must return cleanly: empty buffer is a no-op, not an
+        error."""
+
+        await cp.checkpoint("shard-0", "seq-1")
+
+        await cp.manual_checkpoint()
+        # Second call against an already-drained buffer.
+        await cp.manual_checkpoint()
+
+        assert cp.writes == {"shard-0": "seq-1"}
+        assert cp._manual_checkpoints == {}
+
+
 class TestHeartbeatRobustness:
     """Issue #81: heartbeat iteration and close() must survive concurrent
     mutation / task death so shards don't leak."""

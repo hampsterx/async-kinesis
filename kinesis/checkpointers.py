@@ -172,6 +172,38 @@ class BaseCheckPointer:
 
 
 class BaseHeartbeatCheckPointer(BaseCheckPointer):
+    """Heartbeat-driven base for backend checkpointers (Redis, DynamoDB).
+
+    Concurrency contract:
+
+    * ``manual_checkpoint`` is the only method with explicit internal
+      serialisation. Concurrent callers from different tasks are guaranteed
+      not to double-flush the same buffered shard: the second caller waits
+      on ``_manual_flush_lock``, then iterates whatever the first left in
+      the buffer (failed shards retry, succeeded shards are gone). The lock
+      is held across backend writes, so a slow backend stalls concurrent
+      flushes.
+    * ``checkpoint`` with ``auto_checkpoint=False`` is a single dict
+      assignment to ``_manual_checkpoints`` and is safe to call from any
+      task. With ``auto_checkpoint=True`` it awaits ``_checkpoint`` directly
+      and offers no per-shard ordering guarantee against another concurrent
+      ``checkpoint`` for the same shard; on a last-writer-wins backend
+      (Redis ``GETSET``) two concurrent writers can race. The Consumer
+      drives this from a single task by design; callers building their own
+      driver must serialise per-shard themselves.
+    * ``allocate`` / ``deallocate`` perform backend writes and mutate
+      ``_items``. Concurrent calls for the *same* shard are not synchronised
+      and would race the backend lease/release; calls for *different* shards
+      are independent. The Consumer's shard manager invokes these from a
+      single task.
+    * ``heartbeat`` is owned by this class. The task is started in
+      ``__init__`` and torn down in ``close()``; do not invoke it directly.
+    * ``close`` should be called from a single task. Running it concurrently
+      with itself or with ``manual_checkpoint`` is undefined: ``close`` does
+      not take ``_manual_flush_lock`` and may deallocate a shard that an
+      in-flight flush is still writing.
+    """
+
     def __init__(
         self,
         name,
@@ -186,6 +218,7 @@ class BaseHeartbeatCheckPointer(BaseCheckPointer):
         self.heartbeat_frequency = heartbeat_frequency
         self.auto_checkpoint = auto_checkpoint
         self._manual_checkpoints: Dict[str, str] = {}
+        self._manual_flush_lock: asyncio.Lock = asyncio.Lock()
 
         self.heartbeat_task = asyncio.Task(self.heartbeat())
 
@@ -244,6 +277,12 @@ class BaseHeartbeatCheckPointer(BaseCheckPointer):
         so a concurrent ``checkpoint()`` that buffered a newer sequence for
         the same shard mid-flight is not silently dropped.
 
+        Concurrent callers serialise via ``_manual_flush_lock``: two tasks
+        calling ``manual_checkpoint()`` cannot both flush the same buffered
+        shard, which would otherwise risk an older sequence clobbering a
+        newer one on a last-writer-wins backend. See the class-level
+        thread-safety contract for the full picture.
+
         Raises:
             CheckpointFlushError: if one or more shards raised. The compound
                 exception carries the per-shard failures in ``.errors``.
@@ -252,18 +291,19 @@ class BaseHeartbeatCheckPointer(BaseCheckPointer):
                 callers should monitor that metric for alerting rather than
                 parsing the exception.
         """
-        errors: List[Tuple[str, BaseException]] = []
-        for shard_id in list(self._manual_checkpoints):
-            sequence = self._manual_checkpoints[shard_id]
-            try:
-                await self._checkpoint(shard_id, sequence)
-            except Exception as exc:
-                errors.append((shard_id, exc))
-                continue
-            if self._manual_checkpoints.get(shard_id) == sequence:
-                self._manual_checkpoints.pop(shard_id, None)
-        if errors:
-            raise CheckpointFlushError(errors) from errors[0][1]
+        async with self._manual_flush_lock:
+            errors: List[Tuple[str, BaseException]] = []
+            for shard_id in list(self._manual_checkpoints):
+                sequence = self._manual_checkpoints[shard_id]
+                try:
+                    await self._checkpoint(shard_id, sequence)
+                except Exception as exc:
+                    errors.append((shard_id, exc))
+                    continue
+                if self._manual_checkpoints.get(shard_id) == sequence:
+                    self._manual_checkpoints.pop(shard_id, None)
+            if errors:
+                raise CheckpointFlushError(errors) from errors[0][1]
 
 
 class MemoryCheckPointer(BaseCheckPointer):

@@ -404,6 +404,4 @@ class DynamoDBCheckPointer(BaseHeartbeatCheckPointer):
         """Clean up resources."""
         await super().close()
 
-        if self._session:
-            await self._session.close()
-            self._session = None
+        self._session = None

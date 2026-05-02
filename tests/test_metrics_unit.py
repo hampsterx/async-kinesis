@@ -15,6 +15,7 @@ from botocore.exceptions import (
 
 from kinesis import (
     CheckpointFlushError,
+    CheckpointOwnershipConflict,
     InMemoryMetricsCollector,
     MemoryCheckPointer,
     MetricType,
@@ -785,7 +786,7 @@ class TestConsumerCheckpointMetrics:
         collector = InMemoryMetricsCollector()
         cp = await _make_redis_cp(auto_checkpoint=False)
         cp.bind_metrics(collector, {"stream_name": "test-stream"})
-        cp.client.getset = AsyncMock(return_value=None)  # triggers NotImplementedError
+        cp.client.getset = AsyncMock(return_value=None)  # triggers CheckpointOwnershipConflict
 
         try:
             await cp.checkpoint("shard-0", "seq-1")
@@ -797,7 +798,7 @@ class TestConsumerCheckpointMetrics:
 
             # Best-effort flush: every shard was attempted, every shard raised.
             assert [shard_id for shard_id, _ in exc_info.value.errors] == ["shard-0", "shard-1"]
-            assert all(isinstance(exc, NotImplementedError) for _, exc in exc_info.value.errors)
+            assert all(isinstance(exc, CheckpointOwnershipConflict) for _, exc in exc_info.value.errors)
 
             # Both failed, so both remain buffered.
             assert cp._manual_checkpoints == {"shard-0": "seq-1", "shard-1": "seq-9"}
@@ -874,7 +875,7 @@ class TestConsumerCheckpointMetrics:
         """CheckpointFlushError lists every failing shard in its message, and
         ``__cause__`` points at the first underlying exception for traceback."""
         cp = await _make_redis_cp(auto_checkpoint=False)
-        cp.client.getset = AsyncMock(return_value=None)  # triggers NotImplementedError
+        cp.client.getset = AsyncMock(return_value=None)  # triggers CheckpointOwnershipConflict
 
         try:
             await cp.checkpoint("shard-0", "seq-1")
@@ -890,7 +891,29 @@ class TestConsumerCheckpointMetrics:
         assert "shard-0" in str(exc) and "shard-1" in str(exc)
         # __cause__ is the first collected exception (insertion order).
         assert exc.__cause__ is exc.errors[0][1]
-        assert isinstance(exc.__cause__, NotImplementedError)
+        assert isinstance(exc.__cause__, CheckpointOwnershipConflict)
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_ref_mismatch_raises_with_conflicting_owner(self):
+        """Issue #81: ref-mismatch branch of _checkpoint must raise
+        CheckpointOwnershipConflict and name the *conflicting* owner (the ref
+        that currently holds the lease), not this consumer's own ref. The
+        original code printed val["ref"] (self), which was useless for
+        diagnosing who stole the lease.
+        """
+        cp = await _make_redis_cp()
+        other_owner = "other-consumer/12345"
+        previous_val = '{"ref": "' + other_owner + '", "ts": 0, "sequence": "seq-prev"}'
+        cp.client.getset = AsyncMock(return_value=previous_val)
+
+        try:
+            with pytest.raises(CheckpointOwnershipConflict) as exc_info:
+                await cp._checkpoint("shard-0", "seq-1")
+        finally:
+            await cp.close()
+
+        msg = str(exc_info.value)
+        assert other_owner in msg, f"expected conflicting owner in message: {msg!r}"
 
     @pytest.mark.asyncio
     async def test_manual_checkpoint_no_raise_on_all_success(self):

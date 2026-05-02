@@ -31,6 +31,10 @@ class CheckpointFlushError(Exception):
         super().__init__(f"{len(errors)} shard(s) failed to checkpoint: {shard_ids}")
 
 
+class CheckpointOwnershipConflict(Exception):
+    """Raised when a Redis checkpoint write detects the lease was lost (key evicted or ref mismatch)."""
+
+
 class CheckPointer(Protocol):
     """Protocol for checkpointer implementations.
 
@@ -188,6 +192,13 @@ class BaseHeartbeatCheckPointer(BaseCheckPointer):
     async def close(self):
         log.debug("Cancelling heartbeat task..")
         self.heartbeat_task.cancel()
+        try:
+            await self.heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            # Swallow so super().close() still runs and deallocates shards.
+            log.warning("heartbeat task exited with error on close", exc_info=True)
 
         await super().close()
 
@@ -196,7 +207,8 @@ class BaseHeartbeatCheckPointer(BaseCheckPointer):
             await asyncio.sleep(self.heartbeat_frequency)
 
             # todo: don't heartbeat if checkpoint already updated it recently
-            for shard_id, sequence in self._items.items():
+            # Snapshot: deallocate() may mutate _items while do_heartbeat() awaits.
+            for shard_id, sequence in list(self._items.items()):
                 key = self.get_key(shard_id)
                 val = {"ref": self.get_ref(), "ts": self.get_ts(), "sequence": sequence}
                 log.debug("Heartbeating {}@{}".format(shard_id, sequence))
@@ -340,13 +352,15 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
             previous_val = json.loads(previous_val) if previous_val else None
 
             if not previous_val:
-                raise NotImplementedError(
+                raise CheckpointOwnershipConflict(
                     "{} checkpointed on {} but key did not exist?".format(self.get_ref(), shard_id)
                 )
 
             if previous_val["ref"] != self.get_ref():
-                raise NotImplementedError(
-                    "{} checkpointed on {} but ref is different {}".format(self.get_ref(), shard_id, val["ref"])
+                raise CheckpointOwnershipConflict(
+                    "{} checkpointed on {} but ref is different {}".format(
+                        self.get_ref(), shard_id, previous_val["ref"]
+                    )
                 )
 
             log.debug("{} checkpointed on {}@{}".format(self.get_ref(), shard_id, sequence))

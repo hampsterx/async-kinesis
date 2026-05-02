@@ -1,5 +1,5 @@
 from .aggregators import ListAggregator, NetstringAggregator, NewlineAggregator, SimpleAggregator
-from .checkpointers import CheckpointFlushError, MemoryCheckPointer, RedisCheckPointer
+from .checkpointers import CheckpointFlushError, CheckpointOwnershipConflict, MemoryCheckPointer, RedisCheckPointer
 from .consumer import Consumer
 from .metrics import (
     InMemoryMetricsCollector,

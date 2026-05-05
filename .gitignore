@@ -1,6 +1,7 @@
 venv/
 test_pypi_env/
 dist
+dogfood-reports/
 *.egg-info
 .idea
 *.pyc

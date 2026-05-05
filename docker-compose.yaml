@@ -17,6 +17,7 @@ services:
      volumes:
       - ./tests:/app/tests
       - ./kinesis:/app/kinesis
+      - ./scripts:/app/scripts
       - ./pytest.ini:/app/pytest.ini
      build:
        context: .

@@ -89,6 +89,10 @@ TESTING_USE_AWS_KINESIS=1
 
 Specialised suite under `tests/resharding/`. See [`tests/resharding/README.md`](./tests/resharding/README.md) for the full matrix (unit, integration, production) and per-file dependencies.
 
+### Dogfood soak tool
+
+Maintainers can run a manual soak against a temporary Floci or AWS stream with [`scripts/kinesis_dogfood.py`](./scripts/kinesis_dogfood.py). See [`docs/dogfood-soak.md`](./docs/dogfood-soak.md) for the current scope, cleanup contract, and report format.
+
 ## Code Style
 
 - Line length: 120

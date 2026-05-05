@@ -6,12 +6,7 @@ from typing import Any, AsyncIterator, Dict, Optional
 
 from aiobotocore.session import AioSession
 from aiohttp import ClientConnectionError
-from botocore.exceptions import (
-    ClientError,
-    ConnectionClosedError,
-    EndpointConnectionError,
-    ReadTimeoutError,
-)
+from botocore.exceptions import ClientError, ConnectionClosedError, EndpointConnectionError, ReadTimeoutError
 
 from .base import Base
 from .checkpointers import CheckPointer, MemoryCheckPointer
@@ -315,6 +310,7 @@ class Consumer(Base):
                         continue
 
                     records = result["Records"]
+                    next_shard_iterator = result.get("NextShardIterator")
 
                     millis_behind = result.get("MillisBehindLatest")
                     if millis_behind is not None:
@@ -391,7 +387,7 @@ class Consumer(Base):
                         if last_enqueued_sequence:
                             shard["LastSequenceNumber"] = last_enqueued_sequence
 
-                            if result.get("NextShardIterator"):
+                            if next_shard_iterator:
                                 try:
                                     await asyncio.wait_for(
                                         self.queue.put(
@@ -420,10 +416,10 @@ class Consumer(Base):
                         {"stream_name": self.stream_name},
                     )
 
-                    if not result["NextShardIterator"]:
+                    if not next_shard_iterator:
                         # Shard is closed - this is normal during resharding
                         shard_id = shard["ShardId"]
-                        log.info(f"Shard {shard_id} is closed (NextShardIterator is null)")
+                        log.info(f"Shard {shard_id} is closed (NextShardIterator is null or missing)")
                         self._closed_shards.add(shard_id)
 
                         # If this is a parent shard, mark it as exhausted to allow child consumption
@@ -462,7 +458,7 @@ class Consumer(Base):
                         shard["fetch"] = None
                         continue
 
-                    shard["ShardIterator"] = result["NextShardIterator"]
+                    shard["ShardIterator"] = next_shard_iterator
 
                     shard["fetch"] = None
 

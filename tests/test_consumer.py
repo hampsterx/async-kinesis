@@ -836,6 +836,32 @@ class TestConsumerReadySignal:
         assert consumer.is_ready, "Should be ready — all shards have iterators"
 
     @pytest.mark.asyncio
+    async def test_fetch_missing_next_shard_iterator_closes_shard(self, mock_consumer):
+        """AWS can omit NextShardIterator when an exhausted shard closes."""
+        consumer = mock_consumer(sleep_time_no_records=0.01)
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+        await consumer.checkpointer.allocate("shard-0")
+
+        fetch_result = asyncio.Future()
+        fetch_result.set_result({"Records": [], "MillisBehindLatest": 0})
+        consumer.shards = [
+            {
+                "ShardId": "shard-0",
+                "ShardIterator": "iter-0",
+                "fetch": fetch_result,
+            }
+        ]
+
+        consumer.refresh_shards = AsyncMock()
+
+        await consumer.fetch()
+
+        assert "ShardIterator" not in consumer.shards[0]
+        assert consumer.shards[0]["fetch"] is None
+        assert "shard-0" in consumer._closed_shards
+        assert "shard-0" in consumer._deallocated_shards
+
+    @pytest.mark.asyncio
     async def test_fetch_max_shard_consumers(self, mock_consumer):
         """With max_shard_consumers=2, readiness fires after those 2 get iterators."""
         consumer = mock_consumer(max_shard_consumers=2)

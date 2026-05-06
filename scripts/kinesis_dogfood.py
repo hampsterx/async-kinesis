@@ -431,7 +431,7 @@ async def create_stream(args: argparse.Namespace, stream_name: str, report: Dict
             region_name=args.region,
             create_stream=True,
             create_stream_shards=args.initial_shards,
-            describe_timeout=120,
+            describe_timeout=args.reshard_timeout_seconds,
         ):
             # Mark created on entry so cleanup runs even if Producer.__aexit__ raises.
             report["resources"]["stream"]["created"] = True
@@ -478,7 +478,7 @@ async def delete_stream(args: argparse.Namespace, stream_name: str, report: Dict
             stream_name=stream_name,
             endpoint_url=args.endpoint_url,
             region_name=args.region,
-            describe_timeout=30,
+            describe_timeout=args.reshard_timeout_seconds,
         ) as producer:
             await producer.client.delete_stream(StreamName=stream_name)
         report["resources"]["stream"]["deleted"] = True
@@ -708,6 +708,16 @@ async def wait_consumer_ready_or_idle(consumer: Consumer, timeout: float) -> Tup
         raise
 
 
+def unexpected_results(task_results: Iterable[Any]) -> List[BaseException]:
+    """Filter ``asyncio.gather(..., return_exceptions=True)`` output for failures
+    that were not the expected cancellation."""
+    return [
+        result
+        for result in task_results
+        if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError)
+    ]
+
+
 async def run_workload(
     args: argparse.Namespace,
     run_id: str,
@@ -814,7 +824,17 @@ async def run_workload(
         if tasks:
             for task in tasks:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            task_results = await asyncio.gather(*tasks, return_exceptions=True)
+            unexpected_task_errors = unexpected_results(task_results)
+            for result in unexpected_task_errors:
+                LOGGER.error(
+                    "background workload task failed: %s",
+                    result,
+                    exc_info=(type(result), result, result.__traceback__),
+                )
+            if unexpected_task_errors and workload_error is None:
+                workload_status = "failed"
+                workload_error = unexpected_task_errors[0]
 
         for producer in producers:
             try:
@@ -1007,8 +1027,9 @@ async def cleanup_orphans(args: argparse.Namespace, report: Dict[str, Any]) -> N
     report["phases"].append(
         {
             "name": "cleanup_orphans",
-            "status": "ok",
+            "status": "failed" if failures else "ok",
             "duration_seconds": round(time.monotonic() - started, 3),
+            "failure_count": len(failures),
         }
     )
     report["success"] = not failures

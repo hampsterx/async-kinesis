@@ -337,6 +337,67 @@ def test_list_table_names_paginates():
     assert client.calls == [{}, {"ExclusiveStartTableName": "a"}]
 
 
+def test_unexpected_results_filters_cancelled_and_keeps_real_errors():
+    cancelled = asyncio.CancelledError()
+    real = RuntimeError("worker exploded")
+
+    surfaced = kinesis_dogfood.unexpected_results([None, cancelled, real, "ok"])
+
+    assert surfaced == [real]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_orphans_phase_marked_failed_on_deletion_errors(monkeypatch):
+    args = kinesis_dogfood.build_parser().parse_args(
+        ["--backend", "aws", "--cleanup-orphans", "--yes"]
+    )
+    report = kinesis_dogfood.build_report(args, "run-id", "stream-name")
+
+    class FakeKinesis:
+        def list_streams(self, **_kwargs):
+            return {"StreamNames": [f"{kinesis_dogfood.STREAM_PREFIX}-doomed"], "HasMoreStreams": False}
+
+        def describe_stream_summary(self, **_kwargs):
+            return {
+                "StreamDescriptionSummary": {
+                    "StreamCreationTimestamp": "1970-01-01T00:00:00+00:00",
+                }
+            }
+
+        def delete_stream(self, **_kwargs):
+            raise RuntimeError("AccessDenied")
+
+    class FakeDynamo:
+        def list_tables(self, **_kwargs):
+            return {"TableNames": []}
+
+    class _Ctx:
+        def __init__(self, client):
+            self._client = client
+
+        def __enter__(self):
+            return self._client
+
+        def __exit__(self, *_exc):
+            return False
+
+    def fake_ctx(service, _args):
+        return _Ctx(FakeKinesis() if service == "kinesis" else FakeDynamo())
+
+    async def inline_to_thread(func, *a, **kw):
+        return func(*a, **kw)
+
+    monkeypatch.setattr(kinesis_dogfood, "boto3_client_ctx", fake_ctx)
+    monkeypatch.setattr(kinesis_dogfood.asyncio, "to_thread", inline_to_thread)
+
+    await kinesis_dogfood.cleanup_orphans(args, report)
+
+    cleanup_phase = next(p for p in report["phases"] if p["name"] == "cleanup_orphans")
+    assert cleanup_phase["status"] == "failed"
+    assert cleanup_phase["failure_count"] == 1
+    assert report["success"] is False
+
+
 @pytest.mark.asyncio
 async def test_create_stream_records_failed_phase(monkeypatch):
     args = kinesis_dogfood.build_parser().parse_args(["--backend", "aws"])

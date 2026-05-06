@@ -42,6 +42,7 @@ def test_validate_aws_defaults_dynamodb_checkpointer(monkeypatch):
     [
         (["--checkpoint-interval", "0"], "checkpoint-interval"),
         (["--checkpoint-interval", "-1"], "checkpoint-interval"),
+        (["--orphan-min-age-minutes", "0"], "orphan-min-age-minutes"),
         (["--orphan-min-age-minutes", "-1"], "orphan-min-age-minutes"),
         (["--reshard-plan", "0,2"], "reshard-plan"),
         (["--reshard-plan", "-1"], "reshard-plan"),

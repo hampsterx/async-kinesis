@@ -1246,8 +1246,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise SystemExit("--reshard-timeout-seconds must be positive")
     if args.checkpoint_interval is not None and args.checkpoint_interval <= 0:
         raise SystemExit("--checkpoint-interval must be positive")
-    if args.orphan_min_age_minutes < 0:
-        raise SystemExit("--orphan-min-age-minutes must be non-negative")
+    if args.orphan_min_age_minutes <= 0:
+        raise SystemExit("--orphan-min-age-minutes must be positive")
     try:
         parse_reshard_plan(args.reshard_plan)
     except argparse.ArgumentTypeError as exc:

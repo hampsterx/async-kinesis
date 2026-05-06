@@ -27,7 +27,7 @@ async with Consumer(stream_name="my-stream") as consumer:
 ```python
 async with Consumer(stream_name="my-stream", iterator_type="LATEST") as consumer:
     await consumer.wait_ready()  # Blocks until shard iterators are obtained
-    # Now safe to produce — consumer won't miss events
+    # Now safe to produce: consumer won't miss events
 ```
 
 **CLI:**
@@ -605,6 +605,7 @@ Choose the optimal processor based on your use case:
 
 **Performance Testing:** Use the benchmark tool with different `--record-size-kb` and `--processors` options to determine the best processor for your specific data patterns.
 
+For maintainer lifecycle smoke runs, see the manual [dogfood soak tool](./docs/dogfood-soak.md). It creates temporary infrastructure, runs producers and consumers, captures library logs and metrics, and writes JSON plus Markdown reports.
 
 ## Testing
 
@@ -627,7 +628,7 @@ async with MockConsumer(stream_name="my-stream") as consumer:
     assert records == [{"msg": "hello"}]
 ```
 
-Pytest fixtures are auto-discovered — no imports needed:
+Pytest fixtures are auto-discovered, no imports needed:
 
 ```python
 @pytest.mark.asyncio
@@ -646,7 +647,7 @@ with patch("myapp.Producer", MockProducer):
     await my_function()  # Uses MockProducer instead of real Producer
 ```
 
-📖 **[Full Testing Guide](./docs/testing.md)** — fixtures, helpers, `patch()` examples, migration from Docker
+📖 **[Full Testing Guide](./docs/testing.md)** - fixtures, helpers, `patch()` examples, migration from Docker
 
 ## Contributing
 
@@ -660,6 +661,7 @@ Operating rules for AI coding agents and deeper architecture notes: [AGENTS.md](
 - **[Testing Guide](./docs/testing.md)** - In-memory mocks, pytest fixtures, and test helpers
 - **[Common Patterns](./docs/common-patterns.md)** - Real-world use cases and examples
 - **[Metrics & Observability](./docs/metrics.md)** - Prometheus integration and monitoring
+- **[Dogfood Soak Tool](./docs/dogfood-soak.md)** - Manual lifecycle smoke runs for maintainers
 - **[DynamoDB Checkpointing](./docs/dynamodb-checkpointing.md)** - DynamoDB checkpointer setup and best practices
 - **[Troubleshooting Guide](./docs/troubleshooting.md)** - Solutions for common issues
 - **[Architecture Details](./docs/DESIGN.md)** - Technical deep dive into the implementation

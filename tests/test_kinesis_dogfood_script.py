@@ -348,9 +348,7 @@ def test_unexpected_results_filters_cancelled_and_keeps_real_errors():
 
 @pytest.mark.asyncio
 async def test_cleanup_orphans_phase_marked_failed_on_deletion_errors(monkeypatch):
-    args = kinesis_dogfood.build_parser().parse_args(
-        ["--backend", "aws", "--cleanup-orphans", "--yes"]
-    )
+    args = kinesis_dogfood.build_parser().parse_args(["--backend", "aws", "--cleanup-orphans", "--yes"])
     report = kinesis_dogfood.build_report(args, "run-id", "stream-name")
 
     class FakeKinesis:

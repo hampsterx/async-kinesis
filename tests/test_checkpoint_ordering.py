@@ -515,3 +515,38 @@ class TestCheckpointInterval:
 
         with pytest.raises(RuntimeError, match="DB connection lost"):
             await consumer.close()
+
+    @pytest.mark.asyncio
+    async def test_close_stops_flusher_when_backend_swallows_cancellation(self, mock_consumer):
+        """A backend write consuming cancellation must not keep close pending."""
+        consumer = mock_consumer(checkpoint_interval=1.0)
+        consumer.checkpoint_interval = 0
+        checkpoint_started = asyncio.Event()
+        cancellation_swallowed = asyncio.Event()
+
+        async def cancellation_swallowing_checkpoint(shard_id, sequence):
+            checkpoint_started.set()
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                cancellation_swallowed.set()
+
+        consumer.checkpointer = _make_mock_checkpointer(
+            checkpoint=AsyncMock(side_effect=cancellation_swallowing_checkpoint),
+        )
+        consumer._pending_checkpoints["shard-0"] = "100"
+        consumer._checkpoint_flusher_task = asyncio.create_task(consumer._checkpoint_flusher())
+        await checkpoint_started.wait()
+
+        close_task = asyncio.create_task(consumer.close())
+        await cancellation_swallowed.wait()
+        done, _ = await asyncio.wait({close_task}, timeout=0.5)
+
+        try:
+            assert close_task in done
+            assert consumer._checkpoint_flusher_task is None
+            assert consumer._pending_checkpoints == {}
+        finally:
+            if not close_task.done():
+                close_task.cancel()
+            await close_task

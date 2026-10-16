@@ -30,7 +30,7 @@ python scripts/release.py --version 1.2.3
 2. **Version update**: Updates the version in `setup.py`
 3. **Git tag creation**: Creates and optionally pushes a git tag
 4. **Automated deployment**: GitHub Actions detects the tag and:
-   - Runs full test suite across Python 3.10, 3.11, 3.12
+   - Runs the full test suite across Python 3.11 through 3.15
    - Runs linting checks
    - Builds the package
    - Publishes to PyPI using trusted publishing

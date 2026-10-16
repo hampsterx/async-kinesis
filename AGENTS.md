@@ -8,8 +8,8 @@ This file defines repository-specific operating rules for autonomous or semi-aut
 
 `async-kinesis` is an AsyncIO-based Python library for producing to and consuming from AWS Kinesis Data Streams. It is published to PyPI as `async-kinesis` and consumed as a library by downstream services.
 
-- Python: 3.10 - 3.14
-- Core deps: `aiobotocore`, `async-timeout`, `asyncio-throttle`
+- Python: 3.11 - 3.15
+- Core dependency: `aiobotocore`
 - Optional extras: `redis`, `dynamodb`, `prometheus`, `kpl`, `msgpack`, `cli`, `testing`
 
 ---
@@ -49,7 +49,7 @@ kinesis/
   prometheus.py      # Prometheus adapter for metrics
   exceptions.py      # Public exception types
   testing.py         # In-memory mock Producer/Consumer + pytest plugin
-  timeout_compat.py  # async-timeout / asyncio.timeout shim across Python versions
+  timeout_compat.py  # Stable wrapper around asyncio.timeout
   utils.py           # Shared helpers
   cli/               # Optional CLI (install with [cli] extra)
 

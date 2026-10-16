@@ -112,6 +112,7 @@ class Consumer(Base):
         self.checkpoint_interval = checkpoint_interval
         self._pending_checkpoints: Dict[str, str] = {}  # shard_id → sequence
         self._checkpoint_flusher_task: Optional[asyncio.Task] = None
+        self._checkpoint_flusher_stopping = False
 
         # Validate mutual exclusion: checkpoint_interval + auto_checkpoint=False
         if checkpoint_interval is not None and checkpointer is not None:
@@ -165,6 +166,7 @@ class Consumer(Base):
 
             # Cancel background flusher (triggers final flush via CancelledError)
             if self._checkpoint_flusher_task is not None:
+                self._checkpoint_flusher_stopping = True
                 self._checkpoint_flusher_task.cancel()
                 try:
                     await self._checkpoint_flusher_task
@@ -973,7 +975,7 @@ class Consumer(Base):
     async def _checkpoint_flusher(self):
         """Background task that flushes buffered checkpoints periodically."""
         try:
-            while True:
+            while not self._checkpoint_flusher_stopping:
                 await asyncio.sleep(self.checkpoint_interval)
                 try:
                     await self._flush_pending_checkpoints()

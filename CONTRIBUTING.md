@@ -12,7 +12,7 @@ Thanks for your interest in contributing. This is an open-source library consume
 
 ### Prerequisites
 
-- Python 3.10 - 3.14
+- Python 3.11 - 3.15 (the project keeps a rolling window of no more than five stable CPython releases)
 - Docker (for integration tests; spins up Floci and redis)
 
 ### Setup

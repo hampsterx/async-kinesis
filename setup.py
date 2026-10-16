@@ -33,7 +33,7 @@ setup(
     extras_require={
         "kpl": ["aws-kinesis-agg>=1.1.6"],
         "redis": ["redis>=4.2.0"],
-        "msgpack": ["msgpack>=1.2.1"],
+        "msgpack": ["msgpack>=1.2.3"],
         "prometheus": ["prometheus-client>=0.15.0"],
         "dynamodb": ["aioboto3>=11.0.0"],
         "testing": ["pytest>=7.0", "pytest-asyncio>=0.21"],

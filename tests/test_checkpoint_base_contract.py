@@ -333,3 +333,52 @@ class TestHeartbeatRobustness:
         await cp.close()
 
         assert cp._items == {}
+
+    @pytest.mark.asyncio
+    async def test_close_stops_heartbeat_when_backend_swallows_cancellation(self):
+        """A backend write may consume cancellation before returning.
+
+        close() must still stop the loop instead of allowing another heartbeat
+        iteration to keep the close call pending forever.
+        """
+        cp = FakeHeartbeatCheckPointer()
+        cp.heartbeat_frequency = 0
+        await cp.allocate("shard-0")
+        await cp.allocate("shard-1")
+
+        heartbeat_started = asyncio.Event()
+        cancellation_swallowed = asyncio.Event()
+        second_heartbeat_started = asyncio.Event()
+        release_second_heartbeat = asyncio.Event()
+        heartbeat_calls = 0
+
+        async def cancellation_swallowing_heartbeat(key, value):
+            nonlocal heartbeat_calls
+            heartbeat_calls += 1
+            if heartbeat_calls == 1:
+                heartbeat_started.set()
+                try:
+                    await asyncio.sleep(3600)
+                except asyncio.CancelledError:
+                    cancellation_swallowed.set()
+                    return
+
+            second_heartbeat_started.set()
+            await release_second_heartbeat.wait()
+            raise asyncio.CancelledError
+
+        cp.do_heartbeat = cancellation_swallowing_heartbeat
+        await heartbeat_started.wait()
+
+        close_task = asyncio.create_task(cp.close())
+        await cancellation_swallowed.wait()
+        done, _ = await asyncio.wait({close_task}, timeout=0.5)
+
+        try:
+            assert close_task in done
+            assert not second_heartbeat_started.is_set()
+            assert heartbeat_calls == 1
+            assert cp._items == {}
+        finally:
+            release_second_heartbeat.set()
+            await close_task

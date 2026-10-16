@@ -219,11 +219,13 @@ class BaseHeartbeatCheckPointer(BaseCheckPointer):
         self.auto_checkpoint = auto_checkpoint
         self._manual_checkpoints: Dict[str, str] = {}
         self._manual_flush_lock: asyncio.Lock = asyncio.Lock()
+        self._heartbeat_stopping = False
 
         self.heartbeat_task = asyncio.Task(self.heartbeat())
 
     async def close(self):
         log.debug("Cancelling heartbeat task..")
+        self._heartbeat_stopping = True
         self.heartbeat_task.cancel()
         try:
             await self.heartbeat_task
@@ -236,12 +238,14 @@ class BaseHeartbeatCheckPointer(BaseCheckPointer):
         await super().close()
 
     async def heartbeat(self):
-        while True:
+        while not self._heartbeat_stopping:
             await asyncio.sleep(self.heartbeat_frequency)
 
             # todo: don't heartbeat if checkpoint already updated it recently
             # Snapshot: deallocate() may mutate _items while do_heartbeat() awaits.
             for shard_id, sequence in list(self._items.items()):
+                if self._heartbeat_stopping:
+                    break
                 key = self.get_key(shard_id)
                 val = {"ref": self.get_ref(), "ts": self.get_ts(), "sequence": sequence}
                 log.debug("Heartbeating {}@{}".format(shard_id, sequence))

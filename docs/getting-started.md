@@ -15,7 +15,7 @@ This guide will walk you through setting up and using async-kinesis for the firs
 ## Prerequisites
 
 Before you begin, you should have:
-- Python 3.10 or higher installed (matches `setup.py` `python_requires`)
+- Python 3.11 or higher installed (matches `setup.py` `python_requires`)
 - Basic understanding of Python's async/await
 - An AWS account (free tier is sufficient for testing)
 - AWS credentials configured (we'll show you how)

@@ -240,7 +240,6 @@ class TestProcessorAndAggregator:
         assert len(items) == 1  # Single list
         assert items[0] == [{"item": 1}, {"item": 2}]
 
-    @pytest.mark.skipif(True, reason="Msgpack tests require msgpack to be installed")
     def test_msgpack_processor(self):
         processor = MsgpackProcessor()
 

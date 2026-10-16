@@ -96,7 +96,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) § Code Style for linting, formatting, 
 
 ## Release Awareness
 
-- Releases are tag-driven via GitHub Actions. Push a `vX.Y.Z` tag and the publish workflow builds sdist/wheel and uploads to PyPI.
+- Releases are tag-driven via GitHub Actions. Push a bare `X.Y.Z` tag, without a `v` prefix, and the publish workflow builds sdist/wheel and uploads to PyPI.
 - The `version` field in `setup.py` is overwritten by CI from the git tag at build time; do not hand-edit it as part of a feature PR.
 - Release notes live on the GitHub release (tag), not in a `CHANGELOG.md` file. Describe behaviour changes in the PR body so they can be picked up when the release is cut.
 

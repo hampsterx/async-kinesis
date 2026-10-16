@@ -151,8 +151,8 @@ Write for the reviewer and downstream consumer, not the implementor. Lead with u
 Releases are tag-driven via GitHub Actions:
 
 ```bash
-git tag vX.Y.Z
-git push origin vX.Y.Z
+git tag X.Y.Z
+git push origin X.Y.Z
 ```
 
 The publish workflow builds sdist/wheel and uploads to PyPI. The `version` field in `setup.py` is overwritten from the tag at build time, so there is no need to bump it by hand in PRs. Release notes are written on the GitHub release page (use the "Generate release notes" action to pull in merged PR titles since the previous tag).

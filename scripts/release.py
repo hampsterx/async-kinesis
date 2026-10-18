@@ -8,51 +8,38 @@ Usage:
     python scripts/release.py --next-patch  # Auto-increment patch version
     python scripts/release.py --next-minor  # Auto-increment minor version
     python scripts/release.py --next-major  # Auto-increment major version
+
+The released version comes from the git tag. The publish workflow writes it into
+setup.py at build time, so this script never edits setup.py.
 """
 
 import argparse
 import re
 import subprocess
 import sys
-from pathlib import Path
+
+VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+def parse_version(version):
+    """Parse a bare X.Y.Z version into a comparable tuple"""
+    if not VERSION_PATTERN.match(version):
+        raise ValueError(f"Invalid version format: {version} (expected bare X.Y.Z)")
+    return tuple(map(int, version.split(".")))
 
 
 def get_current_version():
-    """Extract current version from setup.py"""
-    setup_py = Path("setup.py")
-    if not setup_py.exists():
-        raise FileNotFoundError("setup.py not found")
-
-    content = setup_py.read_text()
-    match = re.search(r'version="([^"]+)"', content)
-    if not match:
-        raise ValueError("Version not found in setup.py")
-
-    return match.group(1)
-
-
-def update_version(new_version):
-    """Update version in setup.py"""
-    setup_py = Path("setup.py")
-    content = setup_py.read_text()
-
-    # Update version in setup.py
-    new_content = re.sub(r'version="[^"]+"', f'version="{new_version}"', content)
-
-    if content == new_content:
-        raise ValueError("Version pattern not found in setup.py")
-
-    setup_py.write_text(new_content)
-    print(f"Updated setup.py version to {new_version}")
+    """Return the highest bare X.Y.Z release tag"""
+    result = subprocess.run(["git", "tag", "--list"], capture_output=True, text=True, check=True)
+    versions = [tag for tag in result.stdout.split() if VERSION_PATTERN.match(tag)]
+    if not versions:
+        raise ValueError("No X.Y.Z release tags found; run `git fetch --tags` first")
+    return max(versions, key=parse_version)
 
 
 def increment_version(current_version, bump_type):
     """Increment version based on bump type"""
-    parts = current_version.split(".")
-    if len(parts) != 3:
-        raise ValueError(f"Invalid version format: {current_version}")
-
-    major, minor, patch = map(int, parts)
+    major, minor, patch = parse_version(current_version)
 
     if bump_type == "major":
         major += 1
@@ -147,7 +134,7 @@ def main():
     parser = argparse.ArgumentParser(description="Release management for async-kinesis")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--version", help="Set specific version")
-    group.add_argument("--check", action="store_true", help="Check current version")
+    group.add_argument("--check", action="store_true", help="Show the latest release tag")
     group.add_argument("--next-patch", action="store_true", help="Increment patch version")
     group.add_argument("--next-minor", action="store_true", help="Increment minor version")
     group.add_argument("--next-major", action="store_true", help="Increment major version")
@@ -178,6 +165,10 @@ def main():
             print("Error: Must specify either --version, --next-patch, --next-minor, or --next-major")
             sys.exit(1)
 
+        if parse_version(new_version) <= parse_version(current_version):
+            print(f"Error: {new_version} is not newer than the latest release {current_version}")
+            sys.exit(1)
+
         print(f"New version: {new_version}")
 
         # Run checks
@@ -187,15 +178,12 @@ def main():
         if not args.skip_tests and not run_tests():
             sys.exit(1)
 
-        # Update version
-        update_version(new_version)
-
         # Create tag if requested
         if not args.no_tag:
             if not create_tag(new_version):
                 sys.exit(1)
         else:
-            print(f"Version updated to {new_version}. Create tag manually with: git tag {new_version}")
+            print(f"Checks passed. Create the tag manually with: git tag {new_version}")
 
     except Exception as e:
         print(f"Error: {e}")

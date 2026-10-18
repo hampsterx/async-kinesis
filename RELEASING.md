@@ -26,9 +26,9 @@ For a major release (3.0.0 → 4.0.0):
 python scripts/release.py --next-major
 ```
 
-For a specific version:
+For a specific version, which must be newer than the latest release tag:
 ```bash
-python scripts/release.py --version 1.2.3
+python scripts/release.py --version 3.0.1
 ```
 
 ## What Happens
@@ -46,8 +46,8 @@ python scripts/release.py --version 1.2.3
 
 If you prefer to do it manually:
 
-1. Create a git tag: `git tag 1.2.3`
-2. Push the tag: `git push origin 1.2.3`
+1. Create a git tag: `git tag 3.0.1`
+2. Push the tag: `git push origin 3.0.1`
 3. GitHub Actions will handle the rest
 
 ## PyPI Configuration
@@ -79,6 +79,6 @@ python scripts/release.py --next-patch --no-tag
 - **PyPI upload fails**: Check repository settings and trusted publishing configuration
 - **Tag already exists**: Delete the tag locally and remotely if needed:
   ```bash
-  git tag -d 1.2.3
-  git push origin :refs/tags/1.2.3
+  git tag -d 3.0.1
+  git push origin :refs/tags/3.0.1
   ```

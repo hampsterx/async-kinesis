@@ -18,12 +18,13 @@ import re
 import subprocess
 import sys
 
-VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
+# ASCII digits only: \d also matches Unicode digits, which packaging rejects
+VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 
 
 def parse_version(version):
     """Parse a bare X.Y.Z version into a comparable tuple"""
-    if not VERSION_PATTERN.match(version):
+    if not VERSION_PATTERN.fullmatch(version):
         raise ValueError(f"Invalid version format: {version} (expected bare X.Y.Z)")
     return tuple(map(int, version.split(".")))
 
@@ -31,7 +32,7 @@ def parse_version(version):
 def get_current_version():
     """Return the highest bare X.Y.Z release tag"""
     result = subprocess.run(["git", "tag", "--list"], capture_output=True, text=True, check=True)
-    versions = [tag for tag in result.stdout.split() if VERSION_PATTERN.match(tag)]
+    versions = [tag for tag in result.stdout.split() if VERSION_PATTERN.fullmatch(tag)]
     if not versions:
         raise ValueError("No X.Y.Z release tags found; run `git fetch --tags` first")
     return max(versions, key=parse_version)

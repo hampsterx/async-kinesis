@@ -122,6 +122,18 @@ class TestProcessorAndAggregator:
 
         assert list(processor.parse(output[0].data)) == ["123", "test"]
 
+    def test_kpl_aggregator_requires_aws_kinesis_agg(self, monkeypatch):
+        import kinesis.aggregators
+
+        # What the import guard leaves behind when aws-kinesis-agg is absent or older than 1.2.0
+        monkeypatch.setattr(kinesis.aggregators, "aws_kinesis_agg", None)
+
+        class KPLTestProcessor(KPLAggregator, StringSerializer):
+            pass
+
+        with pytest.raises(ImportError, match=r"async-kinesis\[kpl\]"):
+            KPLTestProcessor()
+
     def test_kpl_aggregator_max_size(self):
         class BytesSerializer:
             def serialize(self, item):

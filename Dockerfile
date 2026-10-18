@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y gcc python3-dev gettext-base
+RUN apt-get update && apt-get install -y gcc python3-dev gettext-base git
 
 RUN mkdir /app
 

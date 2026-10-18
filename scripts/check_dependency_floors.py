@@ -26,7 +26,8 @@ def declared_floors(requirements, extras):
     floors = {}
     for line in requirements:
         req = Requirement(line)
-        if req.marker is not None and not any(req.marker.evaluate({"extra": extra}) for extra in extras):
+        # The "" stands in for no extra, so a core requirement with an environment marker still counts
+        if req.marker is not None and not any(req.marker.evaluate({"extra": extra}) for extra in extras or [""]):
             continue
         floor = [spec.version for spec in req.specifier if spec.operator in (">=", "==")]
         if len(floor) != 1:

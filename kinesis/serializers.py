@@ -7,7 +7,8 @@ except ModuleNotFoundError:
 try:
     import msgpack
 except ModuleNotFoundError:
-    pass
+    # MsgpackSerializer refuses to construct
+    msgpack = None
 
 
 class Serializer:
@@ -31,6 +32,13 @@ class JsonSerializer(Serializer):
 
 
 class MsgpackSerializer(Serializer):
+    # __new__ rather than __init__: a processor puts its aggregator first in the MRO, and
+    # the aggregators' __init__ never calls super(), so this class's __init__ would not run
+    def __new__(cls, *args, **kwargs):
+        if msgpack is None:
+            raise ImportError(f"{cls.__name__} requires msgpack>=1.2.3: pip install async-kinesis[msgpack]")
+        return super().__new__(cls)
+
     def serialize(self, item):
         result = msgpack.packb(item, use_bin_type=True)
         return result

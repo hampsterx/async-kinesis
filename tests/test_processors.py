@@ -285,3 +285,29 @@ class TestProcessorAndAggregator:
         items = list(processor.parse(output[0].data))
         assert len(items) == 2
         assert items == [{"data": "test"}, {"data": "test2"}]
+
+    def test_msgpack_serializer_requires_msgpack(self):
+        import importlib
+        import sys
+
+        import kinesis.serializers
+
+        # Restore the original objects afterwards: a second reload would leave new classes
+        # that kinesis.processors and collected tests do not hold
+        saved = dict(vars(kinesis.serializers))
+        try:
+            with pytest.MonkeyPatch.context() as mp:
+                # A None entry makes the import raise ModuleNotFoundError, as an absent package does
+                mp.setitem(sys.modules, "msgpack", None)
+                importlib.reload(kinesis.serializers)
+
+                assert kinesis.serializers.msgpack is None
+                with pytest.raises(ImportError, match=r"async-kinesis\[msgpack\]"):
+                    kinesis.serializers.MsgpackSerializer()
+                # The processor holds the class from before the reload, which reads the same
+                # module globals. Its aggregator comes first in the MRO, so this fails if the
+                # check moves to an __init__ the aggregator never chains to
+                with pytest.raises(ImportError, match=r"MsgpackProcessor requires .*async-kinesis\[msgpack\]"):
+                    MsgpackProcessor()
+        finally:
+            vars(kinesis.serializers).update(saved)

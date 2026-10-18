@@ -209,3 +209,10 @@ class TestCheckpointers:
         successes = [result[0] for result in results]
         assert successes.count(True) == 1
         assert successes.count(False) == 2
+
+
+def test_redis_cluster_client_importable():
+    """RedisCheckPointer(is_cluster=True) imports this module; redis>=4.3.0 is the first to ship it."""
+    from redis.asyncio.cluster import RedisCluster
+
+    assert RedisCluster is not None

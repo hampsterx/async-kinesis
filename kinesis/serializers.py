@@ -37,6 +37,9 @@ class MsgpackSerializer(Serializer):
     def __new__(cls, *args, **kwargs):
         if msgpack is None:
             raise ImportError(f"{cls.__name__} requires msgpack>=1.2.3: pip install async-kinesis[msgpack]")
+        # Overriding __new__ stops object.__init__ rejecting stray arguments, so reject them here
+        if (args or kwargs) and cls.__init__ is object.__init__:
+            raise TypeError(f"{cls.__name__}() takes no arguments")
         return super().__new__(cls)
 
     def serialize(self, item):

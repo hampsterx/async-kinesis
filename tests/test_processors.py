@@ -18,7 +18,7 @@ from kinesis.processors import (
     Processor,
     StringProcessor,
 )
-from kinesis.serializers import JsonSerializer, Serializer, StringSerializer
+from kinesis.serializers import JsonSerializer, MsgpackSerializer, Serializer, StringSerializer
 
 
 class TestProcessorAndAggregator:
@@ -285,6 +285,14 @@ class TestProcessorAndAggregator:
         items = list(processor.parse(output[0].data))
         assert len(items) == 2
         assert items == [{"data": "test"}, {"data": "test2"}]
+
+    def test_msgpack_serializer_rejects_arguments(self):
+        with pytest.raises(TypeError, match="takes no arguments"):
+            MsgpackSerializer(1)
+        with pytest.raises(TypeError, match="takes no arguments"):
+            MsgpackSerializer(use_bin_type=False)
+        # The processor's arguments go to its aggregator
+        assert MsgpackProcessor(max_size=25).max_bytes == 25 * 1024
 
     def test_msgpack_serializer_requires_msgpack(self):
         import importlib

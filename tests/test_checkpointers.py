@@ -211,10 +211,25 @@ class TestCheckpointers:
         assert successes.count(False) == 2
 
 
-def test_redis_cluster_client_importable():
-    """RedisCheckPointer(is_cluster=True) imports this module; redis>=4.3.0 is the first to ship it."""
+@pytest.mark.asyncio
+async def test_redis_cluster_checkpointer_constructs():
+    """RedisCheckPointer(is_cluster=True) builds a cluster client on every supported redis.
+
+    redis>=4.3.0 is the first to ship redis.asyncio.cluster, and 4.4.0 onward rejects
+    unknown constructor arguments. Construction does not connect, so no cluster is needed.
+    """
     # Skip only when redis itself is absent: an older redis must still fail the import below
     pytest.importorskip("redis")
     from redis.asyncio.cluster import RedisCluster
 
-    assert RedisCluster is not None
+    checkpointer = RedisCheckPointer(name="test", is_cluster=True)
+    try:
+        assert isinstance(checkpointer.client, RedisCluster)
+        nodes_manager = checkpointer.client.nodes_manager
+        # redis 4.3.0 stores it privately; later releases made it public and default it to True
+        require_full_coverage = getattr(
+            nodes_manager, "require_full_coverage", getattr(nodes_manager, "_require_full_coverage", None)
+        )
+        assert require_full_coverage is False
+    finally:
+        await checkpointer.close()

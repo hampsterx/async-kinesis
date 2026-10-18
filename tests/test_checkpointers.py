@@ -213,6 +213,8 @@ class TestCheckpointers:
 
 def test_redis_cluster_client_importable():
     """RedisCheckPointer(is_cluster=True) imports this module; redis>=4.3.0 is the first to ship it."""
+    # Skip only when redis itself is absent: an older redis must still fail the import below
+    pytest.importorskip("redis")
     from redis.asyncio.cluster import RedisCluster
 
     assert RedisCluster is not None

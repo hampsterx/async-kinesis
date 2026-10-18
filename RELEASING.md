@@ -46,7 +46,7 @@ python scripts/release.py --version 3.0.1
 
 If you prefer to do it manually:
 
-1. Create a git tag: `git tag 3.0.1`
+1. Create a git tag: `git tag 3.0.1`. Use a bare `X.Y.Z` newer than the latest release: the publish workflow accepts any tag and writes it into `setup.py` unchecked, so this path skips the helper's validation
 2. Push the tag: `git push origin 3.0.1`
 3. GitHub Actions will handle the rest
 

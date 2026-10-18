@@ -39,13 +39,17 @@ def _git(repo, *args):
     )
 
 
+# A tag holding a Unicode space must not split into a bare "10.0.0"
+TAGS = ["2.5.6", "3.0.0", "v9.9.9", "10.0.0-rc1", "junk\u200310.0.0"]
+
+
 @pytest.fixture
 def tagged_repo(tmp_path, monkeypatch):
     _git(tmp_path, "init", "-q")
     (tmp_path / "setup.py").write_text('setup(version="1.1.5")\n')
     _git(tmp_path, "add", "setup.py")
     _git(tmp_path, "commit", "-q", "-m", "init")
-    for tag in ["2.5.6", "3.0.0", "v9.9.9", "10.0.0-rc1"]:
+    for tag in TAGS:
         _git(tmp_path, "tag", tag)
     monkeypatch.chdir(tmp_path)
     return tmp_path
@@ -69,12 +73,12 @@ def test_next_patch_tags_clean_checkout_without_touching_setup_py(tagged_repo, m
 
 
 @pytest.mark.parametrize("version", ["3.0.0", "2.9.9"])
-def test_refuses_version_not_newer_than_latest_tag(tagged_repo, monkeypatch, version):
+def test_refuses_version_not_newer_than_latest_tag(tagged_repo, monkeypatch, capsys, version):
     monkeypatch.setattr(sys, "argv", ["release.py", "--version", version, "--skip-tests", "--skip-lint"])
+    monkeypatch.setattr(release, "create_tag", lambda v: pytest.fail("create_tag must not be reached"))
 
     with pytest.raises(SystemExit) as exc:
         release.main()
 
     assert exc.value.code == 1
-    tags = subprocess.run(["git", "tag", "--list"], capture_output=True, text=True, check=True)
-    assert sorted(tags.stdout.split()) == sorted(["2.5.6", "3.0.0", "v9.9.9", "10.0.0-rc1"])
+    assert f"{version} is not newer than the latest release 3.0.0" in capsys.readouterr().out

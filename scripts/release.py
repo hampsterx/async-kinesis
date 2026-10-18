@@ -32,7 +32,7 @@ def parse_version(version):
 def get_current_version():
     """Return the highest bare X.Y.Z release tag"""
     result = subprocess.run(["git", "tag", "--list"], capture_output=True, text=True, check=True)
-    versions = [tag for tag in result.stdout.split() if VERSION_PATTERN.fullmatch(tag)]
+    versions = [tag for tag in result.stdout.split("\n") if VERSION_PATTERN.fullmatch(tag)]
     if not versions:
         raise ValueError("No X.Y.Z release tags found; run `git fetch --tags` first")
     return max(versions, key=parse_version)

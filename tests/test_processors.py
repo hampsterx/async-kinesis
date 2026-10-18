@@ -129,6 +129,9 @@ class TestProcessorAndAggregator:
 
         import kinesis.aggregators
 
+        # Restore the original objects afterwards: a second reload would leave new classes
+        # that kinesis.processors and collected tests do not hold
+        saved = dict(vars(kinesis.aggregators))
         try:
             with pytest.MonkeyPatch.context() as mp:
                 # A None entry makes the import raise ModuleNotFoundError, as an absent package
@@ -140,7 +143,7 @@ class TestProcessorAndAggregator:
                 with pytest.raises(ImportError, match=r"async-kinesis\[kpl\]"):
                     kinesis.aggregators.KPLAggregator()
         finally:
-            importlib.reload(kinesis.aggregators)
+            vars(kinesis.aggregators).update(saved)
 
     def test_kpl_aggregator_max_size(self):
         class BytesSerializer:

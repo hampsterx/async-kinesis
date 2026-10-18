@@ -3,8 +3,8 @@
 Release script for async-kinesis
 
 Usage:
-    python scripts/release.py --version 1.2.0
-    python scripts/release.py --check  # Check current version
+    python scripts/release.py --version 3.0.1
+    python scripts/release.py --check  # Show the latest release tag
     python scripts/release.py --next-patch  # Auto-increment patch version
     python scripts/release.py --next-minor  # Auto-increment minor version
     python scripts/release.py --next-major  # Auto-increment major version

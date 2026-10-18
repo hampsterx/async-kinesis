@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 
@@ -30,6 +31,11 @@ def test_parse_version_orders_numerically():
     assert release.parse_version("10.0.0") > release.parse_version("9.9.9")
 
 
+@pytest.mark.parametrize("bump,expected", [("patch", "3.2.2"), ("minor", "3.3.0"), ("major", "4.0.0")])
+def test_increment_version(bump, expected):
+    assert release.increment_version("3.2.1", bump) == expected
+
+
 def _git(repo, *args):
     subprocess.run(
         ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", *args],
@@ -45,6 +51,10 @@ TAGS = ["2.5.6", "3.0.0", "v9.9.9", "10.0.0-rc1", "junk\u200310.0.0"]
 
 @pytest.fixture
 def tagged_repo(tmp_path, monkeypatch):
+    # Signing or other user config would make the fixture commit and the helper's
+    # bare `git tag` fail for reasons unrelated to the code under test
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     _git(tmp_path, "init", "-q")
     (tmp_path / "setup.py").write_text('setup(version="1.1.5")\n')
     _git(tmp_path, "add", "setup.py")

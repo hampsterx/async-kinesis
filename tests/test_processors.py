@@ -122,17 +122,25 @@ class TestProcessorAndAggregator:
 
         assert list(processor.parse(output[0].data)) == ["123", "test"]
 
-    def test_kpl_aggregator_requires_aws_kinesis_agg(self, monkeypatch):
+    @pytest.mark.parametrize("missing", ["aws_kinesis_agg", "aws_kinesis_agg.messages_pb2"])
+    def test_kpl_aggregator_requires_aws_kinesis_agg(self, missing):
+        import importlib
+        import sys
+
         import kinesis.aggregators
 
-        # What the import guard leaves behind when aws-kinesis-agg is absent or older than 1.2.0
-        monkeypatch.setattr(kinesis.aggregators, "aws_kinesis_agg", None)
+        try:
+            with pytest.MonkeyPatch.context() as mp:
+                # A None entry makes the import raise ModuleNotFoundError, as an absent package
+                # or a release older than 1.2.0 (no messages_pb2) does
+                mp.setitem(sys.modules, missing, None)
+                importlib.reload(kinesis.aggregators)
 
-        class KPLTestProcessor(KPLAggregator, StringSerializer):
-            pass
-
-        with pytest.raises(ImportError, match=r"async-kinesis\[kpl\]"):
-            KPLTestProcessor()
+                assert kinesis.aggregators.aws_kinesis_agg is None
+                with pytest.raises(ImportError, match=r"async-kinesis\[kpl\]"):
+                    kinesis.aggregators.KPLAggregator()
+        finally:
+            importlib.reload(kinesis.aggregators)
 
     def test_kpl_aggregator_max_size(self):
         class BytesSerializer:

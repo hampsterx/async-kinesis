@@ -103,7 +103,6 @@ class TestProcessorAndAggregator:
 
         assert list(processor.parse(output[0].data)) == ["123", "test"]
 
-    @pytest.mark.skipif(True, reason="KPL aggregator tests require specific aws-kinesis-agg version")
     def test_kpl_aggregator(self):
         class KPLTestProcessor(KPLAggregator, StringSerializer):
             pass
@@ -123,7 +122,29 @@ class TestProcessorAndAggregator:
 
         assert list(processor.parse(output[0].data)) == ["123", "test"]
 
-    @pytest.mark.skipif(True, reason="KPL aggregator tests require specific aws-kinesis-agg version")
+    @pytest.mark.parametrize("missing", ["aws_kinesis_agg", "aws_kinesis_agg.messages_pb2"])
+    def test_kpl_aggregator_requires_aws_kinesis_agg(self, missing):
+        import importlib
+        import sys
+
+        import kinesis.aggregators
+
+        # Restore the original objects afterwards: a second reload would leave new classes
+        # that kinesis.processors and collected tests do not hold
+        saved = dict(vars(kinesis.aggregators))
+        try:
+            with pytest.MonkeyPatch.context() as mp:
+                # A None entry makes the import raise ModuleNotFoundError, as an absent package
+                # or a release older than 1.2.0 (no messages_pb2) does
+                mp.setitem(sys.modules, missing, None)
+                importlib.reload(kinesis.aggregators)
+
+                assert kinesis.aggregators.aws_kinesis_agg is None
+                with pytest.raises(ImportError, match=r"async-kinesis\[kpl\]"):
+                    kinesis.aggregators.KPLAggregator()
+        finally:
+            vars(kinesis.aggregators).update(saved)
+
     def test_kpl_aggregator_max_size(self):
         class BytesSerializer:
             def serialize(self, item):
@@ -146,15 +167,22 @@ class TestProcessorAndAggregator:
             output = list(processor.add_item(data))
             assert len(output) == 0
 
-        # should flush
+        # Ten 10K records plus KPL framing exceed 100K, so the tenth flushes the first nine
         output = list(processor.add_item(data))
         assert len(output) == 1
-        assert output[0].n == 10
+        assert output[0].n == 9
+        assert output[0].size <= 1024 * 100
 
         items = list(processor.parse(output[0].data))
-        assert len(items) == 10
+        assert len(items) == 9
         for item in items:
             assert item == data
+
+        # The tenth record stays buffered for the next flush
+        output = list(processor.get_items())
+        assert len(output) == 1
+        assert output[0].n == 1
+        assert list(processor.parse(output[0].data)) == [data]
 
     def test_simple_aggregator(self):
         class SimpleTestProcessor(SimpleAggregator, StringSerializer):

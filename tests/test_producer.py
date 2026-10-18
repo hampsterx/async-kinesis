@@ -463,9 +463,9 @@ class TestProducer:
     @pytest.mark.asyncio
     async def test_producer_kpl_partition_key_compatibility(self, random_stream_name, endpoint_url):
         """Test that KPL processors reject custom partition keys (Issue #34)."""
-        try:
-            import aws_kinesis_agg  # noqa: F401
-        except ImportError:
+        from kinesis.aggregators import aws_kinesis_agg
+
+        if aws_kinesis_agg is None:
             pytest.skip("KPL aggregation library not available")
 
         from kinesis.processors import KPLJsonProcessor

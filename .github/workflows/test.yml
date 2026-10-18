@@ -81,6 +81,80 @@ jobs:
         name: codecov-umbrella
         fail_ci_if_error: false
 
+  # The matrix above resolves the newest compatible releases. This job installs the lowest
+  # versions setup.py declares, on the lowest supported Python, so the lower bounds are tested
+  # rather than assumed. It uses uv's cache, never the pip cache the matrix restores.
+  test-minimum-deps:
+    runs-on: ubuntu-latest
+
+    services:
+      kinesis:
+        image: hectorvent/floci:1.5.4
+        ports:
+          - 4566:4566
+
+      redis:
+        image: redis:latest
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      EXTRAS: kpl,redis,msgpack,prometheus,dynamodb,cli
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.11"
+
+    - name: Install uv
+      run: python -m pip install uv==0.9.26
+
+    # lowest-direct pins only direct requirements to their floors; plain `lowest` also
+    # floors transitive packages, some of which no longer build on Python 3.11.
+    - name: Install declared minimums, testing extra included
+      run: uv pip install --system --resolution lowest-direct -e ".[$EXTRAS,testing]"
+
+    - name: Check declared minimums are installed
+      run: python scripts/check_dependency_floors.py --extras "$EXTRAS,testing"
+
+    # The testing extra's floor (pytest 7.0, pytest-asyncio 0.21) is below what this
+    # repository's pytest.ini needs, so the pytest plugin tests run with a bare config.
+    - name: Run pytest plugin tests at the testing extra's minimums
+      run: |
+        printf '[pytest]\nasyncio_mode = auto\n' > /tmp/plugin-pytest.ini
+        pytest -v --noconftest -c /tmp/plugin-pytest.ini --rootdir . tests/test_testing.py tests/test_mock_producer.py tests/test_mock_consumer.py tests/test_mock_integration.py
+
+    - name: Install test-suite minimums
+      run: |
+        uv pip install --system --resolution lowest-direct -e ".[$EXTRAS]" -r test-requirements.txt
+        sudo apt-get update && sudo apt-get install -y netcat-openbsd redis-tools
+
+    - name: Check declared minimums are still installed
+      run: python scripts/check_dependency_floors.py --extras "$EXTRAS"
+
+    - name: Wait for services
+      run: |
+        timeout 30 bash -c 'until nc -z localhost 4566; do echo "Waiting for Floci..."; sleep 1; done'
+        timeout 60 bash -c 'until redis-cli -h localhost ping; do echo "Waiting for redis..."; sleep 2; done'
+
+    - name: Run tests
+      run: timeout 600 pytest -v
+      env:
+        ENDPOINT_URL: http://localhost:4566
+        REDIS_HOST: localhost
+        REDIS_PORT: 6379
+        AWS_DEFAULT_REGION: ap-southeast-2
+        AWS_ACCESS_KEY_ID: test
+        AWS_SECRET_ACCESS_KEY: test
+
   test-docker:
     runs-on: ubuntu-latest
     steps:

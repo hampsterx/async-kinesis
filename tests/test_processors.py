@@ -103,7 +103,6 @@ class TestProcessorAndAggregator:
 
         assert list(processor.parse(output[0].data)) == ["123", "test"]
 
-    @pytest.mark.skipif(True, reason="KPL aggregator tests require specific aws-kinesis-agg version")
     def test_kpl_aggregator(self):
         class KPLTestProcessor(KPLAggregator, StringSerializer):
             pass
@@ -123,7 +122,6 @@ class TestProcessorAndAggregator:
 
         assert list(processor.parse(output[0].data)) == ["123", "test"]
 
-    @pytest.mark.skipif(True, reason="KPL aggregator tests require specific aws-kinesis-agg version")
     def test_kpl_aggregator_max_size(self):
         class BytesSerializer:
             def serialize(self, item):
@@ -146,15 +144,22 @@ class TestProcessorAndAggregator:
             output = list(processor.add_item(data))
             assert len(output) == 0
 
-        # should flush
+        # Ten 10K records plus KPL framing exceed 100K, so the tenth flushes the first nine
         output = list(processor.add_item(data))
         assert len(output) == 1
-        assert output[0].n == 10
+        assert output[0].n == 9
+        assert output[0].size <= 1024 * 100
 
         items = list(processor.parse(output[0].data))
-        assert len(items) == 10
+        assert len(items) == 9
         for item in items:
             assert item == data
+
+        # The tenth record stays buffered for the next flush
+        output = list(processor.get_items())
+        assert len(output) == 1
+        assert output[0].n == 1
+        assert list(processor.parse(output[0].data)) == [data]
 
     def test_simple_aggregator(self):
         class SimpleTestProcessor(SimpleAggregator, StringSerializer):

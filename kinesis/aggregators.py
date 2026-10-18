@@ -7,7 +7,7 @@ from .exceptions import ExceededPutLimit, ValidationError
 try:
     import aws_kinesis_agg
     import aws_kinesis_agg.aggregator
-    import aws_kinesis_agg.kpl_pb2
+    import aws_kinesis_agg.messages_pb2
 except ModuleNotFoundError:
     pass
 
@@ -234,7 +234,7 @@ class KPLAggregator(Aggregator):
 
     def parse(self, data):
         message_data = data[len(aws_kinesis_agg.MAGIC) : -aws_kinesis_agg.DIGEST_SIZE]
-        ar = aws_kinesis_agg.kpl_pb2.AggregatedRecord()
+        ar = aws_kinesis_agg.messages_pb2.AggregatedRecord()
         ar.ParseFromString(message_data)
         for record in ar.records:
             yield self.deserialize(record.data)

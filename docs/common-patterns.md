@@ -85,10 +85,9 @@ async def log_processor():
 Build event-driven architectures with multiple event types.
 
 > **Install note:** `MsgpackProcessor` requires the `msgpack` extra. Install
-> with `pip install async-kinesis[msgpack]`. Without it, the import succeeds
-> (the missing dependency is swallowed in `kinesis/serializers.py`), but the
-> first call to `producer.put()` or consumer iteration raises `NameError:
-> name 'msgpack' is not defined`.
+> with `pip install async-kinesis[msgpack]`. Without it, `import kinesis`
+> still succeeds, but constructing `MsgpackProcessor()` (or a
+> `MsgpackSerializer`) raises `ImportError` naming the extra.
 
 ```python
 import logging

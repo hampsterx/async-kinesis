@@ -373,7 +373,10 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
             if db > 0:
                 params["db"] = db
         else:
-            params["skip_full_coverage_check"] = True
+            # Keep redis-py's pre-4.4 default on every version: connect to a cluster
+            # with uncovered slots and let commands on those slots fail, rather than
+            # refusing to initialize the client.
+            params["require_full_coverage"] = False
 
         self.client = Redis(**params)
 

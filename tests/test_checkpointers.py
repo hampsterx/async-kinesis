@@ -285,6 +285,41 @@ class TestRedisCheckPointerClosesClient:
 
         close_client.assert_awaited_once_with()
 
+    async def test_client_close_error_chains_the_deallocation_error(self, is_cluster):
+        checkpointer = RedisCheckPointer(name="test", is_cluster=is_cluster)
+        checkpointer._items["shard-1"] = "seq-1"
+        close_name = "aclose" if hasattr(checkpointer.client, "aclose") else "close"
+
+        with (
+            patch.object(checkpointer.client, close_name, AsyncMock(side_effect=RuntimeError("client close failed"))),
+            patch.object(checkpointer.client, "set", AsyncMock(side_effect=RuntimeError("deallocate failed"))),
+        ):
+            with pytest.raises(RuntimeError, match="client close failed") as excinfo:
+                await checkpointer.close()
+
+        assert str(excinfo.value.__context__) == "deallocate failed"
+
+    async def test_close_closes_client_when_cancelled_during_deallocation(self, is_cluster):
+        checkpointer = RedisCheckPointer(name="test", is_cluster=is_cluster)
+        checkpointer._items["shard-1"] = "seq-1"
+        deallocating = asyncio.Event()
+
+        async def set_key(key, value):
+            deallocating.set()
+            await asyncio.Event().wait()
+
+        with (
+            _spy_on_client_close(checkpointer) as close_client,
+            patch.object(checkpointer.client, "set", AsyncMock(side_effect=set_key)),
+        ):
+            close_task = asyncio.create_task(checkpointer.close())
+            await deallocating.wait()
+            close_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await close_task
+
+        close_client.assert_awaited_once_with()
+
     async def test_close_closes_client_after_every_deallocation_settled(self, is_cluster):
         """A client closed under an in-flight write loses that shard's lease release on some redis
         versions and reopens a connection on others."""

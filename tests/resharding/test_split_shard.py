@@ -81,7 +81,7 @@ async def read_labels(consumer, expected_count):
     return labels
 
 
-def make_consumer(stream_name, endpoint_url):
+def make_consumer(stream_name, endpoint_url, **kwargs):
     # One record per fetch keeps the parent open across several fetch rounds, so a child read too
     # early lands among the parent's records instead of after them by luck of task scheduling.
     return Consumer(
@@ -95,6 +95,7 @@ def make_consumer(stream_name, endpoint_url):
         shard_fetch_rate=5,
         sleep_time_no_records=0.1,
         idle_timeout=1.0,
+        **kwargs,
     )
 
 
@@ -154,11 +155,11 @@ async def test_consumer_running_through_split_reads_parent_then_both_children(on
 @pytest.mark.integration
 async def test_split_landing_while_consumer_is_behind_on_parent_reads_parent_first(one_shard_stream, endpoint_url):
     client, stream_name, parent = one_shard_stream
-    # At one record per fetch this leaves several seconds of parent to read when the split lands, so
-    # shard rediscovery sees the children while the parent's iterator is still live.
-    parent_labels = await write_to_parent(client, stream_name, parent, count=30)
+    # A one-slot queue blocks the fetch loop until this test reads, so the parent cannot drain however
+    # long the split and the child writes take, and rediscovery sees the children while it is still live.
+    parent_labels = await write_to_parent(client, stream_name, parent, count=10)
 
-    async with make_consumer(stream_name, endpoint_url) as consumer:
+    async with make_consumer(stream_name, endpoint_url, max_queue_size=1) as consumer:
         consumer._shard_refresh_interval = 0.5
         labels = await read_labels(consumer, 1)
 

@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError
 from kinesis import Producer, exceptions
 from kinesis.aggregators import OutputItem
 from kinesis.processors import JsonLineProcessor, JsonProcessor, StringProcessor
+from kinesis.timeout_compat import timeout
 
 log = logging.getLogger(__name__)
 
@@ -890,10 +891,12 @@ class TestProducerFlushLifecycle:
             put_rate_limit_per_shard=100000,
         )
 
-        for i in range(1000):
-            await producer.put(i)
+        # Without the shrink the mock rejects the batch forever, so fail rather than hang
+        async with timeout(30):
+            for i in range(1000):
+                await producer.put(i)
 
-        await producer.close()
+            await producer.close()
 
         assert producer.batch_size < 600
         assert sorted(json.loads(record["Data"]) for record in delivered) == list(range(1000))

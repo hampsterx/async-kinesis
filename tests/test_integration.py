@@ -759,8 +759,15 @@ class TestIntegration:
             checkpointer=checkpointer,
             record_limit=10,
             sleep_time_no_records=0.1,
+            # Wide enough that a stalled fetch on a slow runner does not end iteration early
+            idle_timeout=10,
         ) as consumer:
-            results = [item async for item in consumer]
+            results = []
+            async with timeout(60):
+                async for item in consumer:
+                    results.append(item)
+                    if len(results) == len(expected):
+                        break
 
             # Read before the consumer closes, since closing deallocates both shards
             checkpoints = checkpointer.get_all_checkpoints()

@@ -11,7 +11,7 @@ python tests/resharding/test_resharding_detection.py
 
 # Run with Floci
 docker-compose up kinesis
-pytest tests/resharding/test_split_shard.py
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test pytest tests/resharding/test_split_shard.py
 python tests/resharding/test_resharding_integration.py
 
 # Test with real AWS (dry run first!)

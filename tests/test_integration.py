@@ -655,7 +655,11 @@ class TestIntegration:
         else:
             pytest.fail("no item fills the record exactly")
 
-        async with Producer(stream_name=test_stream, endpoint_url=endpoint_url, processor=processor) as producer:
+        collector = InMemoryMetricsCollector()
+
+        async with Producer(
+            stream_name=test_stream, endpoint_url=endpoint_url, processor=processor, metrics_collector=collector
+        ) as producer:
             await producer.put(item)
 
         async with Consumer(
@@ -665,6 +669,8 @@ class TestIntegration:
 
         expected = [item]
         assert results == ([expected] if processor_class is JsonListProcessor else expected)
+        # JsonLine's parse() and the consumer's own counter both skip an empty record, so count at the producer
+        assert sum(v for k, v in collector.counters.items() if k.startswith("producer_records_sent_total")) == 1
 
     @pytest.mark.asyncio
     async def test_consumer_queue_smaller_than_backlog_delivers_all(self, test_stream, endpoint_url):

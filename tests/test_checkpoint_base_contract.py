@@ -382,3 +382,48 @@ class TestHeartbeatRobustness:
         finally:
             release_second_heartbeat.set()
             await close_task
+
+
+class TestCloseDeallocation:
+    """close() settles every shard before it raises, so nothing is still in flight after it."""
+
+    @pytest.mark.asyncio
+    async def test_close_waits_for_every_deallocation_before_raising(self):
+        release_slow = asyncio.Event()
+        slow_finished = False
+
+        class Backend(FakeHeartbeatCheckPointer):
+            async def deallocate(self, shard_id):
+                nonlocal slow_finished
+                if shard_id == "failing":
+                    raise RuntimeError("deallocate failed")
+                await release_slow.wait()
+                slow_finished = True
+
+        cp = Backend()
+        cp._items.update({"failing": None, "slow": None})
+
+        close_task = asyncio.create_task(cp.close())
+        done, _ = await asyncio.wait({close_task}, timeout=0.05)
+        assert close_task not in done, "close() returned with a deallocation still in flight"
+
+        release_slow.set()
+        with pytest.raises(RuntimeError, match="deallocate failed"):
+            await close_task
+        assert slow_finished
+
+    @pytest.mark.asyncio
+    async def test_close_raises_first_failure_and_logs_the_others(self, caplog):
+        class Backend(FakeHeartbeatCheckPointer):
+            async def deallocate(self, shard_id):
+                raise RuntimeError(f"{shard_id} failed")
+
+        cp = Backend()
+        cp._items.update({"shard-0": None, "shard-1": None})
+
+        with caplog.at_level("WARNING", logger="kinesis.checkpointers"):
+            with pytest.raises(RuntimeError, match="shard-0 failed"):
+                await cp.close()
+
+        logged = [record.exc_info[1] for record in caplog.records if record.exc_info]
+        assert [str(error) for error in logged] == ["shard-1 failed"]

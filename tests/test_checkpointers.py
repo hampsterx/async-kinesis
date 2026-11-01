@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import os
 import uuid
+import warnings
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -233,3 +235,104 @@ async def test_redis_cluster_checkpointer_constructs():
         assert require_full_coverage is False
     finally:
         await checkpointer.close()
+
+
+def _spy_on_client_close(checkpointer, on_close=None):
+    """Wrap the method that closes this client on the installed redis, which still closes it for real."""
+    client = checkpointer.client
+    name = "aclose" if hasattr(client, "aclose") else "close"
+    real_close = getattr(client, name)
+
+    async def close_client(*args, **kwargs):
+        if on_close:
+            on_close()
+        return await real_close(*args, **kwargs)
+
+    return patch.object(client, name, AsyncMock(side_effect=close_client))
+
+
+@pytest.mark.parametrize("is_cluster", [False, True], ids=["standalone", "cluster"])
+class TestRedisCheckPointerClosesClient:
+    """close() closes the client it built, on every supported redis.
+
+    redis 4.3.0 to 5.0.0 only have close(); 5.0.1 added aclose() and deprecated close(). Both
+    client types are built without connecting, so none of these need a server.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _needs_redis(self):
+        pytest.importorskip("redis")
+
+    async def test_close_closes_client_without_the_deprecated_method(self, is_cluster):
+        checkpointer = RedisCheckPointer(name="test", is_cluster=is_cluster)
+
+        with _spy_on_client_close(checkpointer) as close_client, warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            await checkpointer.close()
+
+        close_client.assert_awaited_once_with()
+
+    async def test_close_closes_client_when_deallocation_raises(self, is_cluster):
+        checkpointer = RedisCheckPointer(name="test", is_cluster=is_cluster)
+        checkpointer._items["shard-1"] = "seq-1"
+
+        with (
+            _spy_on_client_close(checkpointer) as close_client,
+            patch.object(checkpointer.client, "set", AsyncMock(side_effect=RuntimeError("deallocate failed"))),
+        ):
+            with pytest.raises(RuntimeError, match="deallocate failed"):
+                await checkpointer.close()
+
+        close_client.assert_awaited_once_with()
+
+    async def test_close_closes_client_after_every_deallocation_settled(self, is_cluster):
+        """A client closed under an in-flight write loses that shard's lease release on some redis
+        versions and reopens a connection on others."""
+        checkpointer = RedisCheckPointer(name="test", is_cluster=is_cluster)
+        checkpointer._items.update({"failing": "seq-1", "slow": "seq-2"})
+        events = []
+
+        async def set_key(key, value):
+            if key == checkpointer.get_key("failing"):
+                raise RuntimeError("deallocate failed")
+            await asyncio.sleep(0.01)
+            events.append("slow shard released")
+
+        with (
+            _spy_on_client_close(checkpointer, lambda: events.append("client closed")),
+            patch.object(checkpointer.client, "set", AsyncMock(side_effect=set_key)),
+        ):
+            with pytest.raises(RuntimeError, match="deallocate failed"):
+                await checkpointer.close()
+
+        assert events == ["slow shard released", "client closed"]
+
+
+@pytest.mark.asyncio
+@skip_if_no_redis
+async def test_redis_close_disconnects_from_server():
+    """The connection is gone from the server's own client list, and a second close() is harmless."""
+    from redis.asyncio import Redis
+
+    observer = Redis(host=os.environ["REDIS_HOST"], port=int(os.environ.get("REDIS_PORT", "6379")))
+    checkpointer = RedisCheckPointer(name=f"test-{str(uuid.uuid4())[0:8]}")
+
+    async def server_has_connection(client_id):
+        return any(int(client["id"]) == client_id for client in await observer.client_list())
+
+    try:
+        await checkpointer.allocate("shard-1")
+        client_id = await checkpointer.client.client_id()
+        assert await server_has_connection(client_id)
+
+        await checkpointer.close()
+        await checkpointer.close()
+
+        # The server notices the disconnect on its next event loop pass, not synchronously.
+        for _ in range(50):
+            if not await server_has_connection(client_id):
+                break
+            await asyncio.sleep(0.01)
+        assert not await server_has_connection(client_id)
+    finally:
+        await (observer.aclose() if hasattr(observer, "aclose") else observer.close())

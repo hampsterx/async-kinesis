@@ -165,7 +165,16 @@ class BaseCheckPointer:
 
     async def close(self):
         log.info("{} stopping..".format(self.get_ref()))
-        await asyncio.gather(*[self.deallocate(shard_id) for shard_id in self._items.keys()])
+        # Wait for every deallocation before raising: a subclass may tear down the backend
+        # as soon as this returns, which would cut off a shard's lease release still in flight.
+        results = await asyncio.gather(
+            *[self.deallocate(shard_id) for shard_id in self._items.keys()], return_exceptions=True
+        )
+        errors = [result for result in results if isinstance(result, BaseException)]
+        for error in errors[1:]:
+            log.warning("{} failed to deallocate a shard on close".format(self.get_ref()), exc_info=error)
+        if errors:
+            raise errors[0]
 
     def is_allocated(self, shard_id):
         return shard_id in self._items
@@ -379,6 +388,18 @@ class RedisCheckPointer(BaseHeartbeatCheckPointer):
             params["require_full_coverage"] = False
 
         self.client = Redis(**params)
+
+    async def close(self):
+        # Deallocation writes through the client, so the client closes last, and still
+        # closes when deallocation raises.
+        try:
+            await super().close()
+        finally:
+            # redis-py 5.0.1 added aclose() and deprecated close(); older releases only have close().
+            if hasattr(self.client, "aclose"):
+                await self.client.aclose()
+            else:
+                await self.client.close()
 
     async def do_heartbeat(self, key, value):
         await self.client.set(key, json.dumps(value))

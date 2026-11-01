@@ -74,7 +74,7 @@ jobs:
 
     - name: Run tests
       run: |
-        timeout 600 pytest -v --cov=kinesis --cov-report=xml --cov-report=term-missing
+        timeout 600 pytest -v --cov=kinesis --cov-report=term-missing
       env:
         ENDPOINT_URL: http://localhost:4566
         REDIS_HOST: localhost
@@ -82,14 +82,6 @@ jobs:
         AWS_DEFAULT_REGION: ap-southeast-2
         AWS_ACCESS_KEY_ID: test
         AWS_SECRET_ACCESS_KEY: test
-
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v7
-      with:
-        files: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
 
   # The matrix above resolves the newest compatible releases. This job installs the lowest
   # versions setup.py declares, on the lowest supported Python, so the lower bounds are tested

@@ -97,7 +97,7 @@ Maintainers can run a manual soak against a temporary Floci or AWS stream with [
 
 - Line length: 120
 - `black`, `isort`, `autoflake`, `flake8` run via pre-commit hooks
-- Flake8 ignores: `E203,W503,E712,E402,F401,F841,F541`. `.flake8` is the only list: CI, pre-commit and `scripts/release.py` pass no flake8 options, because a command-line `--extend-ignore` replaces it
+- Flake8 options live in `.flake8` only: CI, pre-commit and `scripts/release.py` pass none, because a command-line `--extend-ignore` replaces its list
 
 ```bash
 pre-commit run --all-files

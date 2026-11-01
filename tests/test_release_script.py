@@ -185,5 +185,6 @@ def test_publish_waits_on_the_tests_workflow():
 def test_release_tests_get_a_read_only_token():
     publish = (WORKFLOWS / "publish.yml").read_text()
 
-    assert re.search(r"^  tests:\n    uses: [^\n]+\n    permissions:\n      contents: read$", publish, re.M)
-    assert re.search(r"^permissions:\n  contents: read$", (WORKFLOWS / "test.yml").read_text(), re.M)
+    # The blank line after contents: read means no wider scope can sit below it
+    assert re.search(r"^  tests:\n    uses: [^\n]+\n    permissions:\n      contents: read\n\n", publish, re.M)
+    assert re.search(r"^permissions:\n  contents: read\n\n", (WORKFLOWS / "test.yml").read_text(), re.M)

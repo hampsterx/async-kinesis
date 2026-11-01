@@ -1,9 +1,10 @@
 """
 A real SplitShard against the emulator, read back through Consumer.
 
-The other files in this directory simulate topology. These tests call the API, so they depend on
-the backend ending a closed shard the way Kinesis does: GetRecords returns a null NextShardIterator
-once the parent is drained, which is the signal Consumer advances from parent to child on.
+The rest of this directory simulates topology or targets real AWS. These tests call the API against
+the emulator, so they depend on it ending a closed shard the way Kinesis does: GetRecords returns a
+null NextShardIterator once the parent is drained, which is the signal Consumer advances from parent
+to child on.
 """
 
 import asyncio
@@ -111,10 +112,10 @@ async def one_shard_stream(random_stream_name, endpoint_url):
         yield client, random_stream_name, parent
 
 
-async def write_to_parent(client, stream_name, parent):
+async def write_to_parent(client, stream_name, parent, count=3):
     low = int(parent["HashKeyRange"]["StartingHashKey"])
     labels = []
-    for i in range(3):
+    for i in range(count):
         shard_id, label = await put(client, stream_name, f"parent-{i}", low)
         assert shard_id == parent["ShardId"]
         labels.append(label)
@@ -145,6 +146,23 @@ async def test_consumer_running_through_split_reads_parent_then_both_children(on
         assert labels == parent_labels
 
         child_labels = await split_and_write_to_children(client, stream_name, parent)
-        labels += await read_labels(consumer, len(child_labels))
+        read_from_children = await read_labels(consumer, len(child_labels))
+
+    assert sorted(read_from_children) == sorted(child_labels)
+
+
+@pytest.mark.integration
+async def test_split_landing_while_consumer_is_behind_on_parent_reads_parent_first(one_shard_stream, endpoint_url):
+    client, stream_name, parent = one_shard_stream
+    # At one record per fetch this leaves several seconds of parent to read when the split lands, so
+    # shard rediscovery sees the children while the parent's iterator is still live.
+    parent_labels = await write_to_parent(client, stream_name, parent, count=30)
+
+    async with make_consumer(stream_name, endpoint_url) as consumer:
+        consumer._shard_refresh_interval = 0.5
+        labels = await read_labels(consumer, 1)
+
+        child_labels = await split_and_write_to_children(client, stream_name, parent)
+        labels += await read_labels(consumer, len(parent_labels) + len(child_labels) - 1)
 
     assert_read_parent_then_children(labels, parent_labels, child_labels)

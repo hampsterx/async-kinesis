@@ -306,9 +306,15 @@ class TestProcessorAndAggregator:
         for _ in range(1000):
             flushed.extend(processor.add_item(item))
 
+        # Sizes come from the serializer in use, since ujson writes shorter JSON than the stdlib
+        serialized = processor.serialize(item)
+        per_item = len(serialized) + processor.get_header_size(serialized)
+        fits_in_record = (processor.max_bytes - 1) // per_item
+
         # 1000 items fill one 25 KB record and part of another, which stays buffered until asked for
         assert len(flushed) == 1
-        assert 0 < flushed[0].size < processor.max_bytes
+        assert flushed[0].n == fits_in_record
+        assert flushed[0].size == fits_in_record * per_item
         assert processor.has_items()
 
         remainder = list(processor.get_items())

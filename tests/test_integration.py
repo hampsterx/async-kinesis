@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import time
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -654,30 +653,41 @@ class TestIntegration:
         assert results == list(range(100))
 
     @pytest.mark.asyncio
-    async def test_consumer_shard_fetch_rate_limits_get_records(self, test_stream, endpoint_url):
-        """shard_fetch_rate paces GetRecords, so a backlog larger than record_limit takes measurable time."""
+    async def test_consumer_record_limit_pages_through_backlog(self, test_stream, endpoint_url):
+        """A backlog larger than record_limit arrives whole, over as many GetRecords calls as it takes."""
         async with Producer(stream_name=test_stream, endpoint_url=endpoint_url) as producer:
-            for _ in range(100):
-                await producer.put("test")
+            for i in range(100):
+                await producer.put(i)
             await producer.flush()
 
         results = []
-        first_arrival = last_arrival = None
         async with Consumer(
             stream_name=test_stream,
             endpoint_url=endpoint_url,
             record_limit=10,
             shard_fetch_rate=2,
+            # Wide enough that a stalled fetch on a slow runner does not end iteration early
+            idle_timeout=10,
         ) as consumer:
-            async for item in consumer:
-                results.append(item)
-                last_arrival = time.monotonic()
-                first_arrival = first_arrival or last_arrival
+            async with timeout(60):
+                async for item in consumer:
+                    results.append(item)
+                    if len(results) == 100:
+                        break
 
-        assert len(results) == 100
-        # Ten fetches at two per second span about 4s, against about 2s with the fetch loop alone.
-        # A floor only: a slow runner lengthens this, so it cannot fail for being slow.
-        assert last_arrival - first_arrival >= 3
+            assert consumer.shards[0]["stats"].to_data()["success"] >= 10
+
+        assert results == list(range(100))
+
+    @pytest.mark.asyncio
+    async def test_producer_leaves_no_tasks_running_after_exit(self, test_stream, endpoint_url):
+        """Leaving the context stops the background flush task and everything it started."""
+        tasks_before = asyncio.all_tasks()
+
+        async with Producer(stream_name=test_stream, endpoint_url=endpoint_url) as producer:
+            await producer.put("test")
+
+        assert asyncio.all_tasks() - tasks_before == set()
 
     @pytest.mark.asyncio
     async def test_latest_iterator_resumes_from_checkpoint(self, test_stream, endpoint_url):

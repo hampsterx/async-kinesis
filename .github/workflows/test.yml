@@ -5,6 +5,12 @@ on:
     branches: [ master, develop ]
   pull_request:
     branches: [ master, develop ]
+  # The matrix resolves the newest compatible releases, so a weekly run shows an upstream
+  # break while the repository is otherwise idle.
+  schedule:
+    - cron: '17 19 * * 0'
+  # publish.yml calls this workflow, so a release tag passes the same jobs as a pull request.
+  workflow_call:
 
 jobs:
   test:
@@ -186,4 +192,4 @@ jobs:
       run: isort --check-only --diff --line-length=120 kinesis tests
 
     - name: Lint with flake8
-      run: flake8 kinesis tests --max-line-length=120 --extend-ignore=E203,W503,E712,E402,F401,F841,F541
+      run: flake8 kinesis tests

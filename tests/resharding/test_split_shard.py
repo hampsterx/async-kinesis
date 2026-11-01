@@ -155,8 +155,8 @@ async def test_consumer_running_through_split_reads_parent_then_both_children(on
 @pytest.mark.integration
 async def test_split_landing_while_consumer_is_behind_on_parent_reads_parent_first(one_shard_stream, endpoint_url):
     client, stream_name, parent = one_shard_stream
-    # A one-slot queue blocks the fetch loop until this test reads, so the parent cannot drain however
-    # long the split and the child writes take, and rediscovery sees the children while it is still live.
+    # A one-slot queue blocks the fetch loop until this test reads, so the parent cannot drain during the
+    # split and the child writes (up to Consumer's 30s put timeout), and rediscovery sees it still live.
     parent_labels = await write_to_parent(client, stream_name, parent, count=10)
 
     async with make_consumer(stream_name, endpoint_url, max_queue_size=1) as consumer:

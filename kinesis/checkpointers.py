@@ -167,14 +167,16 @@ class BaseCheckPointer:
         log.info("{} stopping..".format(self.get_ref()))
         # Wait for every deallocation before raising: a subclass may tear down the backend
         # as soon as this returns, which would cut off a shard's lease release still in flight.
-        results = await asyncio.gather(
-            *[self.deallocate(shard_id) for shard_id in self._items.keys()], return_exceptions=True
-        )
-        errors = [result for result in results if isinstance(result, BaseException)]
-        for error in errors[1:]:
-            log.warning("{} failed to deallocate a shard on close".format(self.get_ref()), exc_info=error)
-        if errors:
-            raise errors[0]
+        shard_ids = list(self._items)
+        results = await asyncio.gather(*[self.deallocate(shard_id) for shard_id in shard_ids], return_exceptions=True)
+        failures = [
+            (shard_id, result) for shard_id, result in zip(shard_ids, results) if isinstance(result, BaseException)
+        ]
+        # Name each shard: its lease is what the next consumer waits out for session_timeout.
+        for shard_id, error in failures:
+            log.warning("{} failed to deallocate {} on close".format(self.get_ref(), shard_id), exc_info=error)
+        if failures:
+            raise failures[0][1]
 
     def is_allocated(self, shard_id):
         return shard_id in self._items

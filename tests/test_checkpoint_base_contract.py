@@ -413,7 +413,7 @@ class TestCloseDeallocation:
         assert slow_finished
 
     @pytest.mark.asyncio
-    async def test_close_raises_first_failure_and_logs_the_others(self, caplog):
+    async def test_close_raises_first_failure_and_logs_each_by_shard(self, caplog):
         class Backend(FakeHeartbeatCheckPointer):
             async def deallocate(self, shard_id):
                 raise RuntimeError(f"{shard_id} failed")
@@ -425,5 +425,19 @@ class TestCloseDeallocation:
             with pytest.raises(RuntimeError, match="shard-0 failed"):
                 await cp.close()
 
-        logged = [record.exc_info[1] for record in caplog.records if record.exc_info]
-        assert [str(error) for error in logged] == ["shard-1 failed"]
+        logged = [record for record in caplog.records if record.exc_info]
+        assert [str(record.exc_info[1]) for record in logged] == ["shard-0 failed", "shard-1 failed"]
+        assert "shard-0" in logged[0].getMessage()
+        assert "shard-1" in logged[1].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_close_raises_when_a_deallocation_was_cancelled(self):
+        class Backend(FakeHeartbeatCheckPointer):
+            async def deallocate(self, shard_id):
+                raise asyncio.CancelledError
+
+        cp = Backend()
+        cp._items["shard-0"] = None
+
+        with pytest.raises(asyncio.CancelledError):
+            await cp.close()

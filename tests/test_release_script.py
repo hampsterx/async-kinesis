@@ -99,7 +99,7 @@ def test_refuses_version_not_newer_than_latest_tag(tagged_repo, monkeypatch, cap
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLEAN_MODULE = "VALUE = 1\n"
-FLAKE8_OPTIONS = re.compile(r"--(?:extend-)?(?:ignore|select)|--max-line-length|--config|--isolated")
+WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 
 
 @pytest.fixture
@@ -129,6 +129,7 @@ def test_run_linting_takes_ignores_from_flake8_config(lint_tree):
     assert release.run_linting() is True
 
 
+@pytest.mark.parametrize("directory", ["kinesis", "tests"])
 @pytest.mark.parametrize(
     "source,message",
     [
@@ -138,8 +139,8 @@ def test_run_linting_takes_ignores_from_flake8_config(lint_tree):
     ],
     ids=["black", "isort", "flake8"],
 )
-def test_run_linting_fails_on_each_tool(lint_tree, capsys, source, message):
-    (lint_tree / "tests" / "module.py").write_text(source)
+def test_run_linting_fails_on_each_tool(lint_tree, capsys, directory, source, message):
+    (lint_tree / directory / "module.py").write_text(source)
 
     assert release.run_linting() is False
     assert message in capsys.readouterr().out
@@ -161,9 +162,21 @@ def test_run_linting_with_repo_config_rejects_what_ci_rejects(lint_tree, capsys,
     assert "flake8 check failed!" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("path", [".github/workflows/test.yml", ".pre-commit-config.yaml"])
-def test_other_flake8_callers_pass_no_options(path):
-    text = (REPO_ROOT / path).read_text()
+def test_ci_flake8_step_passes_no_options():
+    steps = re.findall(r"^\s*run: (flake8\b.*)$", (WORKFLOWS / "test.yml").read_text(), re.M)
 
-    assert "flake8" in text, f"{path} no longer runs flake8; move this check to whatever does"
-    assert not FLAKE8_OPTIONS.findall(text)
+    assert steps == ["flake8 kinesis tests"]
+
+
+def test_flake8_hook_passes_no_args():
+    hook = (REPO_ROOT / ".pre-commit-config.yaml").read_text().split("id: flake8", 1)[1].split("- repo:", 1)[0]
+
+    assert "args" not in hook
+
+
+def test_publish_waits_on_the_tests_workflow():
+    publish = (WORKFLOWS / "publish.yml").read_text()
+
+    assert re.search(r"^  tests:\n    uses: \./\.github/workflows/test\.yml$", publish, re.M)
+    assert re.search(r"^  publish:\n    needs: tests$", publish, re.M)
+    assert re.search(r"^  workflow_call:$", (WORKFLOWS / "test.yml").read_text(), re.M)

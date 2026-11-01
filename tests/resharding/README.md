@@ -11,11 +11,11 @@ python tests/resharding/test_resharding_detection.py
 
 # Run with Floci
 docker-compose up kinesis
-export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test
+export AWS_DEFAULT_REGION=ap-southeast-2 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test
 pytest tests/resharding/test_split_shard.py
 python tests/resharding/test_resharding_integration.py
 
-# Test with real AWS (dry run first!)
+# Test with real AWS, in a shell without the Floci exports (dry run first!)
 python tests/resharding/resharding_test.py --dry-run --scenario scale-up-small
 ```
 

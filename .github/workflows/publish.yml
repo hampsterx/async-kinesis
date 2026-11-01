@@ -6,98 +6,13 @@ on:
       - '*'
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
-
-    services:
-      kinesis:
-        image: hectorvent/floci:1.5.4
-        ports:
-          - 4566:4566
-
-      redis:
-        image: redis:latest
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-    - uses: actions/checkout@v7
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v7
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Cache pip dependencies
-      uses: actions/cache@v6
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/test-requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r test-requirements.txt
-        pip install -e .
-        sudo apt-get update && sudo apt-get install -y netcat-openbsd redis-tools curl
-
-    - name: Wait for services
-      run: |
-        # Floci starts in <100ms; wait for port to be available
-        timeout 30 bash -c 'until nc -z localhost 4566; do echo "Waiting for Floci..."; sleep 1; done'
-        echo "Floci is ready"
-        # Wait for Redis
-        timeout 60 bash -c 'until redis-cli -h localhost ping; do echo "Waiting for redis..."; sleep 2; done'
-        echo "Redis is ready"
-
-    - name: Run tests
-      run: |
-        timeout 600 pytest -v --cov=kinesis --cov-report=xml --cov-report=term-missing
-      env:
-        ENDPOINT_URL: http://localhost:4566
-        REDIS_HOST: localhost
-        REDIS_PORT: 6379
-        AWS_DEFAULT_REGION: ap-southeast-2
-        AWS_ACCESS_KEY_ID: test
-        AWS_SECRET_ACCESS_KEY: test
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v7
-
-    - name: Set up Python
-      uses: actions/setup-python@v7
-      with:
-        python-version: "3.12"
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install black isort flake8
-
-    - name: Check code formatting with black
-      run: black --check --diff --line-length=120 kinesis tests
-
-    - name: Check import sorting with isort
-      run: isort --check-only --diff --line-length=120 kinesis tests
-
-    - name: Lint with flake8
-      run: flake8 kinesis tests --max-line-length=120 --extend-ignore=E203,W503,E712,E402,F401,F841,F541
+  tests:
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
 
   publish:
-    needs: [test, lint]
+    needs: tests
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

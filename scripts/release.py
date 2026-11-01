@@ -86,17 +86,8 @@ def run_linting():
         print("isort check failed!")
         return False
 
-    # flake8
-    result = subprocess.run(
-        [
-            "flake8",
-            "kinesis",
-            "tests",
-            "--max-line-length=120",
-            "--extend-ignore=E203,W503,E501",
-        ],
-        capture_output=True,
-    )
+    # flake8: options come from .flake8, since a command-line --extend-ignore replaces its list
+    result = subprocess.run(["flake8", "kinesis", "tests"], capture_output=True)
     if result.returncode != 0:
         print("flake8 check failed!")
         return False

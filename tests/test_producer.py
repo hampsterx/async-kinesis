@@ -1,9 +1,11 @@
 import asyncio
+import json
 import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from aiohttp import ClientConnectionError
+from botocore.exceptions import ClientError
 
 from kinesis import Producer, exceptions
 from kinesis.aggregators import OutputItem
@@ -831,6 +833,70 @@ class TestProducerFlushLifecycle:
             await producer.close()
 
         assert len(total_delivered) == 5
+
+    @pytest.mark.asyncio
+    async def test_throughput_exceeded_retries_only_failed_records(self):
+        """Records a PutRecords response marks as throttled go back for retry; accepted ones do not."""
+        delivered = []
+        throttled_once = False
+
+        async def partly_throttled_put_records(**kwargs):
+            nonlocal throttled_once
+            records = kwargs["Records"]
+            if throttled_once:
+                delivered.extend(records)
+                return self._success_response(records)
+            throttled_once = True
+            delivered.append(records[0])
+            return {
+                "FailedRecordCount": len(records) - 1,
+                "Records": [{"ShardId": "shard-1", "SequenceNumber": "0"}]
+                + [{"ErrorCode": "ProvisionedThroughputExceededException"}] * (len(records) - 1),
+            }
+
+        producer = self._make_mock_producer(put_records_fn=partly_throttled_put_records)
+
+        for i in range(3):
+            await producer.put(i)
+
+        await producer.close()
+
+        assert producer.throughput_exceeded_count == 1
+        assert sorted(json.loads(record["Data"]) for record in delivered) == [0, 1, 2]
+
+    @pytest.mark.asyncio
+    async def test_batch_over_kinesis_limit_retries_smaller(self):
+        """A batch_size above the 500 records Kinesis accepts shrinks on rejection and loses nothing."""
+        delivered = []
+
+        async def limited_put_records(**kwargs):
+            records = kwargs["Records"]
+            if len(records) > 500:
+                raise ClientError(
+                    {
+                        "Error": {
+                            "Code": "ValidationException",
+                            "Message": "Member must have length less than or equal to 500",
+                        }
+                    },
+                    "PutRecords",
+                )
+            delivered.extend(records)
+            return self._success_response(records)
+
+        producer = self._make_mock_producer(
+            put_records_fn=limited_put_records,
+            batch_size=600,
+            put_rate_limit_per_shard=100000,
+        )
+
+        for i in range(1000):
+            await producer.put(i)
+
+        await producer.close()
+
+        assert producer.batch_size < 600
+        assert sorted(json.loads(record["Data"]) for record in delivered) == list(range(1000))
 
     @pytest.mark.asyncio
     async def test_close_during_reconnect_stops_flush_task(self):

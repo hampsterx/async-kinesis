@@ -62,7 +62,7 @@ JSON is the source of truth. Markdown is a readable summary for quick review.
 
 ## AWS Soak Run
 
-Use AWS mode for lifecycle and resharding behaviour that Floci cannot represent:
+Use AWS mode for lifecycle and resharding behaviour the Floci smoke run does not cover:
 
 ```bash
 python scripts/kinesis_dogfood.py \

@@ -9,8 +9,9 @@ Comprehensive test suite for Kinesis stream resharding scenarios.
 python tests/resharding/test_resharding_simple.py
 python tests/resharding/test_resharding_detection.py
 
-# Run with LocalStack
+# Run with Floci
 docker-compose up kinesis
+pytest tests/resharding/test_split_shard.py
 python tests/resharding/test_resharding_integration.py
 
 # Test with real AWS (dry run first!)
@@ -23,9 +24,10 @@ python tests/resharding/resharding_test.py --dry-run --scenario scale-up-small
 |------|------|--------------|-------------|
 | `test_resharding_simple.py` | Unit | None | Core shard topology logic |
 | `test_resharding_detection.py` | Unit | None | Resharding detection algorithms |
-| `test_resharding_integration.py` | Integration | LocalStack | E2E with real streams |
-| `test_resharding_in_progress.py` | Integration | LocalStack | UPDATING status handling |
-| `test_start_during_resharding.py` | Integration | LocalStack | Start during active resharding |
+| `test_split_shard.py` | Integration | Floci | Real `SplitShard`, read back through `Consumer` |
+| `test_resharding_integration.py` | Integration | Floci | E2E with real streams |
+| `test_resharding_in_progress.py` | Integration | Floci | UPDATING status handling |
+| `test_start_during_resharding.py` | Integration | Floci | Start during active resharding |
 | `resharding_test.py` ⭐ | Production | AWS | **Real AWS resharding tool** |
 
 ## Key Scenarios Tested

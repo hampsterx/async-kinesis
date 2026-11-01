@@ -429,6 +429,45 @@ class TestCloseDeallocation:
         assert [str(record.exc_info[1]) for record in logged] == ["shard-0 failed", "shard-1 failed"]
         assert "shard-0" in logged[0].getMessage()
         assert "shard-1" in logged[1].getMessage()
+        assert {record.levelname for record in logged} == {"WARNING"}
+
+    @pytest.mark.asyncio
+    async def test_close_names_the_failed_shard_when_a_sibling_released(self, caplog):
+        class Backend(FakeHeartbeatCheckPointer):
+            async def deallocate(self, shard_id):
+                if shard_id == "shard-1":
+                    raise RuntimeError("shard-1 failed")
+                self._items.pop(shard_id)
+
+        cp = Backend()
+        cp._items.update({"shard-0": None, "shard-1": None})
+
+        with caplog.at_level("WARNING", logger="kinesis.checkpointers"):
+            with pytest.raises(RuntimeError, match="shard-1 failed"):
+                await cp.close()
+
+        logged = [record for record in caplog.records if record.exc_info]
+        assert len(logged) == 1
+        assert "shard-1" in logged[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_close_logs_a_failure_when_cancelled_with_a_sibling_in_flight(self, caplog):
+        class Backend(FakeHeartbeatCheckPointer):
+            async def deallocate(self, shard_id):
+                if shard_id == "failing":
+                    raise RuntimeError("deallocate failed")
+                await asyncio.Event().wait()
+
+        cp = Backend()
+        cp._items.update({"failing": None, "hung": None})
+
+        with caplog.at_level("WARNING", logger="kinesis.checkpointers"):
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(cp.close(), 0.05)
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("failing" in message for message in messages)
+        assert any("hung" in message for message in messages)
 
     @pytest.mark.asyncio
     async def test_close_raises_when_a_deallocation_was_cancelled(self):

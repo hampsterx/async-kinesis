@@ -7,7 +7,7 @@ import pytest
 
 from kinesis import exceptions
 from kinesis.aggregators import NetstringAggregator, NewlineAggregator
-from kinesis.processors import JsonLineProcessor, JsonListProcessor, MsgpackProcessor
+from kinesis.processors import JsonLineProcessor, JsonListProcessor, KPLStringProcessor, MsgpackProcessor
 from kinesis.serializers import StringSerializer
 
 MIXED_ITEMS = [
@@ -258,3 +258,10 @@ class TestEmptyItemAfterFlush:
         # Producer.flush() asks has_items() before it collects the buffer
         assert processor.has_items()
         assert [output.n for output in processor.get_items()] == [1]
+
+
+class TestKPLLimit:
+    def test_oversized_item_raises_value_error(self):
+        # KPLAggregator has its own add_item(): aws-kinesis-agg enforces the limit, not validate_size()
+        with pytest.raises(ValueError, match="too big"):
+            list(KPLStringProcessor().add_item("x" * 1024 * 1024))

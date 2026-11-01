@@ -62,7 +62,7 @@ JSON is the source of truth. Markdown is a readable summary for quick review.
 
 ## AWS Soak Run
 
-Use AWS mode for lifecycle and resharding behaviour that Floci cannot represent:
+Use AWS mode for lifecycle and resharding behaviour the Floci smoke run does not cover:
 
 ```bash
 python scripts/kinesis_dogfood.py \
@@ -136,7 +136,7 @@ Green Floci means the harness can drive the library and clean up local resources
 | --- | --- | --- |
 | Temporary stream create/delete | Supported | Exercised by the Floci smoke run |
 | Producer and consumer round trip | Supported | Exercised by the Floci smoke run |
-| `UpdateShardCount` resharding | Unsupported in local smoke | Reported as a high run failure if forced through `--backend aws --endpoint-url` |
+| `UpdateShardCount` resharding | Unsupported in local smoke | `--backend floci` refuses `--reshard-plan`. Floci implements the API, so forcing it through `--backend aws --endpoint-url` runs the plan, which is not evidence of AWS behaviour |
 | DynamoDB checkpointer lifecycle | Not a substitute for AWS DynamoDB | Use AWS mode to validate the DynamoDB checkpointer |
 | Real AWS parent shard expiry timing | Not represented | AWS-only behaviour |
 | Real Kinesis connection idle drops | Not represented | AWS-only behaviour |

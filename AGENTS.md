@@ -71,7 +71,7 @@ Rule: copy an existing pattern before introducing a new one. `consumer.py` and `
 
 ## Testing Conventions
 
-- **Integration backend**: Floci 1.5.4 on port 4566. This is used by both `docker-compose` and CI. There is no kinesalite path.
+- **Integration backend**: Floci 2.4.0 on port 4566. This is used by both `docker-compose` and CI. There is no kinesalite path.
 - **Redis**: required for `RedisCheckPointer` tests. Docker compose exposes it on port 16379.
 - **DynamoDB tests**: marked `dynamodb`. There is no auto-skip; the quick-loop command in `CONTRIBUTING.md` excludes them with `-m "not dynamodb"`, and the CI job includes them.
 - **Mock backend**: `kinesis.testing` exposes `MockProducer` / `MockConsumer` plus a pytest plugin registered via `entry_points["pytest11"]`. Use these for unit tests that do not need a real wire protocol. Prefer them over stubbing `aiobotocore` directly.

@@ -39,7 +39,7 @@ async-kinesis list [--limit N]
 | --- | --- | --- |
 | `--limit` | 100 | Maximum number of streams to return |
 
-Handles both AWS (StreamSummaries with status/shard count/mode) and emulator (StreamNames-only) response formats.
+Handles both the StreamSummaries response (AWS, Floci) and the StreamNames-only response of older emulators.
 
 **Example:**
 ```

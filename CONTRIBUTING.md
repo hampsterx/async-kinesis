@@ -136,7 +136,7 @@ Write for the reviewer and downstream consumer, not the implementor. Lead with u
 ```markdown
 ## Test plan
 - [x] Unit tests cover new branch
-- [x] Integration suite green locally (Floci 1.5.4)
+- [x] Integration suite green locally (Floci 2.4.0)
 - [ ] Verified against real AWS
 ```
 

@@ -1,7 +1,7 @@
 services:
 
   kinesis:
-    image: hectorvent/floci:1.5.4
+    image: floci/floci:2.4.0
     restart: always
     ports:
       - 4566:4566

@@ -104,6 +104,18 @@ def assert_read_parent_then_children(labels, parent_labels, child_labels):
     assert labels[: len(parent_labels)] == parent_labels, "parent records must be read, in order, before any child's"
 
 
+def assert_parent_released(status, parent):
+    """
+    Check the parent is counted as exhausted and no longer allocated.
+
+    The running-through test leaves this out: exhausted_parents only counts a parent already in the
+    topology when it closes, and that consumer usually sees the close before its next shard refresh.
+    """
+    assert status["exhausted_parents"] == 1
+    details = {shard["shard_id"]: shard for shard in status["shard_details"]}
+    assert not details[parent["ShardId"]]["is_allocated"]
+
+
 @pytest_asyncio.fixture
 async def one_shard_stream(random_stream_name, endpoint_url):
     async with get_session().create_client("kinesis", region_name=REGION, endpoint_url=endpoint_url) as client:
@@ -131,8 +143,10 @@ async def test_consumer_started_after_split_reads_parent_then_both_children(one_
 
     async with make_consumer(stream_name, endpoint_url) as consumer:
         labels = await read_labels(consumer, len(parent_labels) + len(child_labels))
+        status = consumer.get_shard_status()
 
     assert_read_parent_then_children(labels, parent_labels, child_labels)
+    assert_parent_released(status, parent)
 
 
 @pytest.mark.integration
@@ -165,5 +179,7 @@ async def test_split_landing_while_consumer_is_behind_on_parent_reads_parent_fir
 
         child_labels = await split_and_write_to_children(client, stream_name, parent)
         labels += await read_labels(consumer, len(parent_labels) + len(child_labels) - 1)
+        status = consumer.get_shard_status()
 
     assert_read_parent_then_children(labels, parent_labels, child_labels)
+    assert_parent_released(status, parent)

@@ -27,8 +27,8 @@ python tests/resharding/resharding_test.py --dry-run --scenario scale-up-small
 | `test_resharding_detection.py` | Unit | None | Resharding detection algorithms |
 | `test_split_shard.py` | Integration | Floci | Real `SplitShard`, read back through `Consumer` |
 | `test_resharding_integration.py` | Integration | Floci | E2E with real streams |
-| `test_resharding_in_progress.py` | Integration | Floci | UPDATING status handling |
-| `test_start_during_resharding.py` | Integration | Floci | Start during active resharding |
+| `test_resharding_in_progress.py` | Integration | Floci | Status handling and shard discovery. Runs no real reshard, so the stream stays `ACTIVE` |
+| `test_start_during_resharding.py` | Integration | Floci | Startup with simulated topology. Runs no real reshard, so the stream stays `ACTIVE` |
 | `resharding_test.py` ⭐ | Production | AWS | **Real AWS resharding tool** |
 
 ## Key Scenarios Tested

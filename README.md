@@ -550,6 +550,7 @@ Note:
 * Json will use `pip install ujson` if installed
 * Msgpack requires `pip install msgpack` to be installed
 * KPL requires `pip install aws-kinesis-agg` to be installed
+* An aggregated record stays within the processor's `max_size`, framing included. `add_item()` and `Producer.put()` raise `ExceededPutLimit` for an item too big to fit once framed (KPL enforces its own limit)
 
 ## Benchmark/Example
 

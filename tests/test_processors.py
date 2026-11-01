@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from kinesis import exceptions
@@ -61,10 +63,12 @@ class TestProcessorAndAggregator:
 
         assert list(processor.parse(output[0].data)) == ["123", "test"]
 
-    def test_list_aggregator(self):
+    def test_list_aggregator(self, monkeypatch):
         class JsonListTestProcessor(ListAggregator, JsonSerializer):
             pass
 
+        # The wire format below is stdlib json's. tests/test_record_size.py covers ujson.
+        monkeypatch.setattr("kinesis.serializers.json", json)
         processor = JsonListTestProcessor()
 
         # Expect nothing as batching
@@ -76,7 +80,7 @@ class TestProcessorAndAggregator:
         output = list(processor.get_items())
 
         assert len(output) == 1
-        assert output[0].size == 11
+        assert output[0].size == 13
         assert output[0].n == 2
         assert output[0].data == b'[123, "test"]'
 
@@ -309,7 +313,7 @@ class TestProcessorAndAggregator:
         # Sizes come from the serializer in use, since ujson writes shorter JSON than the stdlib
         serialized = processor.serialize(item)
         per_item = len(serialized) + processor.get_header_size(serialized)
-        fits_in_record = (processor.max_bytes - 1) // per_item
+        fits_in_record = processor.max_bytes // per_item
 
         # 1000 items fill one 25 KB record and part of another, which stays buffered until asked for
         assert len(flushed) == 1
@@ -319,7 +323,7 @@ class TestProcessorAndAggregator:
 
         remainder = list(processor.get_items())
         assert len(remainder) == 1
-        assert 0 < remainder[0].size < processor.max_bytes
+        assert 0 < remainder[0].size <= processor.max_bytes
         assert not processor.has_items()
 
         assert flushed[0].n + remainder[0].n == 1000

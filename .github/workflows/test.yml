@@ -12,6 +12,10 @@ on:
   # publish.yml calls this workflow, so a release tag passes the same jobs as a pull request.
   workflow_call:
 
+# These jobs install the latest third-party releases, so their token can only read.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest

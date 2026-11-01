@@ -180,3 +180,10 @@ def test_publish_waits_on_the_tests_workflow():
     assert re.search(r"^  tests:\n    uses: \./\.github/workflows/test\.yml$", publish, re.M)
     assert re.search(r"^  publish:\n    needs: tests$", publish, re.M)
     assert re.search(r"^  workflow_call:$", (WORKFLOWS / "test.yml").read_text(), re.M)
+
+
+def test_release_tests_get_a_read_only_token():
+    publish = (WORKFLOWS / "publish.yml").read_text()
+
+    assert re.search(r"^  tests:\n    uses: [^\n]+\n    permissions:\n      contents: read$", publish, re.M)
+    assert re.search(r"^permissions:\n  contents: read$", (WORKFLOWS / "test.yml").read_text(), re.M)

@@ -286,6 +286,49 @@ class TestProcessorAndAggregator:
         assert len(items) == 2
         assert items == [{"data": "test"}, {"data": "test2"}]
 
+    def test_msgpack_processor_wire_format(self):
+        processor = MsgpackProcessor()
+
+        list(processor.add_item({"test": 123}))
+        list(processor.add_item({"test": 456}))
+
+        output = list(processor.get_items())
+        assert len(output) == 1
+        assert output[0].size == 22
+        assert output[0].data == b"7:\x81\xa4test{,9:\x81\xa4test\xcd\x01\xc8,"
+
+    @pytest.mark.parametrize("processor_class", [JsonLineProcessor, JsonListProcessor, MsgpackProcessor])
+    def test_aggregating_processor_flushes_at_max_size(self, processor_class):
+        processor = processor_class(max_size=25)
+        item = {"test": "test with some more data"}
+
+        flushed = []
+        for _ in range(1000):
+            flushed.extend(processor.add_item(item))
+
+        # Sizes come from the serializer in use, since ujson writes shorter JSON than the stdlib
+        serialized = processor.serialize(item)
+        per_item = len(serialized) + processor.get_header_size(serialized)
+        fits_in_record = (processor.max_bytes - 1) // per_item
+
+        # 1000 items fill one 25 KB record and part of another, which stays buffered until asked for
+        assert len(flushed) == 1
+        assert flushed[0].n == fits_in_record
+        assert flushed[0].size == fits_in_record * per_item
+        assert processor.has_items()
+
+        remainder = list(processor.get_items())
+        assert len(remainder) == 1
+        assert 0 < remainder[0].size < processor.max_bytes
+        assert not processor.has_items()
+
+        assert flushed[0].n + remainder[0].n == 1000
+        for output in flushed + remainder:
+            parsed = list(processor.parse(output.data))
+            # A list aggregator's record parses to one list, the others to one row per item
+            items = parsed[0] if processor_class is JsonListProcessor else parsed
+            assert items == [item] * output.n
+
     def test_msgpack_serializer_rejects_arguments(self):
         with pytest.raises(TypeError, match="takes no arguments"):
             MsgpackSerializer(1)

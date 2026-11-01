@@ -610,6 +610,21 @@ class TestConsumerGetRecordsErrors:
         assert collector.counters[key] == 1
 
     @pytest.mark.asyncio
+    async def test_throughput_exceeded_counts_in_shard_stats(self, mock_consumer, fast_asyncio_sleep):
+        consumer = mock_consumer()
+        err = ClientError(
+            {"Error": {"Code": "ProvisionedThroughputExceededException", "Message": "throttled"}},
+            "GetRecords",
+        )
+        consumer.client = MagicMock()
+        consumer.client.get_records = AsyncMock(side_effect=err)
+        shard = self._shard()
+
+        assert await consumer.get_records(shard) is None
+
+        assert shard["stats"].to_data() == {"throttled": 1, "success": 0}
+
+    @pytest.mark.asyncio
     async def test_internal_failure_no_longer_rebuilds(self, mock_consumer, fast_asyncio_sleep):
         collector = InMemoryMetricsCollector()
         consumer = mock_consumer(metrics_collector=collector)

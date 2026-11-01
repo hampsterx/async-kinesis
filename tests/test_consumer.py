@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -754,6 +754,39 @@ class TestConsumer:
             seq_records = [m for m in consumed if "seq" in m]
             assert len(seq_records) == 3
             assert [m["seq"] for m in seq_records] == [0, 1, 2]
+
+
+class TestConsumerShardFetchRate:
+    """Unit tests for GetRecords pacing (no Docker required)."""
+
+    @pytest.mark.asyncio
+    async def test_shard_fetch_rate_paces_get_records(self, mock_consumer):
+        """shard_fetch_rate caps GetRecords calls per second, however fast each one returns."""
+        consumer = mock_consumer(shard_fetch_rate=2)
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+        consumer.refresh_shards = AsyncMock()
+        consumer.get_shard_iterator = AsyncMock(return_value="iter")
+
+        call_times = []
+
+        async def get_records(**kwargs):
+            call_times.append(time.monotonic())
+            return {"Records": [], "NextShardIterator": "iter"}
+
+        consumer.client = MagicMock()
+        consumer.client.get_records = get_records
+
+        # Allocating the shard builds its throttler from shard_fetch_rate and starts the first call
+        await consumer.fetch()
+        shard = consumer.shards[0]
+        await shard["fetch"]
+
+        await consumer.get_records(shard)
+        await consumer.get_records(shard)
+
+        # Two calls fit in the window, so the third waits for the first to leave it
+        assert call_times[1] - call_times[0] < 0.5
+        assert call_times[2] - call_times[0] >= 0.9
 
 
 class TestConsumerReadySignal:

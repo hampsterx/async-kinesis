@@ -37,9 +37,8 @@ python scripts/release.py --version 3.0.1
 2. **Pre-flight checks**: Runs linting and tests
 3. **Git tag creation**: Creates the tag on a clean working tree and optionally pushes it
 4. **Automated deployment**: GitHub Actions detects the tag and:
-   - Runs the full test suite across Python 3.11 through 3.15
-   - Runs linting checks
-   - Writes the tag version into `setup.py` and builds the package
+   - Calls the Tests workflow (`test.yml`), the same jobs every pull request passes: the suite across Python 3.11 through 3.15, the declared dependency minimums, the Docker run and linting
+   - Once all of those pass, writes the tag version into `setup.py` and builds the package
    - Publishes to PyPI using trusted publishing
 
 ## Manual Process

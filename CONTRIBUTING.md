@@ -97,7 +97,7 @@ Maintainers can run a manual soak against a temporary Floci or AWS stream with [
 
 - Line length: 120
 - `black`, `isort`, `autoflake`, `flake8` run via pre-commit hooks
-- Flake8 ignores: `E203,W503,E712,E402,F401,F841,F541,E501,E722`
+- Flake8 options live in `.flake8` only: CI, pre-commit and `scripts/release.py` pass none, because a command-line `--extend-ignore` replaces its list
 
 ```bash
 pre-commit run --all-files
@@ -155,7 +155,7 @@ git tag X.Y.Z
 git push origin X.Y.Z
 ```
 
-The publish workflow builds sdist/wheel and uploads to PyPI. The `version` field in `setup.py` is overwritten from the tag at build time, so there is no need to bump it by hand in PRs. Release notes are written on the GitHub release page (use the "Generate release notes" action to pull in merged PR titles since the previous tag).
+The publish workflow calls the Tests workflow, the same jobs a pull request passes, then builds sdist/wheel and uploads to PyPI. The `version` field in `setup.py` is overwritten from the tag at build time, so there is no need to bump it by hand in PRs. Release notes are written on the GitHub release page (use the "Generate release notes" action to pull in merged PR titles since the previous tag).
 
 ## Security
 

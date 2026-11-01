@@ -19,6 +19,9 @@ services:
       - ./kinesis:/app/kinesis
       - ./scripts:/app/scripts
       - ./pytest.ini:/app/pytest.ini
+      - ./.flake8:/app/.flake8
+      - ./.pre-commit-config.yaml:/app/.pre-commit-config.yaml
+      - ./.github:/app/.github
      build:
        context: .
        dockerfile: Dockerfile

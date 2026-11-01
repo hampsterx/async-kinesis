@@ -1,16 +1,40 @@
 import asyncio
 import logging
 import os
+import uuid
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
+from aiobotocore.session import AioSession
 
-from kinesis import Consumer, MemoryCheckPointer, Producer, RedisCheckPointer
-from kinesis.processors import JsonLineProcessor, JsonListProcessor, JsonProcessor, StringProcessor
+from kinesis import Consumer, InMemoryMetricsCollector, MemoryCheckPointer, Producer, RedisCheckPointer, exceptions
+from kinesis.aggregators import NetstringAggregator
+from kinesis.processors import (
+    JsonLineProcessor,
+    JsonListProcessor,
+    JsonProcessor,
+    MsgpackProcessor,
+    Processor,
+    StringProcessor,
+)
+from kinesis.serializers import Serializer
 from kinesis.timeout_compat import timeout
 from tests.conftest import skip_if_no_aws, skip_if_no_redis
 
 log = logging.getLogger(__name__)
+
+
+class BytesSerializer(Serializer):
+    def serialize(self, item):
+        return item.encode()
+
+    def deserialize(self, data):
+        return data
+
+
+class BytesProcessor(Processor, NetstringAggregator, BytesSerializer):
+    pass
 
 
 @pytest.mark.integration
@@ -536,3 +560,235 @@ class TestIntegration:
         except Exception:
             # Expected - creating a stream with ARN format should fail
             pass
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "processor_class, items, expected",
+        [
+            (JsonLineProcessor, [{"test": i} for i in range(10)], [{"test": i} for i in range(10)]),
+            (MsgpackProcessor, [{"test": i} for i in range(10)], [{"test": i} for i in range(10)]),
+            (BytesProcessor, ["0", "1"], [b"0", b"1"]),
+        ],
+    )
+    async def test_aggregated_record_round_trip(self, test_stream, endpoint_url, processor_class, items, expected):
+        """One Kinesis record comes back as every item aggregated into it, including binary payloads."""
+        collector = InMemoryMetricsCollector()
+
+        async with Producer(
+            stream_name=test_stream, endpoint_url=endpoint_url, processor=processor_class()
+        ) as producer:
+            for item in items:
+                await producer.put(item)
+            await producer.flush()
+
+        async with Consumer(
+            stream_name=test_stream,
+            endpoint_url=endpoint_url,
+            processor=processor_class(),
+            metrics_collector=collector,
+        ) as consumer:
+            results = [item async for item in consumer]
+
+        assert results == expected
+        assert sum(v for k, v in collector.counters.items() if k.startswith("consumer_records_received_total")) == 1
+
+    @pytest.mark.asyncio
+    async def test_close_delivers_unflushed_records_across_several_puts(self, test_stream, endpoint_url, random_string):
+        """Leaving the producer without flushing still writes everything, including what overflows one put."""
+        flushed_batches = []
+
+        async def after_flush(items):
+            flushed_batches.append(len(items))
+
+        # 15 x 100 KB exceeds the 1 MB a single PutRecords call takes
+        async with Producer(
+            stream_name=test_stream,
+            endpoint_url=endpoint_url,
+            processor=StringProcessor(),
+            after_flush_fun=after_flush,
+        ) as producer:
+            for _ in range(15):
+                await producer.put(random_string(100 * 1024))
+
+        assert len(flushed_batches) >= 2
+        assert sum(flushed_batches) == 15
+
+        async with Consumer(
+            stream_name=test_stream, endpoint_url=endpoint_url, processor=StringProcessor()
+        ) as consumer:
+            results = [item async for item in consumer]
+
+        assert len(results) == 15
+
+    @pytest.mark.asyncio
+    async def test_record_at_size_limit_round_trip(self, test_stream, endpoint_url, random_string):
+        """A record of exactly the largest size the processor allows reaches the consumer intact."""
+        limit = 40 * 25 * 1024
+        assert StringProcessor().max_bytes == limit
+        payload = random_string(limit)
+
+        async with Producer(
+            stream_name=test_stream, endpoint_url=endpoint_url, processor=StringProcessor()
+        ) as producer:
+            await producer.put(payload)
+
+        async with Consumer(
+            stream_name=test_stream, endpoint_url=endpoint_url, processor=StringProcessor()
+        ) as consumer:
+            results = [item async for item in consumer]
+
+        assert results == [payload]
+
+    @pytest.mark.asyncio
+    async def test_consumer_queue_smaller_than_backlog_delivers_all(self, test_stream, endpoint_url):
+        """A full queue applies backpressure to fetching rather than dropping or ending early."""
+        async with Producer(stream_name=test_stream, endpoint_url=endpoint_url) as producer:
+            for i in range(100):
+                await producer.put(i)
+            await producer.flush()
+
+        async with Consumer(stream_name=test_stream, endpoint_url=endpoint_url, max_queue_size=20) as consumer:
+            results = [item async for item in consumer]
+
+        assert results == list(range(100))
+
+    @pytest.mark.asyncio
+    async def test_consumer_record_limit_pages_through_backlog(self, test_stream, endpoint_url):
+        """A backlog larger than record_limit arrives whole, over as many GetRecords calls as it takes."""
+        async with Producer(stream_name=test_stream, endpoint_url=endpoint_url) as producer:
+            for i in range(100):
+                await producer.put(i)
+            await producer.flush()
+
+        results = []
+        async with Consumer(
+            stream_name=test_stream,
+            endpoint_url=endpoint_url,
+            record_limit=10,
+            shard_fetch_rate=2,
+            # Wide enough that a stalled fetch on a slow runner does not end iteration early
+            idle_timeout=10,
+        ) as consumer:
+            async with timeout(60):
+                async for item in consumer:
+                    results.append(item)
+                    if len(results) == 100:
+                        break
+
+            assert consumer.shards[0]["stats"].to_data()["success"] >= 10
+
+        assert results == list(range(100))
+
+    @pytest.mark.asyncio
+    async def test_producer_leaves_no_tasks_running_after_exit(self, test_stream, endpoint_url):
+        """Leaving the context stops the background flush task and everything it started."""
+        tasks_before = asyncio.all_tasks()
+
+        async with Producer(stream_name=test_stream, endpoint_url=endpoint_url) as producer:
+            await producer.put("test")
+
+        assert asyncio.all_tasks() - tasks_before == set()
+
+    @pytest.mark.asyncio
+    async def test_latest_iterator_resumes_from_checkpoint(self, test_stream, endpoint_url):
+        """LATEST applies only until a sequence is checkpointed; after that a consumer resumes from it."""
+        checkpointer = MemoryCheckPointer(name="test")
+
+        def checkpointed_sequence():
+            checkpoints = checkpointer.get_all_checkpoints()
+            assert len(checkpoints) == 1
+            return next(iter(checkpoints.values()))["sequence"]
+
+        def latest_consumer():
+            return Consumer(
+                stream_name=test_stream,
+                endpoint_url=endpoint_url,
+                checkpointer=checkpointer,
+                iterator_type="LATEST",
+                sleep_time_no_records=0.5,
+            )
+
+        async with Producer(stream_name=test_stream, endpoint_url=endpoint_url) as producer:
+            await producer.put("before any consumer")
+            await producer.flush()
+
+            async with latest_consumer() as consumer:
+                results = [item async for item in consumer]
+            assert results == []
+            assert checkpointed_sequence() is None
+
+            async with latest_consumer() as consumer:
+                await consumer.wait_ready(timeout=10)
+                await producer.put("after wait_ready")
+                await producer.flush()
+                results = [item async for item in consumer]
+            assert results == ["after wait_ready"]
+            assert checkpointed_sequence() is not None
+
+            # Nothing is consuming while these arrive, so LATEST alone would miss them
+            missed = [f"while stopped {i}" for i in range(10)]
+            for item in missed:
+                await producer.put(item)
+            await producer.flush()
+
+            async with latest_consumer() as consumer:
+                results = [item async for item in consumer]
+            assert results == missed
+
+    @pytest.mark.asyncio
+    @skip_if_no_redis
+    async def test_multiple_shards_with_redis_checkpointer(self, random_stream_name, endpoint_url):
+        """One consumer takes every shard through RedisCheckPointer and checkpoints each of them."""
+        expected = [f"test.{i}" for i in range(100)]
+
+        async with Producer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            create_stream=True,
+            create_stream_shards=2,
+        ) as producer:
+            for item in expected:
+                await producer.put(item)
+            await producer.flush()
+
+        checkpointer = RedisCheckPointer(name=f"test-{uuid.uuid4().hex[:8]}", heartbeat_frequency=3)
+
+        async with Consumer(
+            stream_name=random_stream_name,
+            endpoint_url=endpoint_url,
+            checkpointer=checkpointer,
+            record_limit=10,
+            sleep_time_no_records=0.1,
+            # Wide enough that a stalled fetch on a slow runner does not end iteration early
+            idle_timeout=10,
+        ) as consumer:
+            results = []
+            async with timeout(60):
+                async for item in consumer:
+                    results.append(item)
+                    if len(results) == len(expected):
+                        break
+
+            # Read before the consumer closes, since closing deallocates both shards
+            checkpoints = checkpointer.get_all_checkpoints()
+
+        assert sorted(results) == sorted(expected)
+        assert len(checkpoints) == 2
+        assert all(checkpoints.values())
+
+    @pytest.mark.asyncio
+    async def test_supplied_session_creates_the_client(self, endpoint_url):
+        """Producer and Consumer use the session passed to them, and a missing stream still raises."""
+        session = AioSession()
+
+        with patch.object(session, "create_client", wraps=session.create_client) as create_client:
+            with pytest.raises(exceptions.StreamDoesNotExist):
+                async with Producer(session=session, stream_name="missing-stream", endpoint_url=endpoint_url):
+                    pass
+            assert create_client.called
+            create_client.reset_mock()
+
+            with pytest.raises(exceptions.StreamDoesNotExist):
+                async with Consumer(session=session, stream_name="missing-stream", endpoint_url=endpoint_url):
+                    pass
+            assert create_client.called

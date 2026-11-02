@@ -39,15 +39,17 @@ async-kinesis list [--limit N]
 | --- | --- | --- |
 | `--limit` | 100 | Maximum number of streams to return |
 
-Handles both the StreamSummaries response (AWS, Floci) and the StreamNames-only response of older emulators.
+`Shards` is the number of open shards. ListStreams does not return a shard count, so `list` makes one `DescribeStreamSummary` call per stream. AWS limits that call to 20 per second per account, so the calls start 0.1 seconds apart and a listing of 100 streams takes about 10 seconds. A stream whose lookup fails shows `?` with a warning on stderr, and the rest of the listing still prints.
+
+Handles both the StreamSummaries response (AWS, Floci) and the StreamNames-only response of older emulators. The StreamNames-only path calls `DescribeStream` per stream instead and has no `Mode` column.
 
 **Example:**
 ```
 $ async-kinesis list
-Name         Status  Shards
------------  ------  ------
-my-stream    ACTIVE  2
-events       ACTIVE  4
+Name       Status  Shards  Mode
+---------  ------  ------  -----------
+my-stream  ACTIVE  2       PROVISIONED
+events     ACTIVE  4       ON_DEMAND
 ```
 
 ### `describe`

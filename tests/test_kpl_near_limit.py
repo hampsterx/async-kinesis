@@ -1,6 +1,7 @@
 """Every item given to a KPL processor comes back out of it or raises, whatever its size and whatever is buffered."""
 
 import pytest
+from aws_kinesis_agg.aggregator import AggRecord
 
 from kinesis.processors import KPLJsonProcessor, KPLStringProcessor
 from kinesis.testing import MockProducer
@@ -98,8 +99,8 @@ class TestBufferedRecord:
         assert list(processor.parse(remainder[0].data)) == [largest]
 
 
-# 140 and 16400 put a length varint's extra byte inside the sizes tried, at both places it grows
-@pytest.mark.parametrize("limit", [140, 256, 1024, 16384, 16400, *LIMITS])
+# 160 and 16420 accept items on both sides of where the framing's length varints gain a byte
+@pytest.mark.parametrize("limit", [160, 256, 1024, 16384, 16420, *LIMITS])
 @pytest.mark.parametrize("buffered", [0, 1, 3])
 def test_no_item_is_lost_near_the_limit(limit, buffered):
     processor = KPLStringProcessor(max_size=limit)
@@ -121,6 +122,10 @@ def test_no_item_is_lost_near_the_limit(limit, buffered):
         try:
             collect(processor.add_item(item))
         except ValueError:
+            # A refusal has to be earned: with room to spare, the item's record is over the limit
+            record = AggRecord(limit * 2 + 64)
+            assert record.add_user_record("a", item)
+            assert record.get_size_bytes() > limit
             continue
         sent.append(item)
 

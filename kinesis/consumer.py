@@ -769,6 +769,10 @@ class Consumer(Base):
         self._parent_shards = parent_shard_ids & all_shard_ids
         # Parent shard IDs that are referenced but no longer exist (expired/removed by AWS)
         self._expired_parent_shards = parent_shard_ids - all_shard_ids
+        # A parent drained before any refresh listed it as one was closed without being counted as
+        # exhausted. Count it now, or get_shard_status() reports it unexhausted and resharding as in
+        # progress for good.
+        self._exhausted_parents |= self._closed_shards & self._parent_shards
 
         log.debug(f"Shard topology: {len(self._parent_shards)} parents, {len(self._child_shards)} children")
         if self._expired_parent_shards:

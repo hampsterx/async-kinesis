@@ -81,6 +81,14 @@ async def read_labels(consumer, expected_count):
     return labels
 
 
+async def wait_for_closed(consumer, shard_id):
+    deadline = time.monotonic() + READ_TIMEOUT
+    while shard_id not in consumer._closed_shards:
+        if time.monotonic() > deadline:
+            pytest.fail(f"{shard_id} was not seen closed within {READ_TIMEOUT}s")
+        await asyncio.sleep(0.1)
+
+
 def make_consumer(stream_name, endpoint_url, **kwargs):
     # One record per fetch keeps the parent open across several fetch rounds, so a child read too
     # early lands among the parent's records instead of after them by luck of task scheduling.
@@ -106,12 +114,13 @@ def assert_read_parent_then_children(labels, parent_labels, child_labels):
 
 def assert_parent_released(status, parent):
     """
-    Check the parent is counted as exhausted and no longer allocated.
+    Check the parent is counted as exhausted and no longer allocated, and resharding reads as done.
 
-    The running-through test leaves this out: exhausted_parents only counts a parent already in the
-    topology when it closes, and that consumer usually sees the close before its next shard refresh.
+    A one-shard stream split once has one closed shard in three, over the 0.3 closed ratio at which
+    resharding_in_progress turns True unless every parent is counted as exhausted.
     """
     assert status["exhausted_parents"] == 1
+    assert status["resharding_in_progress"] is False
     details = {shard["shard_id"]: shard for shard in status["shard_details"]}
     assert not details[parent["ShardId"]]["is_allocated"]
 
@@ -155,15 +164,20 @@ async def test_consumer_running_through_split_reads_parent_then_both_children(on
     parent_labels = await write_to_parent(client, stream_name, parent)
 
     async with make_consumer(stream_name, endpoint_url) as consumer:
-        # Consumer rediscovers shards every 60s, too slow to wait for here.
-        consumer._shard_refresh_interval = 0.5
         labels = await read_labels(consumer, len(parent_labels))
         assert labels == parent_labels
 
+        # Consumer rediscovers shards every 60s, so it sees the drained parent's null NextShardIterator
+        # before any refresh lists the parent as one. Wait for that close, then refresh quickly so the
+        # children are found without waiting out the 60s.
         child_labels = await split_and_write_to_children(client, stream_name, parent)
+        await wait_for_closed(consumer, parent["ShardId"])
+        consumer._shard_refresh_interval = 0.5
         read_from_children = await read_labels(consumer, len(child_labels))
+        status = consumer.get_shard_status()
 
     assert sorted(read_from_children) == sorted(child_labels)
+    assert_parent_released(status, parent)
 
 
 @pytest.mark.integration

@@ -187,8 +187,10 @@ class NetstringAggregator(Aggregator):
         length = len(data)
 
         # An empty record holds no items. Producers before 3.0.2 could write one on a flush
-        # with nothing buffered, and it still sits in streams they wrote to.
-        while i < length:
+        # with nothing buffered, and it still sits in streams they wrote to. `!=` rather than
+        # `<`: a frame whose length runs past the data leaves i beyond it, and the next pass
+        # raises on that truncated record rather than ending as if it were whole.
+        while i != length:
             header_offset = data[i:].index(b":")
             size = int(data[i : i + header_offset].decode("ascii"))
             item = data[i + header_offset + 1 : i + header_offset + 1 + size]

@@ -305,6 +305,12 @@ class TestProcessorAndAggregator:
         # Producers before 3.0.2 could write an empty record, so consumers still read them
         assert list(MsgpackProcessor().parse(b"")) == []
 
+    @pytest.mark.parametrize("data", [b"1:\x01", b"2:\x01", b"1:\x01,5:\x01"])
+    def test_msgpack_processor_rejects_a_truncated_record(self, data):
+        # A last frame cut short (no trailing comma, or a length past the end) still raises
+        with pytest.raises(ValueError):
+            list(MsgpackProcessor().parse(data))
+
     @pytest.mark.parametrize("processor_class", [JsonLineProcessor, JsonListProcessor, MsgpackProcessor])
     def test_aggregating_processor_flushes_at_max_size(self, processor_class):
         processor = processor_class(max_size=25)

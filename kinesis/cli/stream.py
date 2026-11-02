@@ -1,4 +1,6 @@
+import asyncio
 import json
+import logging
 import sys
 
 import click
@@ -10,6 +12,13 @@ from kinesis.processors import JsonProcessor, StringProcessor
 from kinesis.producer import Producer
 
 from . import async_command, format_kv, format_table
+
+log = logging.getLogger(__name__)
+
+# DescribeStreamSummary is limited to 20 transactions per second per account,
+# and the CLI client runs with botocore retries disabled. Pace the calls at
+# half the limit so `list` leaves headroom for other callers in the account.
+DESCRIBE_SUMMARY_INTERVAL = 0.1
 
 PROCESSORS = {
     "json": JsonProcessor,
@@ -94,24 +103,20 @@ async def list_streams(ctx, limit):
     async with _ClientHelper(endpoint_url=endpoint_url, region_name=region) as helper:
         response = await helper.client.list_streams(Limit=limit)
 
-        # AWS and Floci return StreamSummaries; older emulators (kinesalite) return only StreamNames
+        # AWS and Floci return StreamSummaries; older emulators (kinesalite) return only StreamNames.
+        # StreamSummary carries no shard count, so it comes from DescribeStreamSummary per stream.
         summaries = response.get("StreamSummaries")
         if summaries is not None:
             if not summaries:
                 click.echo("No streams found.")
                 return
+            names = [s.get("StreamName", "") for s in summaries]
+            shard_counts = await _open_shard_counts(helper.client, names)
             headers = ["Name", "Status", "Shards", "Mode"]
             rows = []
-            for s in summaries:
+            for name, s in zip(names, summaries):
                 mode = s.get("StreamModeDetails", {}).get("StreamMode", "")
-                rows.append(
-                    [
-                        s.get("StreamName", ""),
-                        s.get("StreamStatus", ""),
-                        str(s.get("OpenShardCount", "?")),
-                        mode,
-                    ]
-                )
+                rows.append([name, s.get("StreamStatus", ""), shard_counts[name], mode])
             click.echo(format_table(headers, rows))
         else:
             names = response.get("StreamNames", [])
@@ -125,16 +130,43 @@ async def list_streams(ctx, limit):
                 try:
                     resp = await helper.client.describe_stream(StreamName=name)
                     info = resp["StreamDescription"]
-                    rows.append(
-                        [
-                            info["StreamName"],
-                            info["StreamStatus"],
-                            str(len(info["Shards"])),
-                        ]
-                    )
+                    open_shards = [
+                        shard
+                        for shard in info["Shards"]
+                        if "EndingSequenceNumber" not in shard.get("SequenceNumberRange", {})
+                    ]
+                    rows.append([info["StreamName"], info["StreamStatus"], str(len(open_shards))])
                 except Exception:
                     rows.append([name, "?", "?"])
             click.echo(format_table(headers, rows))
+
+
+async def _open_shard_counts(client, names):
+    """Return {stream name: open shard count as text}, with "?" for any stream whose lookup fails.
+
+    Each call starts at least DESCRIBE_SUMMARY_INTERVAL after the previous one actually
+    started, so a long listing stays under the DescribeStreamSummary rate limit even if the
+    event loop stalls. A failure for one stream does not fail the listing.
+    """
+
+    async def count(name):
+        try:
+            resp = await client.describe_stream_summary(StreamName=name)
+            return str(resp["StreamDescriptionSummary"]["OpenShardCount"])
+        except Exception as e:
+            log.warning("Could not get the shard count for stream %s: %s", name, e)
+            return "?"
+
+    tasks = []
+    for index, name in enumerate(names):
+        if index:
+            await asyncio.sleep(DESCRIBE_SUMMARY_INTERVAL)
+        task = asyncio.create_task(count(name))
+        tasks.append(task)
+        # Let the call start before the next interval is measured from it.
+        await asyncio.sleep(0)
+    results = await asyncio.gather(*tasks)
+    return dict(zip(names, results))
 
 
 ITERATOR_TYPES = click.Choice(["LATEST", "TRIM_HORIZON", "AT_TIMESTAMP"])

@@ -1,8 +1,9 @@
-"""Every item given to a KPL processor either round-trips or raises, whatever its size and whatever is buffered."""
+"""Every item given to a KPL processor comes back out of it or raises, whatever its size and whatever is buffered."""
 
 import pytest
 
 from kinesis.processors import KPLJsonProcessor, KPLStringProcessor
+from kinesis.testing import MockProducer
 
 LIMITS = [25600, 1048576]
 
@@ -97,8 +98,8 @@ class TestBufferedRecord:
         assert list(processor.parse(remainder[0].data)) == [largest]
 
 
-# Limits either side of where the length varints gain a byte, as well as the two above
-@pytest.mark.parametrize("limit", [256, 1024, 16384, 16400, *LIMITS])
+# 140 and 16400 put a length varint's extra byte inside the sizes tried, at both places it grows
+@pytest.mark.parametrize("limit", [140, 256, 1024, 16384, 16400, *LIMITS])
 @pytest.mark.parametrize("buffered", [0, 1, 3])
 def test_no_item_is_lost_near_the_limit(limit, buffered):
     processor = KPLStringProcessor(max_size=limit)
@@ -126,3 +127,22 @@ def test_no_item_is_lost_near_the_limit(limit, buffered):
     collect(processor.get_items())
 
     assert received == sent
+
+
+async def test_put_raises_and_buffered_record_reaches_the_stream(kinesis_backend):
+    stream = kinesis_backend.create_stream("kpl-near-limit")
+    limit = 25600
+    processor = KPLStringProcessor(max_size=limit)
+    producer = MockProducer(stream_name="kpl-near-limit", processor=processor)
+    await producer.put("small")
+
+    with pytest.raises(ValueError, match="too big"):
+        await producer.put("x" * (limit - 20))
+
+    # Nothing was flushed by the refusal, so no empty record reaches the stream either
+    assert stream.record_count == 0
+
+    await producer.flush()
+
+    records = [record for shard in stream.shards for record in shard.records]
+    assert [list(processor.parse(data)) for _, data, _ in records] == [["small"]]

@@ -782,6 +782,45 @@ class TestConsumerShardTopology:
         assert status["exhausted_parents"] == 1
         assert status["resharding_in_progress"] is False
 
+    @pytest.mark.asyncio
+    async def test_resharding_not_in_progress_after_parent_leaves_shard_list(self, mock_consumer):
+        """A drained split parent that ages out of ListShards does not leave resharding_in_progress stuck True."""
+        consumer = mock_consumer(skip_describe_stream=False, use_list_shards=True)
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+        consumer._shard_refresh_interval = 0
+        consumer.shards = []
+
+        children = [
+            {"ShardId": "child-1", "ParentShardId": "parent-1"},
+            {"ShardId": "child-2", "ParentShardId": "parent-1"},
+        ]
+        consumer.list_shards = AsyncMock(return_value=[{"ShardId": "parent-1"}] + children)
+        await consumer.refresh_shards()
+
+        # The fetch loop drained the parent while it was still listed.
+        consumer._closed_shards.add("parent-1")
+        consumer._exhausted_parents.add("parent-1")
+        assert consumer.get_shard_status()["resharding_in_progress"] is False
+
+        # Past the retention period the parent drops out of ListShards; the children still name it.
+        consumer.list_shards = AsyncMock(return_value=children)
+        await consumer.refresh_shards()
+
+        status = consumer.get_shard_status()
+        assert status["parent_shards"] == 0
+        assert status["expired_parents"] == 1
+        assert status["resharding_in_progress"] is False
+
+    @pytest.mark.asyncio
+    async def test_resharding_in_progress_on_high_closed_ratio_of_listed_shards(self, mock_consumer):
+        """Closed shards still in the shard list keep the closed-ratio rule firing."""
+        consumer = mock_consumer()
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+        consumer.shards = [{"ShardId": "shard-0"}, {"ShardId": "shard-1"}, {"ShardId": "shard-2"}]
+        consumer._closed_shards.update({"shard-0", "shard-1"})
+
+        assert consumer.get_shard_status()["resharding_in_progress"] is True
+
 
 class TestConsumerShardFetchRate:
     """Unit tests for GetRecords pacing (no Docker required)."""

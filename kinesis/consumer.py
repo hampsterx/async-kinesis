@@ -714,9 +714,12 @@ class Consumer(Base):
                 return True
 
         # If we have many closed shards relative to active ones, might be post-resharding
-        # But only flag as "in progress" if we don't have clear parent-child completion
-        if len(self._closed_shards) > 0 and self.shards:
-            closed_ratio = len(self._closed_shards) / len(self.shards)
+        # But only flag as "in progress" if we don't have clear parent-child completion.
+        # Count only closed shards still listed: _closed_shards keeps a parent after it ages out of
+        # the shard list, when _parent_shards no longer holds it for the all-exhausted check below.
+        listed_closed = {s["ShardId"] for s in self.shards} & self._closed_shards if self.shards else set()
+        if listed_closed:
+            closed_ratio = len(listed_closed) / len(self.shards)
             if closed_ratio > 0.3:  # More than 30% of shards are closed
                 # Only consider it "in progress" if we don't have a clear completed resharding pattern
                 # (i.e., all parents are exhausted and we have active children)

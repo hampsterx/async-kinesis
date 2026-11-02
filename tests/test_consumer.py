@@ -288,20 +288,47 @@ class TestConsumer:
                 pass
 
     @pytest.mark.asyncio
-    async def test_consumer_at_timestamp(self, test_stream, endpoint_url):
-        """Test consumer with AT_TIMESTAMP iterator type."""
-        from datetime import datetime, timezone
+    async def test_consumer_at_timestamp(self, random_stream_name, endpoint_url):
+        """AT_TIMESTAMP excludes records written before the requested start time."""
+        from datetime import datetime, timedelta, timezone
 
-        timestamp = datetime.now(timezone.utc)
+        before = [{"batch": "before", "index": i} for i in range(3)]
+        after = [{"batch": "after", "index": i} for i in range(3)]
 
-        async with Consumer(
-            stream_name=test_stream,
+        async with Producer(
+            stream_name=random_stream_name,
             endpoint_url=endpoint_url,
-            iterator_type="AT_TIMESTAMP",
-            timestamp=timestamp,
-        ) as consumer:
-            assert consumer.iterator_type == "AT_TIMESTAMP"
-            assert consumer.timestamp == timestamp
+            region_name="ap-southeast-2",
+            create_stream=True,
+            create_stream_shards=1,
+            processor=JsonProcessor(),
+        ) as producer:
+            try:
+                for message in before:
+                    await producer.put(message, partition_key="timestamp-test")
+                await producer.flush()
+                # Botocore serializes this timestamp in whole seconds. Cross that boundary before writing again.
+                timestamp = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=1)
+                await asyncio.sleep(max(0, (timestamp - datetime.now(timezone.utc)).total_seconds()))
+                for message in after:
+                    await producer.put(message, partition_key="timestamp-test")
+                await producer.flush()
+
+                async with timeout(10):
+                    async with Consumer(
+                        stream_name=random_stream_name,
+                        endpoint_url=endpoint_url,
+                        region_name="ap-southeast-2",
+                        processor=JsonProcessor(),
+                        iterator_type="AT_TIMESTAMP",
+                        timestamp=timestamp,
+                        sleep_time_no_records=0.1,
+                        idle_timeout=1,
+                    ) as consumer:
+                        messages = [message async for message in consumer]
+                assert messages == after
+            finally:
+                await producer.client.delete_stream(StreamName=random_stream_name)
 
     @pytest.mark.asyncio
     async def test_consumer_queue_management(self, test_stream, endpoint_url):

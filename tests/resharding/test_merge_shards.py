@@ -98,6 +98,23 @@ def test_merge_parent_that_is_itself_a_split_child_waits_for_its_own_parent():
     assert not consumer._should_allocate_shard("child")
 
 
+def test_split_child_that_is_split_again_waits_for_its_own_parent():
+    consumer = Consumer(stream_name="split-chain", endpoint_url="http://mock:4566", create_stream=False)
+    consumer._build_shard_topology(
+        [
+            {"ShardId": "original"},
+            {"ShardId": "middle", "ParentShardId": "original"},
+            {"ShardId": "sibling", "ParentShardId": "original"},
+            {"ShardId": "low", "ParentShardId": "middle"},
+            {"ShardId": "high", "ParentShardId": "middle"},
+        ]
+    )
+    assert not consumer._should_allocate_shard("middle"), "a split child must not be read before its parent drains"
+    consumer._closed_shards.add("original")
+    assert consumer._should_allocate_shard("middle")
+    assert not consumer._should_allocate_shard("low")
+
+
 @pytest_asyncio.fixture
 async def two_shard_stream(random_stream_name, endpoint_url):
     async with get_session().create_client("kinesis", region_name=REGION, endpoint_url=endpoint_url) as client:
@@ -130,6 +147,9 @@ async def test_child_of_merge_waits_for_the_adjacent_parent(two_shard_stream, en
     assert [label for label in labels if label.startswith("adjacent-")] == adjacent_labels
     assert labels[parents_read:] == child_labels
     assert_parents_released(status, parent, adjacent)
+    details = {shard["shard_id"]: shard for shard in status["shard_details"]}
+    assert details[child["ShardId"]]["parent_shard_id"] == parent["ShardId"]
+    assert details[child["ShardId"]]["adjacent_parent_shard_id"] == adjacent["ShardId"]
 
 
 @pytest.mark.integration

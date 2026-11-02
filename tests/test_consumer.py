@@ -811,6 +811,16 @@ class TestConsumerShardTopology:
         assert status["expired_parents"] == 1
         assert status["resharding_in_progress"] is False
 
+    @pytest.mark.asyncio
+    async def test_resharding_in_progress_on_high_closed_ratio_of_listed_shards(self, mock_consumer):
+        """Closed shards still in the shard list keep the closed-ratio rule firing."""
+        consumer = mock_consumer()
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+        consumer.shards = [{"ShardId": "shard-0"}, {"ShardId": "shard-1"}, {"ShardId": "shard-2"}]
+        consumer._closed_shards.update({"shard-0", "shard-1"})
+
+        assert consumer.get_shard_status()["resharding_in_progress"] is True
+
 
 class TestConsumerShardFetchRate:
     """Unit tests for GetRecords pacing (no Docker required)."""

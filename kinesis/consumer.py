@@ -673,7 +673,7 @@ class Consumer(Base):
                     # Keep existing shard with its state
                     existing_shard = preserved_shards[shard_id]
                     # Update shard metadata from AWS
-                    for key in ["SequenceNumberRange", "ParentShardId", "HashKeyRange"]:
+                    for key in ["SequenceNumberRange", "ParentShardId", "AdjacentParentShardId", "HashKeyRange"]:
                         if key in new_shard:
                             existing_shard[key] = new_shard[key]
                     updated_shards.append(existing_shard)
@@ -751,22 +751,27 @@ class Consumer(Base):
             parent_shard_id = shard.get("ParentShardId")
 
             if parent_shard_id:
-                # This is a child shard
+                # This is a child shard. A merged child also names the second parent it was merged
+                # from in AdjacentParentShardId; that parent holds records for part of the child's hash
+                # range too, so it is a parent the child must wait for.
                 self._child_shards.add(shard_id)
-                parent_shard_ids.add(parent_shard_id)
+                parents = [parent_shard_id]
+                adjacent_parent_shard_id = shard.get("AdjacentParentShardId")
+                if adjacent_parent_shard_id:
+                    parents.append(adjacent_parent_shard_id)
+                parent_shard_ids.update(parents)
 
                 # Build parent -> children mapping
-                if parent_shard_id not in self._shard_topology:
-                    self._shard_topology[parent_shard_id] = {
-                        "children": set(),
-                        "parent": None,
-                    }
-                self._shard_topology[parent_shard_id]["children"].add(shard_id)
+                for parent_id in parents:
+                    if parent_id not in self._shard_topology:
+                        self._shard_topology[parent_id] = {"children": set(), "parent": None, "adjacent_parent": None}
+                    self._shard_topology[parent_id]["children"].add(shard_id)
 
                 # Build child -> parent mapping
                 if shard_id not in self._shard_topology:
-                    self._shard_topology[shard_id] = {"children": set(), "parent": None}
+                    self._shard_topology[shard_id] = {"children": set(), "parent": None, "adjacent_parent": None}
                 self._shard_topology[shard_id]["parent"] = parent_shard_id
+                self._shard_topology[shard_id]["adjacent_parent"] = adjacent_parent_shard_id
 
         # Parent shards are those referenced as parents AND still present in the shard list
         self._parent_shards = parent_shard_ids & all_shard_ids
@@ -790,19 +795,21 @@ class Consumer(Base):
         Determine if a shard should be allocated based on parent-child ordering rules.
         AWS Best Practice: Only allocate child shards after their parents are exhausted.
         """
-        # Always allow parent shards
-        if shard_id in self._parent_shards:
-            return True
-
-        # For child shards, check if parent is exhausted
+        # For child shards, check that every parent is exhausted (both of them for a merged child).
+        # This holds for a child that is itself a parent too: after a split and a later merge (or
+        # split) of its children, the middle generation still waits for the shard it came from.
         if shard_id in self._child_shards:
-            parent_id = self._shard_topology.get(shard_id, {}).get("parent")
-            if parent_id:
-                # Expired parents are gone from AWS shard list; child is safe to consume
-                if parent_id in self._expired_parent_shards:
-                    return True
-                # Parent must be exhausted (closed) before we can consume child
-                return parent_id in self._exhausted_parents or parent_id in self._closed_shards
+            node = self._shard_topology.get(shard_id, {})
+            parents = [p for p in (node.get("parent"), node.get("adjacent_parent")) if p]
+            if parents:
+                # Expired parents are gone from AWS shard list; nothing is left to read from them.
+                # Any other parent must be exhausted (closed) before we can consume the child.
+                return all(
+                    parent_id in self._expired_parent_shards
+                    or parent_id in self._exhausted_parents
+                    or parent_id in self._closed_shards
+                    for parent_id in parents
+                )
 
         # If not in any topology (independent shard), always allow
         return True
@@ -854,6 +861,7 @@ class Consumer(Base):
                 "has_iterator": "ShardIterator" in shard and shard["ShardIterator"] is not None,
                 "sequence_range": shard.get("SequenceNumberRange", {}),
                 "parent_shard_id": shard.get("ParentShardId"),
+                "adjacent_parent_shard_id": shard.get("AdjacentParentShardId"),
                 "is_parent": shard["ShardId"] in self._parent_shards,
                 "is_child": shard["ShardId"] in self._child_shards,
                 "can_allocate": self._should_allocate_shard(shard["ShardId"]),

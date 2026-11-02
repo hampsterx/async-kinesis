@@ -604,9 +604,10 @@ class StreamMonitor:
                 logger.info(f"Closed shards: {status['closed_shards']}")
                 logger.info(f"Allocated to this consumer: {status['allocated_shards']}")
 
-                # Check for resharding. A split parent stays in parent_shards for the
-                # stream's whole retention period after it is drained, so parent_shards
-                # alone does not mean a reshard is still under way.
+                # Check for resharding. A split parent stays in parent_shards until
+                # its records pass the stream's retention period, long after it is
+                # drained, so parent_shards alone does not mean a reshard is still
+                # under way.
                 if status['resharding_in_progress']:
                     logger.warning(
                         f"Resharding in progress. Parents: {status['parent_shards']}, "

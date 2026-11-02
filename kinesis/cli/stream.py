@@ -144,12 +144,12 @@ async def list_streams(ctx, limit):
 async def _open_shard_counts(client, names):
     """Return {stream name: open shard count as text}, with "?" for any stream whose lookup fails.
 
-    Calls start DESCRIBE_SUMMARY_INTERVAL apart so a long listing stays under the
-    DescribeStreamSummary rate limit. A failure for one stream does not fail the listing.
+    Each call starts at least DESCRIBE_SUMMARY_INTERVAL after the previous one actually
+    started, so a long listing stays under the DescribeStreamSummary rate limit even if the
+    event loop stalls. A failure for one stream does not fail the listing.
     """
 
-    async def count(index, name):
-        await asyncio.sleep(index * DESCRIBE_SUMMARY_INTERVAL)
+    async def count(name):
         try:
             resp = await client.describe_stream_summary(StreamName=name)
             return str(resp["StreamDescriptionSummary"]["OpenShardCount"])
@@ -157,7 +157,15 @@ async def _open_shard_counts(client, names):
             log.warning("Could not get the shard count for stream %s: %s", name, e)
             return "?"
 
-    results = await asyncio.gather(*(count(i, name) for i, name in enumerate(names)))
+    tasks = []
+    for index, name in enumerate(names):
+        if index:
+            await asyncio.sleep(DESCRIBE_SUMMARY_INTERVAL)
+        task = asyncio.create_task(count(name))
+        tasks.append(task)
+        # Let the call start before the next interval is measured from it.
+        await asyncio.sleep(0)
+    results = await asyncio.gather(*tasks)
     return dict(zip(names, results))
 
 

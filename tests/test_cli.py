@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import time
 import uuid
 
 import pytest
@@ -17,11 +18,12 @@ ENDPOINT_URL = os.environ.get("ENDPOINT_URL", "http://localhost:4566")
 class FakeKinesisClient:
     """Stands in for the aiobotocore client, recording each describe call."""
 
-    def __init__(self, list_response, shard_counts=None, failing=(), shards=None):
+    def __init__(self, list_response, shard_counts=None, failing=(), shards=None, block_loop=None):
         self.list_response = list_response
         self.shard_counts = shard_counts or {}
         self.failing = set(failing)
         self.shards = shards or {}
+        self.block_loop = block_loop or {}
         self.summary_calls = []
 
     async def list_streams(self, Limit):
@@ -29,6 +31,9 @@ class FakeKinesisClient:
 
     async def describe_stream_summary(self, StreamName):
         self.summary_calls.append((StreamName, asyncio.get_running_loop().time()))
+        if StreamName in self.block_loop:
+            # Stall the whole event loop, as a slow synchronous step would.
+            time.sleep(self.block_loop[StreamName])
         if StreamName in self.failing:
             raise RuntimeError("LimitExceededException")
         return {"StreamDescriptionSummary": {"StreamName": StreamName, "OpenShardCount": self.shard_counts[StreamName]}}
@@ -159,6 +164,29 @@ def test_list_paces_describe_stream_summary_calls(fake_client, monkeypatch):
     gaps = [later - earlier for earlier, later in zip(starts, starts[1:])]
     assert len(gaps) == 3
     # Calls start one interval apart, not all at once.
+    assert all(gap >= interval * 0.8 for gap in gaps), gaps
+
+
+def test_list_pacing_does_not_burst_after_the_event_loop_stalls(fake_client, monkeypatch):
+    interval = 0.05
+    monkeypatch.setattr(cli_stream, "DESCRIBE_SUMMARY_INTERVAL", interval)
+    names = ["a", "b", "c", "d", "e"]
+    client = fake_client(
+        FakeKinesisClient(
+            {"StreamNames": names, "StreamSummaries": [_summary(n) for n in names]},
+            shard_counts={n: 1 for n in names},
+            # Longer than every remaining call's slot put together.
+            block_loop={"a": interval * 6},
+        )
+    )
+
+    result = CliRunner().invoke(main, ["list"])
+
+    assert result.exit_code == 0, result.output
+    starts = sorted(t for _, t in client.summary_calls)
+    # After the stall, calls still start one interval apart instead of all at once.
+    gaps = [later - earlier for earlier, later in zip(starts[1:], starts[2:])]
+    assert len(gaps) == 3
     assert all(gap >= interval * 0.8 for gap in gaps), gaps
 
 

@@ -26,7 +26,8 @@ venv/bin/pip install -e . -r test-requirements.txt black isort flake8
 Integration-marked tests skip when `ENDPOINT_URL` (default `http://localhost:4566`) is
 unreachable, and Redis tests skip when `REDIS_HOST` is unset. The helper still prints
 "Tests passed!" when pytest succeeds with tests skipped. Start Floci and Redis, and set
-the same environment CI uses, so the pre-flight tests exercise both:
+the environment CI's test jobs use, except that Redis is on Compose's host port `16379`
+where CI uses `6379`, so the pre-flight tests exercise both:
 
 ```bash
 docker compose up -d kinesis redis

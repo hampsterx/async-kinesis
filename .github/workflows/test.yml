@@ -157,6 +157,32 @@ jobs:
         AWS_ACCESS_KEY_ID: test
         AWS_SECRET_ACCESS_KEY: test
 
+  # kinesis/serializers.py prefers ujson when it is installed, which no job above does, so the
+  # record size tests' ujson cases would only ever skip without this job.
+  test-ujson:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.12"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r test-requirements.txt
+        pip install ujson
+        pip install -e .
+
+    - name: Check the serializer picks up ujson
+      run: python -c "import kinesis.serializers as s; raise SystemExit(s.json.__name__ != 'ujson')"
+
+    - name: Run tests
+      run: pytest -v tests/test_processors.py tests/test_record_size.py
+
   test-docker:
     runs-on: ubuntu-latest
     steps:

@@ -79,10 +79,10 @@ class Aggregator(BaseAggregator):
     def add_item(self, item, partition_key=None):
         output = self.serialize(item)
         size = len(output)
-
-        self.validate_size(size)
-
         header_size = self.get_header_size(output)
+
+        # An item travels in a record with its framing, so that is what has to fit
+        self.validate_size(size + header_size)
 
         # For aggregated records, all items in a batch must share the same partition key
         if hasattr(self, "_current_partition_key"):
@@ -101,7 +101,7 @@ class Aggregator(BaseAggregator):
         else:
             self._current_partition_key = partition_key
 
-        if size + self.size + header_size < self.max_bytes:
+        if size + self.size + header_size <= self.max_bytes:
 
             self.buffer.append((size, output))
             self.size += size + header_size
@@ -116,7 +116,7 @@ class Aggregator(BaseAggregator):
                 size=self.size, n=len(self.buffer), data=self.output(), partition_key=self._current_partition_key
             )
             self.buffer = [(size, output)]
-            self.size = size
+            self.size = size + header_size
 
         log.debug("Adding item to queue with size of {} kb".format(round(size / 1024)))
 
@@ -149,7 +149,9 @@ class NewlineAggregator(Aggregator):
 
 class ListAggregator(Aggregator):
     def get_header_size(self, output):
-        return 1
+        # n items cost 2(n - 1) bytes of ", " separators and 2 of brackets: exactly 2 per item on
+        # stdlib json. ujson's "," separators make this an overcount of n - 1, never an undercount.
+        return 2
 
     def output(self):
         return self.serialize([self.deserialize(x[1]) for x in self.buffer])

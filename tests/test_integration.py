@@ -640,6 +640,39 @@ class TestIntegration:
         assert results == [payload]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("processor_class", [JsonLineProcessor, JsonListProcessor, MsgpackProcessor])
+    async def test_aggregated_record_at_size_limit_round_trip(self, test_stream, endpoint_url, processor_class):
+        """An item whose framing fills the record arrives alone, with no empty record ahead of it."""
+        processor = processor_class(max_size=25)
+        item = "x" * 1000
+        overhead = len(processor.serialize(item)) - len(item)
+        # The largest framing here is netstring's, seven bytes for a five digit length
+        for framing in range(1, 8):
+            item = "x" * (processor.max_bytes - overhead - framing)
+            serialized = processor.serialize(item)
+            if len(serialized) + processor.get_header_size(serialized) == processor.max_bytes:
+                break
+        else:
+            pytest.fail("no item fills the record exactly")
+
+        collector = InMemoryMetricsCollector()
+
+        async with Producer(
+            stream_name=test_stream, endpoint_url=endpoint_url, processor=processor, metrics_collector=collector
+        ) as producer:
+            await producer.put(item)
+
+        async with Consumer(
+            stream_name=test_stream, endpoint_url=endpoint_url, processor=processor_class(max_size=25)
+        ) as consumer:
+            results = [message async for message in consumer]
+
+        expected = [item]
+        assert results == ([expected] if processor_class is JsonListProcessor else expected)
+        # JsonLine's parse() and the consumer's own counter both skip an empty record, so count at the producer
+        assert sum(v for k, v in collector.counters.items() if k.startswith("producer_records_sent_total")) == 1
+
+    @pytest.mark.asyncio
     async def test_consumer_queue_smaller_than_backlog_delivers_all(self, test_stream, endpoint_url):
         """A full queue applies backpressure to fetching rather than dropping or ending early."""
         async with Producer(stream_name=test_stream, endpoint_url=endpoint_url) as producer:

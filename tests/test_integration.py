@@ -673,6 +673,28 @@ class TestIntegration:
         assert sum(v for k, v in collector.counters.items() if k.startswith("producer_records_sent_total")) == 1
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("processor_class", [JsonLineProcessor, MsgpackProcessor])
+    async def test_consumer_skips_an_empty_record(self, test_stream, endpoint_url, processor_class):
+        """An empty record, which producers before 3.0.2 could write, yields nothing and holds back nothing."""
+        async with Producer(
+            stream_name=test_stream, endpoint_url=endpoint_url, processor=processor_class()
+        ) as producer:
+            # A record on each side of the empty one, read back in one batch: a parse error on the
+            # empty record re-delivered the one before it on every retry and never reached the one after
+            await producer.put({"n": 0})
+            await producer.flush()
+            await producer.client.put_record(StreamName=test_stream, Data=b"", PartitionKey="empty")
+            for i in range(1, 3):
+                await producer.put({"n": i})
+
+        async with Consumer(
+            stream_name=test_stream, endpoint_url=endpoint_url, processor=processor_class()
+        ) as consumer:
+            results = [message async for message in consumer]
+
+        assert results == [{"n": 0}, {"n": 1}, {"n": 2}]
+
+    @pytest.mark.asyncio
     async def test_consumer_queue_smaller_than_backlog_delivers_all(self, test_stream, endpoint_url):
         """A full queue applies backpressure to fetching rather than dropping or ending early."""
         async with Producer(stream_name=test_stream, endpoint_url=endpoint_url) as producer:

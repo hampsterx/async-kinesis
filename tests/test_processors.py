@@ -301,6 +301,10 @@ class TestProcessorAndAggregator:
         assert output[0].size == 22
         assert output[0].data == b"7:\x81\xa4test{,9:\x81\xa4test\xcd\x01\xc8,"
 
+    def test_msgpack_processor_parses_an_empty_record_to_no_items(self):
+        # Producers before 3.0.2 could write an empty record, so consumers still read them
+        assert list(MsgpackProcessor().parse(b"")) == []
+
     @pytest.mark.parametrize("processor_class", [JsonLineProcessor, JsonListProcessor, MsgpackProcessor])
     def test_aggregating_processor_flushes_at_max_size(self, processor_class):
         processor = processor_class(max_size=25)

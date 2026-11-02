@@ -186,15 +186,15 @@ class NetstringAggregator(Aggregator):
         i = 0
         length = len(data)
 
-        while True:
+        # An empty record holds no items. Producers before 3.0.2 could write one on a flush
+        # with nothing buffered, and it still sits in streams they wrote to.
+        while i < length:
             header_offset = data[i:].index(b":")
             size = int(data[i : i + header_offset].decode("ascii"))
             item = data[i + header_offset + 1 : i + header_offset + 1 + size]
             yield self.deserialize(item)
 
             i += header_offset + size + 2
-            if i == length:
-                break
 
 
 class KPLAggregator(Aggregator):

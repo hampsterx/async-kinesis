@@ -117,7 +117,7 @@ def test_list_summaries_reads_open_shard_count_from_describe_stream_summary(fake
     assert [name for name, _ in client.summary_calls] == ["a", "b"]
 
 
-def test_list_summaries_degrades_one_failed_lookup_to_question_mark(fake_client):
+def test_list_summaries_degrades_one_failed_lookup_to_question_mark(fake_client, caplog):
     fake_client(
         FakeKinesisClient(
             {"StreamNames": ["a", "b", "c"], "StreamSummaries": [_summary("a"), _summary("b"), _summary("c")]},
@@ -134,6 +134,10 @@ def test_list_summaries_degrades_one_failed_lookup_to_question_mark(fake_client)
         ["b", "ACTIVE", "?", "PROVISIONED"],
         ["c", "ACTIVE", "3", "PROVISIONED"],
     ]
+    # The failure is reported, not swallowed. CliRunner does not see the CLI's stderr handler
+    # under pytest (logging is already configured), so check the log record itself.
+    warnings = [r for r in caplog.records if r.levelname == "WARNING" and "stream b" in r.getMessage()]
+    assert len(warnings) == 1, caplog.records
 
 
 def test_list_summaries_empty(fake_client):

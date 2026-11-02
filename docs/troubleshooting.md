@@ -334,10 +334,11 @@ await consumer.refresh_shards()
 
 3. **Monitor resharding events:**
 ```python
-# Log when resharding is detected
+# Log when resharding is detected. A drained parent stays in parent_shards for
+# the stream's retention period, so check resharding_in_progress, not parent_shards.
 async for record in consumer:
     status = consumer.get_shard_status()
-    if status['parent_shards'] > 0:
+    if status['resharding_in_progress']:
         print(f"Resharding in progress: {status['parent_shards']} parent shards")
 ```
 

@@ -221,6 +221,17 @@ class KPLAggregator(Aggregator):
             )
 
         output = self.serialize(item)
+
+        # RecordAggregator raises only for an item too big to fit without the record's 20 bytes of
+        # framing. For one that fits without them but not with them, it flushes what is buffered
+        # and drops the item with no error. Trying the item on an empty record raises for both
+        # before anything is flushed, so what is buffered stays buffered.
+        if not aws_kinesis_agg.aggregator.AggRecord(self.agg.max_size).add_user_record("a", output):
+            raise ValueError(
+                "Serialized item of {} bytes too big to fit, with framing, inside a single KPL aggregated "
+                "record of {} bytes.".format(len(output), self.agg.max_size)
+            )
+
         record = self.agg.add_user_record("a", output)
         self.size = self.agg.get_num_user_records()
         if record:

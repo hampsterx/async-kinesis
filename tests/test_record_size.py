@@ -261,6 +261,21 @@ class TestEmptyItemAfterFlush:
 
 
 class TestKPLLimit:
+    @pytest.mark.parametrize("max_size", [None, 25600])
+    @pytest.mark.parametrize("buffered", [False, True])
+    def test_oversized_item_error_names_the_record_limit(self, max_size, buffered):
+        processor = KPLStringProcessor(max_size=max_size)
+        limit = 1048576 if max_size is None else max_size
+        if buffered:
+            assert list(processor.add_item("kept")) == []
+
+        with pytest.raises(ValueError, match=r"Record limit: {} bytes\.".format(limit)) as error:
+            list(processor.add_item("x" * (limit + 1)))
+
+        assert type(error.value) is ValueError
+        outputs = list(processor.get_items())
+        assert [list(processor.parse(output.data)) for output in outputs] == ([["kept"]] if buffered else [])
+
     def test_oversized_item_raises_value_error(self):
         # KPLAggregator has its own add_item(): aws-kinesis-agg enforces the limit, not validate_size()
         with pytest.raises(ValueError, match="too big"):

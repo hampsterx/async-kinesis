@@ -40,6 +40,12 @@ class TestProcessorAndAggregator:
         with pytest.raises(exceptions.ExceededPutLimit):
             list(processor.add_item(random_string(1024 * 1024 + 1)))
 
+    def test_processor_exceed_put_limit_states_the_limit(self, random_string):
+        processor = StringProcessor(max_size=50)
+
+        with pytest.raises(exceptions.ExceededPutLimit, match=r"^Put of 51201 bytes exceeded the 51200 byte limit$"):
+            list(processor.add_item(random_string(50 * 1024 + 1)))
+
     def test_newline_aggregator(self):
         # in reality does not make sense as strings can contain new lines
         # so is not a suitable combination to use

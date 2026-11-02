@@ -550,7 +550,9 @@ Note:
 * Json will use `pip install ujson` if installed
 * Msgpack requires `pip install msgpack` to be installed
 * KPL requires `pip install aws-kinesis-agg` to be installed
-* A JsonLineProcessor, JsonListProcessor or MsgpackProcessor record stays within its `max_size` (KB, rounded down to a multiple of 25), framing included. `add_item()` and `Producer.put()` raise `ExceededPutLimit` for an item too big to fit once framed. KPL processors take `max_size` in bytes and raise `ValueError` for an item too big to fit once framed
+* `max_size` is in KB for every processor except the KPL ones. StringProcessor, JsonProcessor, JsonLineProcessor, JsonListProcessor and MsgpackProcessor accept 25 to 1024 (default 1024), rounded down to a multiple of 25, so the default limit is 1000 KB (1,024,000 bytes). A record stays within that limit, framing included. `add_item()` and `Producer.put()` raise `ExceededPutLimit` for an item too big to fit once framed, and the message gives the framed size and the limit in bytes
+* KPLJsonProcessor and KPLStringProcessor take `max_size` in **bytes**, since it goes straight to aws-kinesis-agg's `RecordAggregator` (default 1,048,576). So `max_size=25` means 25 KB on a JsonProcessor and 25 bytes on a KPLJsonProcessor. They raise `ValueError` for an item too big to fit once framed
+* JsonListProcessor's framing count assumes the list is written the way stdlib `json.dumps` writes it, 2 bytes per item for the brackets and the comma-and-space separators (ujson's bare comma separators make it an overcount). A custom serializer on `ListAggregator` that writes the list larger, such as one calling `json.dumps(item, indent=1)`, is undercounted, and its records can exceed `max_size`
 
 ## Benchmark/Example
 

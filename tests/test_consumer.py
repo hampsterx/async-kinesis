@@ -756,6 +756,33 @@ class TestConsumer:
             assert [m["seq"] for m in seq_records] == [0, 1, 2]
 
 
+class TestConsumerShardTopology:
+    """Unit tests for shard topology bookkeeping (no Docker required)."""
+
+    @pytest.mark.asyncio
+    async def test_parent_closed_before_topology_counts_as_exhausted(self, mock_consumer):
+        """A parent drained before a refresh listed it as one is counted exhausted once the refresh does."""
+        consumer = mock_consumer()
+        consumer.checkpointer = MemoryCheckPointer(name="test")
+
+        shards = [
+            {"ShardId": "parent-1"},
+            {"ShardId": "child-1", "ParentShardId": "parent-1"},
+            {"ShardId": "child-2", "ParentShardId": "parent-1"},
+            {"ShardId": "independent-1"},
+        ]
+        consumer.shards = shards
+        # The fetch loop saw the null NextShardIterator while topology still knew no parents.
+        consumer._closed_shards.update({"parent-1", "independent-1"})
+
+        consumer._build_shard_topology(shards)
+
+        assert consumer._exhausted_parents == {"parent-1"}
+        status = consumer.get_shard_status()
+        assert status["exhausted_parents"] == 1
+        assert status["resharding_in_progress"] is False
+
+
 class TestConsumerShardFetchRate:
     """Unit tests for GetRecords pacing (no Docker required)."""
 

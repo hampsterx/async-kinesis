@@ -75,6 +75,29 @@ def test_merged_child_is_allocated_once_both_parents_are_exhausted_or_expired():
     assert consumer._should_allocate_shard("child")
 
 
+def test_merge_parent_that_is_itself_a_split_child_waits_for_its_own_parent():
+    # grandparent splits into parent and adjacent, which then merge into child. Both middle shards are
+    # parents of child and children of grandparent; being a parent must not let either skip grandparent.
+    consumer = Consumer(stream_name="merge-topology", endpoint_url="http://mock:4566", create_stream=False)
+    consumer._build_shard_topology(
+        [
+            {"ShardId": "grandparent"},
+            {"ShardId": "parent", "ParentShardId": "grandparent"},
+            {"ShardId": "adjacent", "ParentShardId": "grandparent"},
+            {"ShardId": "child", "ParentShardId": "parent", "AdjacentParentShardId": "adjacent"},
+        ]
+    )
+    assert consumer._should_allocate_shard("grandparent")
+    assert not consumer._should_allocate_shard("parent")
+    assert not consumer._should_allocate_shard("adjacent")
+    assert not consumer._should_allocate_shard("child")
+
+    consumer._closed_shards.add("grandparent")
+    assert consumer._should_allocate_shard("parent")
+    assert consumer._should_allocate_shard("adjacent")
+    assert not consumer._should_allocate_shard("child")
+
+
 @pytest_asyncio.fixture
 async def two_shard_stream(random_stream_name, endpoint_url):
     async with get_session().create_client("kinesis", region_name=REGION, endpoint_url=endpoint_url) as client:

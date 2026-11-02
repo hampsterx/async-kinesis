@@ -792,11 +792,9 @@ class Consumer(Base):
         Determine if a shard should be allocated based on parent-child ordering rules.
         AWS Best Practice: Only allocate child shards after their parents are exhausted.
         """
-        # Always allow parent shards
-        if shard_id in self._parent_shards:
-            return True
-
-        # For child shards, check that every parent is exhausted (both of them for a merged child)
+        # For child shards, check that every parent is exhausted (both of them for a merged child).
+        # This holds for a child that is itself a parent too: after a split and a later merge (or
+        # split) of its children, the middle generation still waits for the shard it came from.
         if shard_id in self._child_shards:
             node = self._shard_topology.get(shard_id, {})
             parents = [p for p in (node.get("parent"), node.get("adjacent_parent")) if p]

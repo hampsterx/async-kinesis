@@ -311,6 +311,23 @@ class TestProcessorAndAggregator:
         # Producers before 3.0.2 could write an empty record, so consumers still read them
         assert list(MsgpackProcessor().parse(b"")) == []
 
+    @pytest.mark.parametrize("size", [-1, -2, -3, -4, -5, -100])
+    @pytest.mark.parametrize("prefix", [b"", b"1:\x01,"])
+    def test_msgpack_processor_rejects_a_negative_frame_length(self, size, prefix):
+        parsed = MsgpackProcessor().parse(prefix + str(size).encode("ascii") + b":\x01\x01")
+        if prefix:
+            assert next(parsed) == 1
+
+        # Read just the next item: the old -4 path yields forever instead of raising.
+        with pytest.raises(ValueError, match="Netstring frame length must not be negative"):
+            next(parsed)
+
+    def test_netstring_processor_accepts_zero_and_positive_frame_lengths(self):
+        class NetstringTestProcessor(NetstringAggregator, StringSerializer):
+            pass
+
+        assert list(NetstringTestProcessor().parse(b"0:,1:a,0:,")) == ["", "a", ""]
+
     @pytest.mark.parametrize("data", [b"1:\x01", b"2:\x01", b"1:\x01,5:\x01"])
     def test_msgpack_processor_rejects_a_truncated_record(self, data):
         # A last frame cut short (no trailing comma, or a length past the end) still raises

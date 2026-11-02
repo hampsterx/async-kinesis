@@ -193,6 +193,8 @@ class NetstringAggregator(Aggregator):
         while i != length:
             header_offset = data[i:].index(b":")
             size = int(data[i : i + header_offset].decode("ascii"))
+            if size < 0:
+                raise ValueError("Netstring frame length must not be negative: {}".format(size))
             item = data[i + header_offset + 1 : i + header_offset + 1 + size]
             yield self.deserialize(item)
 
@@ -228,7 +230,11 @@ class KPLAggregator(Aggregator):
         # framing. For one that fits without them but not with them, it flushes what is buffered
         # and drops the item with no error. Trying the item on an empty record raises for both
         # before anything is flushed, so what is buffered stays buffered.
-        if not aws_kinesis_agg.aggregator.AggRecord(self.agg.max_size).add_user_record("a", output):
+        try:
+            fits = aws_kinesis_agg.aggregator.AggRecord(self.agg.max_size).add_user_record("a", output)
+        except ValueError as exc:
+            raise ValueError("{} Record limit: {} bytes.".format(exc, self.agg.max_size)) from exc
+        if not fits:
             raise ValueError(
                 "Serialized item of {} bytes too big to fit, with framing, inside a single KPL aggregated "
                 "record of {} bytes.".format(len(output), self.agg.max_size)

@@ -40,7 +40,7 @@ class BaseAggregator:
 
     def validate_size(self, size):
         if size > self.max_bytes:
-            raise ExceededPutLimit("Put of {} bytes exceeded 1MB limit".format(size))
+            raise ExceededPutLimit("Put of {} bytes exceeded the {} byte limit".format(size, self.max_bytes))
 
     def parse(self, data):
         yield self.deserialize(data)

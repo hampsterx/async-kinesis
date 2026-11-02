@@ -175,7 +175,7 @@ class TestSingleItemAtTheLimit:
         item = item_framed_to(processor, processor.max_bytes) + "x"
         assert len(processor.serialize(item)) <= processor.max_bytes
 
-        with pytest.raises(exceptions.ExceededPutLimit):
+        with pytest.raises(exceptions.ExceededPutLimit, match=r"^Put of 25601 bytes exceeded the 25600 byte limit$"):
             list(processor.add_item(item))
 
         assert not processor.has_items()
